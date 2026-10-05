@@ -187,6 +187,7 @@ def predict_passes(sats, hours=24):
                             set_time = t[i + 2].utc_datetime()
                             duration_min = (set_time - rise_time).total_seconds() / 60
                     passes.append({
+                        "sat": sat,
                         "sat_name": name,
                         "frequency": freq,
                         "rise_utc": rise_time,
@@ -219,8 +220,8 @@ def passes_to_json(passes):
         })
     return result
 
-def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, signal_peak, decoded, png_file):
-    """Log a completed pass to the history file."""
+def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, signal_peak, decoded, png_file, wav_file):
+    """Log a completed pass (with recording metadata) to the history file."""
     history = []
     if os.path.exists(PASS_HISTORY_FILE):
         try:
@@ -233,10 +234,14 @@ def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, signal_peak,
         "frequency_mhz": round(frequency / 1e6, 4),
         "max_alt": max_alt,
         "duration_min": duration_min,
-        "rise_local": (rise_time + timedelta(hours=UTC_OFFSET)).strftime("%d.%m %H:%M"),
+        "rise_local": (rise_time + timedelta(hours=UTC_OFFSET)).strftime("%a %d.%m %H:%M"),
+        "set_local": (set_time + timedelta(hours=UTC_OFFSET)).strftime("%H:%M"),
+        "rise_ts": rise_time.timestamp(),
+        "set_ts": set_time.timestamp(),
         "signal_peak": round(signal_peak, 1),
         "decoded": decoded,
         "png": png_file,
+        "wav": wav_file,
         "timestamp": datetime.now().isoformat(),
     })
     # Keep last 50 passes
@@ -280,7 +285,9 @@ def scheduler_thread():
                 finished_pass = None
                 pass_peak = 0.0
                 with status_lock:
-                    if triggered and current_pass != triggered:
+                    if triggered and (current_pass is None
+                                      or current_pass["sat_name"] != triggered["sat_name"]
+                                      or current_pass["rise_utc"] != triggered["rise_utc"]):
                         current_pass = triggered
                         current_frequency = triggered["frequency"]
                         current_sat_name = triggered["sat_name"]
@@ -307,12 +314,14 @@ def scheduler_thread():
                     time.sleep(2)
                     decoded = False
                     png_file = None
+                    wav_name = None
                     recordings = sorted(glob.glob(os.path.join(RECORD_DIR, "*.wav")), key=os.path.getmtime, reverse=True)
                     if recordings:
                         latest = recordings[0]
+                        wav_name = os.path.basename(latest)
                         latest_png = latest.replace('.wav', '.png')
                         if not os.path.exists(latest_png):
-                            log_console(f"Auto-decoding: {os.path.basename(latest)}")
+                            log_console(f"Auto-decoding: {wav_name}")
                             try:
                                 result = subprocess.run(
                                     ['noaa-apt', latest, '-o', latest_png, '-q'],
@@ -331,7 +340,8 @@ def scheduler_thread():
                             png_file = os.path.basename(latest_png)
                     log_pass(finished_pass["sat_name"], finished_pass["frequency"],
                              finished_pass["max_alt"], finished_pass["duration_min"],
-                             finished_pass["rise_utc"], pass_peak, decoded, png_file)
+                             finished_pass["rise_utc"], finished_pass["set_utc"],
+                             pass_peak, decoded, png_file, wav_name)
                 
                 # Refresh passes list every 30 min
                 if datetime.utcnow().minute % 30 == 0 and datetime.utcnow().second < 10:
@@ -580,6 +590,159 @@ setInterval(poll, 2000);
 </html>
 """
 
+HISTORY_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOAAh's CrabArk — Pass History & Recordings</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 12px 15px; }
+h1 { font-size: 1.2em; color: #53d769; margin-bottom: 4px; }
+.sub { font-size: 0.8em; color: #888; margin-bottom: 12px; }
+.sub a { color: #53d769; }
+.sub #crab-count { color: #f39c12; font-weight: bold; }
+.section-title { color: #53d769; font-size: 1em; margin: 14px 0 8px 0; }
+.pass-card { background: #16213e; border: 1px solid #0f3460; border-left: 3px solid #53d769; margin-bottom: 10px; padding: 10px; border-radius: 4px; }
+.pass-card.medium { border-left-color: #f39c12; }
+.pass-card.low { border-left-color: #e74c3c; }
+.card-head { font-size: 0.85em; color: #a8b8d8; margin-bottom: 6px; }
+.card-head .sat { color: #53d769; font-weight: bold; font-size: 1.05em; }
+.card-meta { font-size: 0.7em; color: #888; margin-bottom: 6px; }
+.filename { font-size: 0.75em; color: #888; word-break: break-all; margin-bottom: 4px; }
+button { padding: 4px 10px; background: #53d769; color: #1a1a2e; border: none; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.75em; }
+button:hover { background: #3eb852; }
+button.danger { background: #e74c3c; color: #fff; margin-left: 6px; }
+button.danger:hover { background: #c0392b; }
+audio { width: 100%; margin-top: 6px; height: 30px; }
+.decoded-img { max-width: 100%; margin-top: 8px; border-radius: 4px; border: 1px solid #0f3460; }
+.result { font-size: 0.75em; margin-top: 6px; }
+.muted { color: #666; font-size: 0.75em; padding: 10px; }
+</style>
+</head>
+<body>
+<h1>📚 Pass History &amp; Recordings</h1>
+<div class="sub"><a href="/">&#8592; dashboard</a> &nbsp;|&nbsp; 🦀 Crabs caught: <span id="crab-count">0</span></div>
+<div class="section-title">Recorded Passes</div>
+<div id="history-list" class="muted">Loading pass history...</div>
+<div class="section-title" id="unmatched-title" style="display:none;">Unmatched Recordings</div>
+<div id="unmatched-list"></div>
+<script>
+const decodingInProcess = {};
+let historyData = [];
+let recordingsData = [];
+
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function safeId(f) { return f.replace(/[^a-zA-Z0-9]/g, ''); }
+
+function render() {
+    const list = document.getElementById('history-list');
+    if (historyData.length === 0) {
+        list.innerHTML = '<div class="muted">No passes logged yet. Passes appear here after they complete.</div>';
+    } else {
+        let html = '';
+        for (const h of [...historyData].reverse()) {
+            const q = h.max_alt >= 35 ? 'high' : (h.max_alt >= 15 ? 'medium' : 'low');
+            const qi = q === 'high' ? '🟢' : (q === 'medium' ? '🟡' : '🔴');
+            const rec = h.wav ? recordingsData.find(r => r.filename === h.wav) : null;
+            const img = (h.png && rec && rec.png) ? h.png : (rec && rec.png ? rec.png : null);
+            const rid = h.wav ? 'result-' + safeId(h.wav) : '';
+            html += '<div class="pass-card ' + q + '">'
+                + '<div class="card-head"><span class="sat">' + qi + ' ' + esc(h.sat_name) + '</span>'
+                + ' &nbsp;' + esc(h.rise_local) + ' → ' + esc(h.set_local || '?')
+                + ' &nbsp;|&nbsp; ' + esc(h.frequency_mhz) + ' MHz</div>'
+                + '<div class="card-meta">max ' + esc(h.max_alt) + '° &nbsp;|&nbsp; '
+                + esc(h.duration_min) + ' min &nbsp;|&nbsp; peak: ' + esc(h.signal_peak || '—')
+                + ' &nbsp;|&nbsp; ' + (h.decoded ? '🖼️ decoded' : '❌ not decoded') + '</div>';
+            if (rec) {
+                html += '<div class="filename">' + esc(rec.filename) + ' (' + esc(rec.size_mb) + ' MB)</div>'
+                    + (rec.decoded ? '' : '<button onclick="decodeRecording(\'' + esc(rec.filename) + '\')">🔄 Decode APT Image</button>')
+                    + '<button class="danger" onclick="deleteRecording(\'' + esc(rec.filename) + '\')">🗑 Delete</button>'
+                    + '<audio controls preload="none"><source src="/audio/' + esc(rec.filename) + '" type="audio/wav"></audio>'
+                    + '<div class="result" id="' + rid + '"></div>'
+                    + (img ? '<img class="decoded-img" src="/images/' + esc(img) + '" alt="APT image" onclick="window.open(\'/images/' + esc(img) + '\')" style="cursor:pointer;">' : '');
+            } else {
+                html += '<div class="muted" style="padding:4px 0;">' + (h.wav ? 'recording file deleted' : 'no recording on disk') + '</div>';
+            }
+            html += '</div>';
+        }
+        list.innerHTML = html;
+    }
+    const unmatched = recordingsData.filter(r => !historyData.some(h => h.wav === r.filename));
+    const utable = document.getElementById('unmatched-list');
+    document.getElementById('unmatched-title').style.display = unmatched.length ? '' : 'none';
+    let uhtml = '';
+    for (const r of unmatched) {
+        const rid = 'result-' + safeId(r.filename);
+        uhtml += '<div class="pass-card">'
+            + '<div class="card-head"><span class="sat">🎧 ' + esc(r.filename) + '</span> &nbsp;|&nbsp; ' + esc(r.size_mb) + ' MB</div>'
+            + '<button onclick="decodeRecording(\'' + esc(r.filename) + '\')">🔄 Decode APT Image</button>'
+            + '<button class="danger" onclick="deleteRecording(\'' + esc(r.filename) + '\')">🗑 Delete</button>'
+            + '<audio controls preload="none"><source src="/audio/' + esc(r.filename) + '" type="audio/wav"></audio>'
+            + '<div class="result" id="' + rid + '"></div>'
+            + (r.png ? '<img class="decoded-img" src="/images/' + esc(r.png) + '" alt="APT image">' : '')
+            + '</div>';
+    }
+    utable.innerHTML = uhtml;
+    document.getElementById('crab-count').textContent = recordingsData.filter(r => r.decoded).length;
+    // Auto-decode recordings that are not decoded yet
+    for (const r of recordingsData) {
+        if (!r.decoded && !decodingInProcess[r.filename]) {
+            decodingInProcess[r.filename] = true;
+            setTimeout(() => decodeRecording(r.filename), 3000);
+        }
+    }
+}
+
+async function decodeRecording(filename) {
+    const resultDiv = document.getElementById('result-' + safeId(filename));
+    if (resultDiv) resultDiv.innerHTML = '<span style="color:#f39c12;">⏳ Decoding...</span>';
+    try {
+        const res = await fetch('/decode/' + filename);
+        const data = await res.json();
+        if (data.success && resultDiv) {
+            resultDiv.innerHTML = '<span style="color:#53d769;">✅ Decoded!</span><img class="decoded-img" src="/images/' + esc(data.png) + '?t=' + Date.now() + '" alt="Decoded APT image">';
+        } else if (resultDiv) {
+            resultDiv.innerHTML = '<span style="color:#e74c3c;">❌ ' + esc(data.error || 'Decode failed') + '</span>';
+        }
+    } catch(e) {
+        if (resultDiv) resultDiv.innerHTML = '<span style="color:#e74c3c;">❌ Error: ' + esc(e) + '</span>';
+    }
+}
+
+async function deleteRecording(filename) {
+    if (!confirm('Delete ' + filename + ' and its decoded image? This cannot be undone.')) return;
+    try {
+        const res = await fetch('/delete/' + filename);
+        const data = await res.json();
+        if (data.success) {
+            delete decodingInProcess[filename];
+            refresh();
+        } else {
+            alert('Delete failed: ' + (data.error || 'unknown error'));
+        }
+    } catch(e) {
+        alert('Delete failed: ' + e);
+    }
+}
+
+async function refresh() {
+    try {
+        const [h, r] = await Promise.all([fetch('/pass_history.json'), fetch('/recordings.json')]);
+        historyData = await h.json();
+        recordingsData = await r.json();
+        render();
+    } catch(e) { console.error('History refresh failed:', e); }
+}
+
+refresh();
+setInterval(refresh, 8000);
+</script>
+</body>
+</html>
+"""
+
 class NOAAHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/status.json':
@@ -631,6 +794,42 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(history).encode())
+        elif self.path == '/track.json':
+            # Polar (az/el) track of the currently active pass
+            with status_lock:
+                cur = current_pass
+            result = {"active": False, "sat_name": None, "track": [], "now": None}
+            if cur is not None:
+                result["active"] = True
+                result["sat_name"] = cur["sat_name"]
+                if HAS_SKYFIELD and cur.get("sat") is not None:
+                    try:
+                        ts = load.timescale()
+                        site = wgs84.latlon(LAT, LON)
+                        now = datetime.utcnow().replace(tzinfo=timezone.utc)
+                        start, end = cur["rise_utc"], cur["set_utc"]
+                        span = (end - start).total_seconds()
+                        if span > 0:
+                            steps = max(int(span // 30), 1)
+                            times = [start + timedelta(seconds=span * k / steps) for k in range(steps + 1)]
+                            t = ts.from_datetimes(times)
+                            alt, az, _ = (cur["sat"] - site).at(t).altaz()
+                            result["track"] = [
+                                {"t": times[i].timestamp(),
+                                 "alt": round(alt.degrees[i], 1),
+                                 "az": round(az.degrees[i], 1)}
+                                for i in range(len(times))
+                            ]
+                        tn = ts.from_datetime(now)
+                        altn, azn, _ = (cur["sat"] - site).at(tn).altaz()
+                        result["now"] = {"t": now.timestamp(), "alt": round(altn.degrees, 1), "az": round(azn.degrees, 1)}
+                    except Exception as e:
+                        log_console(f"Track computation failed: {e}", "error")
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
         elif self.path == '/console.json':
             with console_lock:
                 lines = list(console_buffer)
@@ -644,6 +843,11 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(CONSOLE_HTML.encode())
+        elif self.path == '/history' or self.path == '/history.html':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(HISTORY_HTML.encode())
         elif self.path.startswith('/audio/'):
             filename = self.path[7:]
             if '..' in filename or '/' in filename:

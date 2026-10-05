@@ -72,8 +72,13 @@
     <div id="pass-banner" class="pass-idle">Checking pass schedule...</div>
     <div id="waterfall-section">
         <h2>Live Waterfall — <span id="wf-freq">137.620 MHz</span> ± 120 kHz</h2>
-        <canvas id="waterfall-canvas" width="512" height="120"></canvas>
-        <canvas id="spectrum-canvas" width="512" height="25"></canvas>
+        <div style="position:relative;">
+            <canvas id="waterfall-canvas" width="512" height="120"></canvas>
+            <canvas id="spectrum-canvas" width="512" height="25"></canvas>
+            <div id="wf-highlight" style="display:none;position:absolute;top:0;bottom:0;left:50%;width:20%;transform:translateX(-50%);pointer-events:none;background:rgba(83,215,105,0.10);border-left:1px solid rgba(83,215,105,0.7);border-right:1px solid rgba(83,215,105,0.7);">
+                <div id="wf-highlight-label" style="position:absolute;top:2px;left:50%;transform:translateX(-50%);background:#53d769;color:#1a1a2e;font-size:0.6em;padding:1px 6px;border-radius:3px;white-space:nowrap;"></div>
+            </div>
+        </div>
         <div id="freq-labels">
             <span id="fl-1">137.500</span>
             <span id="fl-2">137.560</span>
@@ -84,12 +89,14 @@
     </div>
     <div id="container">
         <div id="main-panel">
+            <div id="track-section" style="display:none;margin-bottom:12px;">
+                <div class="section-title">🧭 Live Pass — <span id="track-sat"></span></div>
+                <canvas id="track-canvas" width="440" height="440" style="width:100%;max-width:440px;background:#000;border:1px solid #0f3460;border-radius:4px;"></canvas>
+                <div style="font-size:0.7em;color:#888;margin-top:3px;">Polar view: center = zenith (90°), outer ring = horizon (0°). North is up.</div>
+            </div>
             <div class="section-title">📅 Upcoming Passes (24h)</div>
             <div id="passes-list">Loading pass predictions...</div>
-            <div class="section-title">📜 Pass History</div>
-            <div id="pass-history-list">No passes logged yet.</div>
-            <div class="section-title">📡 Recordings & Decoded Images</div>
-            <div id="recordings-list"><div id="no-recordings">No recordings yet. Will record automatically during passes.</div></div>
+            <div class="section-title">📚 <a href="/history" style="color:#53d769;">Pass History &amp; Recordings →</a></div>
         </div>
         <div id="status-panel">
             <div class="section-title">System Status</div>
@@ -146,7 +153,6 @@
     </div>
     <script>
         const startTime = Date.now();
-        const decodingInProcess = {};
         const signalHistory = [];
         const MAX_SIGNAL_POINTS = 300; // 5 min at 1Hz
         const WF_WIDTH = 512, WF_HEIGHT = 120, SPEC_HEIGHT = 25;
@@ -232,13 +238,17 @@
                 // Update frequency display
                 updateFreqLabels(data.frequency_mhz);
 
-                // Recording status
+                // Recording status + waterfall frequency highlight
                 if (data.recording) {
                     document.getElementById('rec-led').className = 'indicator green';
                     document.getElementById('rec-status').textContent = 'Recording';
+                    const hl = document.getElementById('wf-highlight');
+                    hl.style.display = 'block';
+                    document.getElementById('wf-highlight-label').textContent = `${data.satellite} — ${data.frequency_mhz} MHz`;
                 } else {
                     document.getElementById('rec-led').className = 'indicator red';
                     document.getElementById('rec-status').textContent = 'Idle';
+                    document.getElementById('wf-highlight').style.display = 'none';
                 }
 
                 // Pass banner
@@ -295,80 +305,115 @@
             } catch(e) { console.error('Error fetching passes:', e); }
         }
 
-        async function fetchRecordings() {
+        async function fetchCrabCount() {
             try {
                 const res = await fetch('/recordings.json');
                 const recordings = await res.json();
-                const decoded = recordings.filter(r => r.decoded).length;
                 const crabEl = document.getElementById('crab-count');
-                if (crabEl) crabEl.textContent = decoded;
-                const panel = document.getElementById('recordings-list');
-                if (recordings.length === 0) {
-                    panel.innerHTML = '<div id="no-recordings">No recordings yet. Will record automatically during passes.</div>';
-                    return;
-                }
-                let html = '';
-                for (const r of recordings) {
-                    const resultId = 'result-' + r.filename.replace(/[^a-zA-Z0-9]/g, '');
-                    html += `<div class="recording" id="rec-${r.filename.replace(/[^a-zA-Z0-9]/g,'')}">
-                        <div class="filename">${r.filename}</div>
-                        <div class="info">${r.size_mb} MB${r.decoded ? ' — ✅ Decoded' : ''}</div>
-                        <button onclick="decodeRecording('${r.filename}')">🔄 Decode APT Image</button>
-                        <button class="danger" onclick="deleteRecording('${r.filename}')">🗑 Delete</button>
-                        <audio controls preload="none" style="width:100%;margin-top:5px;height:30px;">
-                            <source src="/audio/${r.filename}" type="audio/wav">
-                        </audio>
-                        <div id="${resultId}"></div>
-                    </div>`;
-                }
-                panel.innerHTML = html;
-                // Auto-show already-decoded images
-                for (const r of recordings) {
-                    if (r.decoded && r.png) {
-                        const resultId = 'result-' + r.filename.replace(/[^a-zA-Z0-9]/g, '');
-                        document.getElementById(resultId).innerHTML = `<img class="decoded-img" src="/images/${r.png}" alt="APT image">`;
-                    }
-                }
-                // Auto-decode new recordings after a short delay
-                for (const r of recordings) {
-                    if (!r.decoded && !decodingInProcess[r.filename]) {
-                        decodingInProcess[r.filename] = true;
-                        setTimeout(() => decodeRecording(r.filename), 3000); // wait 3s for WAV to finalize
-                    }
-                }
+                if (crabEl) crabEl.textContent = recordings.filter(r => r.decoded).length;
             } catch(e) { console.error('Error fetching recordings:', e); }
         }
 
-        async function decodeRecording(filename) {
-            const safeId = 'result-' + filename.replace(/[^a-zA-Z0-9]/g, '');
-            const resultDiv = document.getElementById(safeId);
-            resultDiv.innerHTML = '<div style="color:#f39c12;padding:5px;">⏳ Decoding...</div>';
+        async function fetchTrack() {
             try {
-                const res = await fetch('/decode/' + filename);
+                const res = await fetch('/track.json');
                 const data = await res.json();
-                if (data.success) {
-                    resultDiv.innerHTML = `<div style="color:#53d769;padding:5px;">✅ Decoded!</div><img class="decoded-img" src="/images/${data.png}?t=${Date.now()}" alt="Decoded APT image">`;
-                } else {
-                    resultDiv.innerHTML = `<div style="color:#e74c3c;padding:5px;">❌ ${data.error || 'Decode failed'}</div>`;
+                const section = document.getElementById('track-section');
+                if (!data.active) {
+                    section.style.display = 'none';
+                    return;
                 }
-            } catch(e) {
-                resultDiv.innerHTML = `<div style="color:#e74c3c;padding:5px;">❌ Error: ${e}</div>`;
-            }
+                section.style.display = 'block';
+                document.getElementById('track-sat').textContent = `${data.sat_name} (az ${data.now ? data.now.az : '—'}° / el ${data.now ? data.now.alt : '—'}°)`;
+                drawTrack(data);
+            } catch(e) { console.error('Error fetching track:', e); }
         }
 
-        async function deleteRecording(filename) {
-            if (!confirm(`Delete ${filename} and its decoded image? This cannot be undone.`)) return;
-            try {
-                const res = await fetch('/delete/' + filename);
-                const data = await res.json();
-                if (data.success) {
-                    delete decodingInProcess[filename];
-                    fetchRecordings(); // refresh list immediately
-                } else {
-                    alert('Delete failed: ' + (data.error || 'unknown error'));
+        function drawTrack(data) {
+            const canvas = document.getElementById('track-canvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            const cx = w / 2, cy = h / 2;
+            const R = Math.min(w, h) / 2 - 22;
+            const rad = Math.PI / 180;
+
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, w, h);
+
+            // Elevation rings: 0, 30, 60 degrees
+            ctx.strokeStyle = '#16213e';
+            ctx.lineWidth = 1;
+            for (const alt of [0, 30, 60]) {
+                ctx.beginPath();
+                ctx.arc(cx, cy, (90 - alt) / 90 * R, 0, 2 * Math.PI);
+                ctx.stroke();
+            }
+            // Cross-hair + azimuth labels
+            ctx.strokeStyle = '#0f3460';
+            ctx.beginPath();
+            ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy);
+            ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
+            ctx.stroke();
+            ctx.fillStyle = '#666';
+            ctx.font = '11px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('N', cx, cy - R - 6);
+            ctx.fillText('S', cx, cy + R + 14);
+            ctx.textAlign = 'left';
+            ctx.fillText('E', cx + R + 4, cy + 4);
+            ctx.textAlign = 'right';
+            ctx.fillText('W', cx - R - 4, cy + 4);
+            ctx.textAlign = 'center';
+            ctx.fillText('90°', cx, cy + 4);
+
+            function project(pt) {
+                const r = (90 - pt.alt) / 90 * R;
+                const a = pt.az * rad;
+                return [cx + r * Math.sin(a), cy - r * Math.cos(a)];
+            }
+
+            const nowTs = data.now ? data.now.t : Date.now() / 1000;
+            const track = data.track || [];
+            if (track.length > 1) {
+                // Remaining pass (dashed, dim)
+                ctx.strokeStyle = '#444';
+                ctx.setLineDash([4, 3]);
+                ctx.beginPath();
+                let started = false;
+                for (const pt of track) {
+                    if (pt.t < nowTs) continue;
+                    const [x, y] = project(pt);
+                    if (!started) { ctx.moveTo(x, y); started = true; }
+                    else ctx.lineTo(x, y);
                 }
-            } catch(e) {
-                alert('Delete failed: ' + e);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                // Flown portion (solid green)
+                ctx.strokeStyle = '#53d769';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                started = false;
+                for (const pt of track) {
+                    if (pt.t > nowTs) break;
+                    const [x, y] = project(pt);
+                    if (!started) { ctx.moveTo(x, y); started = true; }
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+
+            // Current position
+            if (data.now) {
+                const [x, y] = project(data.now);
+                ctx.fillStyle = '#53d769';
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(83, 215, 105, 0.4)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(x, y, 10, 0, 2 * Math.PI);
+                ctx.stroke();
             }
         }
 
@@ -449,34 +494,6 @@
             ctx.fillRect((signalHistory.length - 1) * step - 1, 0, 2, h);
         }
 
-        async function fetchPassHistory() {
-            try {
-                const res = await fetch('/pass_history.json');
-                const history = await res.json();
-                const list = document.getElementById('pass-history-list');
-                if (history.length === 0) {
-                    list.innerHTML = '<div style="color:#666;padding:10px;">No passes logged yet.</div>';
-                    return;
-                }
-                let html = '';
-                // Show most recent first
-                for (const h of history.reverse()) {
-                    const qIcon = h.max_alt >= 35 ? '🟢' : (h.max_alt >= 15 ? '🟡' : '🔴');
-                    const decIcon = h.decoded ? '🖼️' : '❌';
-                    const imgLink = h.png ? ` <a href="/images/${h.png}" target="_blank" style="color:#53d769;">view</a>` : '';
-                    html += `<div class="pass-row ${h.max_alt >= 35 ? 'high' : (h.max_alt >= 15 ? 'medium' : 'low')}">
-                        <div class="pass-sat">${qIcon} ${h.sat_name}</div>
-                        <div class="pass-time">${h.rise_local}</div>
-                        <div class="pass-alt">${h.max_alt}°</div>
-                        <div style="font-size:0.75em;color:#888;width:50px;">${h.duration_min}min</div>
-                        <div style="font-size:0.75em;color:#888;width:50px;">peak:${h.signal_peak||'—'}</div>
-                        <div style="font-size:0.8em;">${decIcon}${imgLink}</div>
-                    </div>`;
-                }
-                list.innerHTML = html;
-            } catch(e) { console.error('Error fetching pass history:', e); }
-        }
-
         // Init
         wfCtx.fillStyle = '#000'; wfCtx.fillRect(0, 0, WF_WIDTH, WF_HEIGHT);
         specCtx.fillStyle = '#000'; specCtx.fillRect(0, 0, WF_WIDTH, SPEC_HEIGHT);
@@ -484,11 +501,11 @@
         setInterval(fetchWaterfall, 200);
         setInterval(fetchStatus, 3000);
         setInterval(fetchPasses, 30000);
-        setInterval(fetchRecordings, 5000);
-        setInterval(fetchPassHistory, 30000);
+        setInterval(fetchTrack, 2000);
+        setInterval(fetchCrabCount, 10000);
         setInterval(fetchSignal, 1000);
         setInterval(updateUptime, 1000);
-        fetchWaterfall(); fetchStatus(); fetchPasses(); fetchRecordings(); fetchPassHistory(); fetchSignal(); updateUptime();
+        fetchWaterfall(); fetchStatus(); fetchPasses(); fetchTrack(); fetchCrabCount(); fetchSignal(); updateUptime();
     </script>
 </body>
 </html>
