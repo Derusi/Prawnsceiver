@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.raw
+/tmp/
+minimal_server.log
+minimal_server.py
+server.log
