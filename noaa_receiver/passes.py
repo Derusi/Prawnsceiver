@@ -1,10 +1,12 @@
 """Satellite TLE handling and pass prediction (skyfield)."""
+import json
+import os
 import time
 import urllib.request
 from datetime import timedelta
 
 from . import state
-from .config import LAT, LON, NOAA_SATS, PASS_MIN_ALT, UTC_OFFSET
+from .config import LAT, LON, NOAA_SATS, PASS_MIN_ALT, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
 
 try:
     from skyfield.api import load, wgs84, EarthSatellite
@@ -13,30 +15,85 @@ except ImportError:
     load = wgs84 = EarthSatellite = None
     HAS_SKYFIELD = False
 
-def fetch_tle(catnr, ts):
-    """Fetch a single satellite TLE from Celestrak."""
+def _fetch_tle_celestrak(catnr):
+    """Fetch raw TLE lines from Celestrak."""
     url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={catnr}&FORMAT=tle"
-    text = urllib.request.urlopen(url, timeout=15).read().decode()
+    req = urllib.request.Request(url, headers={"User-Agent": TLE_USER_AGENT})
+    text = urllib.request.urlopen(req, timeout=15).read().decode()
     lines = [l.strip() for l in text.strip().split('\n') if l.strip()]
     if len(lines) >= 3:
-        return EarthSatellite(lines[1], lines[2], lines[0], ts)
+        return lines[:3]
     return None
 
+
+def _fetch_tle_satnogs(catnr):
+    """Fetch raw TLE lines from the SatNOGS DB API (fallback source)."""
+    url = f"https://db.satnogs.org/api/tle/?norad_cat_id={catnr}"
+    req = urllib.request.Request(url, headers={"User-Agent": TLE_USER_AGENT, "Accept": "application/json"})
+    data = json.loads(urllib.request.urlopen(req, timeout=15).read().decode())
+    if data:
+        entry = data[0]
+        return [entry["tle0"].strip(), entry["tle1"].strip(), entry["tle2"].strip()]
+    return None
+
+
+def fetch_tle_lines(catnr):
+    """Fetch raw TLE lines; Celestrak first, SatNOGS DB as fallback."""
+    last_err = None
+    for source in (_fetch_tle_celestrak, _fetch_tle_satnogs):
+        try:
+            lines = source(catnr)
+            if lines:
+                return lines
+        except Exception as e:
+            last_err = e
+    if last_err is not None:
+        raise last_err
+    return None
+
+
+def _sat_from_lines(lines, ts):
+    """Build an EarthSatellite from raw TLE lines."""
+    return EarthSatellite(lines[1], lines[2], lines[0], ts)
+
+
 def refresh_tles():
-    """Refresh TLE data from Celestrak."""
+    """Refresh TLE data from Celestrak, with an on-disk cache fallback."""
     if not HAS_SKYFIELD:
         state.log_console("Skyfield not available, cannot predict passes", "warn")
         return {}
     ts = load.timescale()
     sats = {}
+    tle_data = {}
     for catnr, (name, freq) in NOAA_SATS.items():
         try:
-            sat = fetch_tle(catnr, ts)
-            if sat:
-                sats[catnr] = (sat, name, freq)
-                state.log_console(f"TLE loaded: {name} (cat #{catnr}), epoch={sat.epoch.utc_datetime()}")
+            lines = fetch_tle_lines(catnr)
+            if lines:
+                sats[catnr] = (_sat_from_lines(lines, ts), name, freq)
+                tle_data[str(catnr)] = lines
+                state.log_console(f"TLE loaded: {name} (cat #{catnr}), epoch={sats[catnr][0].epoch.utc_datetime()}")
         except Exception as e:
             state.log_console(f"TLE fetch failed for {name} (cat #{catnr}): {e}", "error")
+    if sats:
+        # Persist for future outages
+        try:
+            with open(TLE_CACHE_FILE, 'w') as f:
+                json.dump(tle_data, f)
+        except Exception as e:
+            state.log_console(f"TLE cache write failed: {e}", "warn")
+    elif os.path.exists(TLE_CACHE_FILE):
+        # Celestrak unreachable: reuse the last good TLEs
+        state.log_console("TLE fetch failed for all satellites, using cached TLEs", "warn")
+        try:
+            with open(TLE_CACHE_FILE, 'r') as f:
+                cached = json.load(f)
+            for catnr_str, lines in cached.items():
+                catnr = int(catnr_str)
+                name, freq = NOAA_SATS[catnr]
+                sats[catnr] = (_sat_from_lines(lines, ts), name, freq)
+            state.log_console(f"Loaded {len(sats)} TLEs from cache")
+        except Exception as e:
+            state.log_console(f"TLE cache read failed: {e}", "error")
     state.last_tle_refresh = time.time()
     return sats
 

@@ -36,3 +36,6 @@ PASS_MIN_ALT = 10.0  # Only care about passes above 10°
 PASS_PREDICT_HOURS = 24  # Predict 24h ahead
 PASS_MARGIN_SECS = 30  # Start recording 30s before rise, stop 30s after set
 TLE_REFRESH_HOURS = 6  # Refresh TLE data every 6h
+TLE_CACHE_FILE = os.path.join(LOGDIR, "tle_cache.json")  # last good TLEs, used when Celestrak is unreachable
+# Celestrak rejects requests with generic bot user-agents (HTTP 403)
+TLE_USER_AGENT = "NOAAh-CrabArk/1.0 (amateur NOAA APT ground station; https://github.com/Derusi/Prawnsceiver)"
