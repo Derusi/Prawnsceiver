@@ -723,11 +723,11 @@ function render() {
                 + ' &nbsp;|&nbsp; ' + (h.decoded ? '🖼️ decoded' : '❌ not decoded') + '</div>';
             if (rec) {
                 html += '<div class="filename">' + esc(rec.filename) + ' (' + esc(rec.size_mb) + ' MB)</div>'
-                    + (rec.decoded ? '' : '<button onclick="decodeRecording(\'' + esc(rec.filename) + '\')">🔄 Decode APT Image</button>')
-                    + '<button class="danger" onclick="deleteRecording(\'' + esc(rec.filename) + '\')">🗑 Delete</button>'
+                    + (rec.decoded ? '' : '<button onclick="decodeRecording(\\'' + esc(rec.filename) + '\\')">🔄 Decode APT Image</button>')
+                    + '<button class="danger" onclick="deleteRecording(\\'' + esc(rec.filename) + '\\')">🗑 Delete</button>'
                     + '<audio controls preload="none"><source src="/audio/' + esc(rec.filename) + '" type="audio/wav"></audio>'
                     + '<div class="result" id="' + rid + '"></div>'
-                    + (img ? '<img class="decoded-img" src="/images/' + esc(img) + '" alt="APT image" onclick="window.open(\'/images/' + esc(img) + '\')" style="cursor:pointer;">' : '');
+                    + (img ? '<img class="decoded-img" src="/images/' + esc(img) + '" alt="APT image" onclick="window.open(\\'/images/' + esc(img) + '\\')" style="cursor:pointer;">' : '');
             } else {
                 html += '<div class="muted" style="padding:4px 0;">' + (h.wav ? 'recording file deleted' : 'no recording on disk') + '</div>';
             }
@@ -743,8 +743,8 @@ function render() {
         const rid = 'result-' + safeId(r.filename);
         uhtml += '<div class="pass-card">'
             + '<div class="card-head"><span class="sat">🎧 ' + esc(r.filename) + '</span> &nbsp;|&nbsp; ' + esc(r.size_mb) + ' MB</div>'
-            + '<button onclick="decodeRecording(\'' + esc(r.filename) + '\')">🔄 Decode APT Image</button>'
-            + '<button class="danger" onclick="deleteRecording(\'' + esc(r.filename) + '\')">🗑 Delete</button>'
+            + '<button onclick="decodeRecording(\\'' + esc(r.filename) + '\\')">🔄 Decode APT Image</button>'
+            + '<button class="danger" onclick="deleteRecording(\\'' + esc(r.filename) + '\\')">🗑 Delete</button>'
             + '<audio controls preload="none"><source src="/audio/' + esc(r.filename) + '" type="audio/wav"></audio>'
             + '<div class="result" id="' + rid + '"></div>'
             + (r.png ? '<img class="decoded-img" src="/images/' + esc(r.png) + '" alt="APT image">' : '')
