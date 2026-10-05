@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOAAh's CrabArk — Debug Console</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: monospace; background: #12121e; color: #e0e0e0; padding: 12px 15px; }
+h1 { font-size: 1.1em; color: #53d769; margin-bottom: 4px; }
+.sub { font-size: 0.75em; color: #888; margin-bottom: 10px; }
+.sub a { color: #53d769; }
+#toolbar { display: flex; gap: 15px; font-size: 0.75em; color: #888; margin-bottom: 8px; align-items: center; }
+#toolbar label { cursor: pointer; }
+#count { color: #f39c12; }
+#console { background: #000; border: 1px solid #0f3460; border-radius: 4px; padding: 8px; height: calc(100vh - 110px); overflow-y: auto; font-size: 0.8em; line-height: 1.5; }
+.line { white-space: pre-wrap; word-break: break-all; }
+.line .t { color: #666; margin-right: 5px; }
+.line.error { color: #e74c3c; }
+.line.warn { color: #f39c12; }
+.line.info { color: #e0e0e0; }
+</style>
+</head>
+<body>
+<h1>🛰️ NOAAh's CrabArk — Debug Console</h1>
+<div class="sub">Last 100 server messages — <a href="/console.json">raw JSON</a> — <a href="/">dashboard</a></div>
+<div id="toolbar">
+    <label><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
+    <span id="count"></span>
+</div>
+<div id="console"></div>
+<script>
+const el = document.getElementById('console');
+const countEl = document.getElementById('count');
+function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+async function poll() {
+    try {
+        const res = await fetch('/console.json');
+        const lines = await res.json();
+        const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+        el.innerHTML = lines.map(l =>
+            '<div class="line ' + l.level + '"><span class="t">' + l.time + '</span>' + escapeHtml(l.msg) + '</div>'
+        ).join('');
+        countEl.textContent = lines.length + ' messages';
+        if (document.getElementById('autoscroll').checked && atBottom) el.scrollTop = el.scrollHeight;
+    } catch(e) {}
+}
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
