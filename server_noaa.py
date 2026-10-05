@@ -249,6 +249,72 @@ def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, si
     with open(PASS_HISTORY_FILE, 'w') as f:
         json.dump(history, f, indent=2)
 
+def migrate_pass_history():
+    """One-time migration for entries written before the metadata change:
+    link each pass to its recording file and backfill set_local / timestamps."""
+    if not os.path.exists(PASS_HISTORY_FILE):
+        return
+    try:
+        with open(PASS_HISTORY_FILE, 'r') as f:
+            history = json.load(f)
+    except Exception:
+        return
+    recordings = []
+    if os.path.exists(RECORD_DIR):
+        recordings = [f for f in os.listdir(RECORD_DIR) if f.endswith('.wav')]
+    changed = 0
+    for h in history:
+        # Backfill set_local / rise_ts / set_ts from rise_local + duration
+        rise_local_dt = None
+        if "rise_ts" not in h or "set_local" not in h:
+            for fmt in ("%d.%m %H:%M", "%a %d.%m %H:%M"):
+                try:
+                    dt = datetime.strptime(h.get("rise_local", ""), fmt)
+                    entry_dt = datetime.fromisoformat(h["timestamp"])
+                    rise_local_dt = dt.replace(year=entry_dt.year)
+                    break
+                except (ValueError, KeyError):
+                    continue
+            if rise_local_dt is None and "rise_ts" not in h:
+                continue
+        duration = h.get("duration_min") or 0
+        if "rise_ts" not in h and rise_local_dt is not None:
+            rise_utc = (rise_local_dt - timedelta(hours=UTC_OFFSET)).replace(tzinfo=timezone.utc)
+            h["rise_ts"] = rise_utc.timestamp()
+            h["set_ts"] = h["rise_ts"] + duration * 60
+            changed += 1
+        if "set_local" not in h and rise_local_dt is not None:
+            h["set_local"] = (rise_local_dt + timedelta(minutes=duration)).strftime("%H:%M")
+            changed += 1
+        # Link the recording file by satellite name + pass-time proximity
+        if h.get("wav"):
+            continue
+        if rise_local_dt is None:
+            continue
+        sat_short = h["sat_name"].replace(" ", "_") + "_"
+        best, best_delta = None, None
+        for f in recordings:
+            if not f.startswith(sat_short):
+                continue
+            try:
+                rec_dt = datetime.strptime(f[len(sat_short):-4], "%Y%m%d_%H%M%S")
+            except ValueError:
+                continue
+            delta = abs((rec_dt - rise_local_dt).total_seconds())
+            if delta <= duration * 60 + 360 and (best_delta is None or delta < best_delta):
+                best, best_delta = f, delta
+        if best:
+            h["wav"] = best
+            changed += 1
+            log_console(f"📜 History migration: linked {best} to {h['sat_name']} pass ({h['rise_local']})")
+    if changed:
+        try:
+            with open(PASS_HISTORY_FILE, 'w') as f:
+                json.dump(history, f, indent=2)
+            log_console(f"📜 History migration: updated {changed} field(s) in {len(history)} entries")
+        except Exception as e:
+            log_console(f"History migration failed: {e}", "error")
+
 def scheduler_thread():
     """Background thread: refresh TLEs, predict passes, trigger frequency switches."""
     global upcoming_passes, current_pass, current_frequency, current_sat_name, is_pass_active, pass_signal_peak
@@ -1021,6 +1087,11 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
 if __name__ == '__main__':
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     socketserver.ThreadingTCPServer.daemon_threads = True
+
+    # Link pre-migration history entries to their recordings
+    os.makedirs(LOGDIR, exist_ok=True)
+    os.makedirs(RECORD_DIR, exist_ok=True)
+    migrate_pass_history()
     
     # Start scheduler thread (TLE refresh + pass prediction + frequency switching)
     sched_t = threading.Thread(target=scheduler_thread, daemon=True)
