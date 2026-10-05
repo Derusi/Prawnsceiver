@@ -104,6 +104,13 @@
                 <div class="status-value"><span class="indicator red" id="rec-led"></span><span id="rec-status">Idle</span></div>
             </div>
             <div class="status-item">
+                <div class="status-label">Live Audio (FM demod)</div>
+                <div class="status-value">
+                    <audio id="live-audio" preload="none" style="display:none;"></audio>
+                    <button id="live-audio-btn" onclick="toggleLiveAudio()" style="width:100%;margin-top:4px;padding:4px 10px;background:#53d769;color:#1a1a2e;border:none;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.8em;">▶ Listen Live</button>
+                </div>
+            </div>
+            <div class="status-item">
                 <div class="status-label">Signal Strength</div>
                 <div class="status-value" id="signal-value">—</div>
                 <div class="signal-bar"><div class="signal-fill" id="signal-fill" style="width:0%"></div></div>
@@ -349,6 +356,24 @@
             const s = Math.floor((Date.now() - startTime) / 1000);
             const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
             document.getElementById('uptime').textContent = `${h}h ${m}m ${sec}s`;
+        }
+
+        let liveAudioOn = false;
+        function toggleLiveAudio() {
+            const audio = document.getElementById('live-audio');
+            const btn = document.getElementById('live-audio-btn');
+            if (!liveAudioOn) {
+                audio.src = '/live.wav';
+                audio.play().catch(e => { console.error('Live audio failed:', e); });
+                btn.textContent = '⏹ Stop Listening';
+                liveAudioOn = true;
+            } else {
+                audio.pause();
+                audio.removeAttribute('src');
+                audio.load(); // drop the connection
+                btn.textContent = '▶ Listen Live';
+                liveAudioOn = false;
+            }
         }
 
         async function fetchSignal() {
