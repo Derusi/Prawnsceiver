@@ -76,7 +76,7 @@ live_audio_cond = threading.Condition()
 
 def push_live_audio(pcm):
     """Append a demodulated PCM block to the live audio ring buffer."""
-    global live_audio_total
+    global live_audio_total, live_audio_base
     with live_audio_cond:
         live_audio_data.append(pcm)
         live_audio_total += 1
@@ -344,7 +344,7 @@ def scheduler_thread():
 
 def sdr_thread():
     """Main SDR thread: rtl_sdr → FFT waterfall + FM demod → WAV recording during passes."""
-    global rtl_sdr_proc, current_wav, current_wav_path, signal_strength, is_recording
+    global rtl_sdr_proc, current_wav, current_wav_path, signal_strength, is_recording, pass_signal_peak
     import numpy as np
     os.makedirs(LOGDIR, exist_ok=True)
     os.makedirs(RECORD_DIR, exist_ok=True)
