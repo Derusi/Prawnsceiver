@@ -666,25 +666,25 @@ HISTORY_HTML = """<!DOCTYPE html>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 12px 15px; }
 h1 { font-size: 1.2em; color: #53d769; margin-bottom: 4px; }
-.sub { font-size: 0.8em; color: #888; margin-bottom: 12px; }
+.sub { font-size: 0.9em; color: #888; margin-bottom: 12px; }
 .sub a { color: #53d769; }
 .sub #crab-count { color: #f39c12; font-weight: bold; }
 .section-title { color: #53d769; font-size: 1em; margin: 14px 0 8px 0; }
 .pass-card { background: #16213e; border: 1px solid #0f3460; border-left: 3px solid #53d769; margin-bottom: 10px; padding: 10px; border-radius: 4px; }
 .pass-card.medium { border-left-color: #f39c12; }
 .pass-card.low { border-left-color: #e74c3c; }
-.card-head { font-size: 0.85em; color: #a8b8d8; margin-bottom: 6px; }
-.card-head .sat { color: #53d769; font-weight: bold; font-size: 1.05em; }
-.card-meta { font-size: 0.7em; color: #888; margin-bottom: 6px; }
-.filename { font-size: 0.75em; color: #888; word-break: break-all; margin-bottom: 4px; }
-button { padding: 4px 10px; background: #53d769; color: #1a1a2e; border: none; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.75em; }
+.card-head { font-size: 1em; color: #a8b8d8; margin-bottom: 6px; }
+.card-head .sat { color: #53d769; font-weight: bold; font-size: 1.15em; }
+.card-meta { font-size: 0.85em; color: #a8b8d8; margin-bottom: 8px; line-height: 1.6; }
+.filename { font-size: 0.9em; color: #888; word-break: break-all; margin-bottom: 4px; }
+button { padding: 5px 12px; background: #53d769; color: #1a1a2e; border: none; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.85em; }
 button:hover { background: #3eb852; }
 button.danger { background: #e74c3c; color: #fff; margin-left: 6px; }
 button.danger:hover { background: #c0392b; }
 audio { width: 100%; margin-top: 6px; height: 30px; }
 .decoded-img { max-width: 100%; margin-top: 8px; border-radius: 4px; border: 1px solid #0f3460; }
-.result { font-size: 0.75em; margin-top: 6px; }
-.muted { color: #666; font-size: 0.75em; padding: 10px; }
+.result { font-size: 0.85em; margin-top: 6px; }
+.muted { color: #666; font-size: 0.85em; padding: 10px; }
 </style>
 </head>
 <body>
