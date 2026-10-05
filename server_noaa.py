@@ -85,6 +85,26 @@ def push_live_audio(pcm):
             del live_audio_data[:drop]
             live_audio_base += drop
         live_audio_cond.notify_all()
+
+# Debug console ring buffer (served at /console)
+console_buffer = deque(maxlen=100)
+console_lock = threading.Lock()
+
+def log_console(msg, level="info"):
+    """Log a message to the /console debug page (and stdout)."""
+    line = {
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "level": level,
+        "msg": str(msg),
+    }
+    with console_lock:
+        console_buffer.append(line)
+    line_str = f"[{line['time']}] [{level}] {msg}"
+    try:
+        print(line_str)
+    except UnicodeEncodeError:
+        # Console can't render the message (e.g. emoji on a non-UTF-8 terminal)
+        print(line_str.encode('ascii', 'backslashreplace').decode('ascii'))
 rtl_sdr_proc = None
 current_frequency = 137620000
 current_sat_name = "NOAA 15 (idle)"
@@ -123,7 +143,7 @@ def refresh_tles():
     """Refresh TLE data from Celestrak."""
     global last_tle_refresh
     if not HAS_SKYFIELD:
-        print("Skyfield not available, cannot predict passes")
+        log_console("Skyfield not available, cannot predict passes", "warn")
         return {}
     ts = load.timescale()
     sats = {}
@@ -132,9 +152,9 @@ def refresh_tles():
             sat = fetch_tle(catnr, ts)
             if sat:
                 sats[catnr] = (sat, name, freq)
-                print(f"TLE loaded: {name} (cat #{catnr}), epoch={sat.epoch.utc_datetime()}")
+                log_console(f"TLE loaded: {name} (cat #{catnr}), epoch={sat.epoch.utc_datetime()}")
         except Exception as e:
-            print(f"TLE fetch failed for {name} (cat #{catnr}): {e}")
+            log_console(f"TLE fetch failed for {name} (cat #{catnr}): {e}", "error")
     last_tle_refresh = time.time()
     return sats
 
@@ -176,7 +196,7 @@ def predict_passes(sats, hours=24):
                         "duration_min": round(duration_min, 1),
                     })
         except Exception as e:
-            print(f"Pass prediction failed for {name}: {e}")
+            log_console(f"Pass prediction failed for {name}: {e}", "error")
     
     passes.sort(key=lambda p: p["rise_utc"])
     return passes
@@ -240,10 +260,10 @@ def scheduler_thread():
             with status_lock:
                 upcoming_passes = passes
             
-            print(f"Predicted {len(passes)} passes in next {PASS_PREDICT_HOURS}h")
+            log_console(f"Predicted {len(passes)} passes in next {PASS_PREDICT_HOURS}h")
             for p in passes[:5]:
                 local_rise = p["rise_utc"] + timedelta(hours=UTC_OFFSET)
-                print(f"  {p['sat_name']} {p['max_alt']:.0f}° at {local_rise.strftime('%H:%M')} ({round(p['frequency']/1e6,4)} MHz)")
+                log_console(f"  {p['sat_name']} {p['max_alt']:.0f}° at {local_rise.strftime('%H:%M')} ({round(p['frequency']/1e6,4)} MHz)")
             
             # Check every 10 seconds if we need to switch for an upcoming pass
             while True:
@@ -268,11 +288,11 @@ def scheduler_thread():
                         with signal_lock:
                             pass_signal_peak = 0.0
                         local_rise = triggered["rise_utc"] + timedelta(hours=UTC_OFFSET)
-                        print(f"🔴 PASS START: {triggered['sat_name']} {round(triggered['frequency']/1e6,4)} MHz, max {triggered['max_alt']}° at {local_rise.strftime('%H:%M')}")
+                        log_console(f"🔴 PASS START: {triggered['sat_name']} {round(triggered['frequency']/1e6,4)} MHz, max {triggered['max_alt']}° at {local_rise.strftime('%H:%M')}")
                     elif not triggered and current_pass is not None:
                         finished_pass = current_pass
                         local_set = finished_pass["set_utc"] + timedelta(hours=UTC_OFFSET)
-                        print(f"✅ PASS END: {finished_pass['sat_name']} finished at {local_set.strftime('%H:%M')}")
+                        log_console(f"✅ PASS END: {finished_pass['sat_name']} finished at {local_set.strftime('%H:%M')}")
                         current_pass = None
                         is_pass_active = False
                         # Return to NOAA 15 idle frequency
@@ -292,7 +312,7 @@ def scheduler_thread():
                         latest = recordings[0]
                         latest_png = latest.replace('.wav', '.png')
                         if not os.path.exists(latest_png):
-                            print(f"Auto-decoding: {os.path.basename(latest)}")
+                            log_console(f"Auto-decoding: {os.path.basename(latest)}")
                             try:
                                 result = subprocess.run(
                                     ['noaa-apt', latest, '-o', latest_png, '-q'],
@@ -301,11 +321,11 @@ def scheduler_thread():
                                 if os.path.exists(latest_png):
                                     decoded = True
                                     png_file = os.path.basename(latest_png)
-                                    print(f"Auto-decode successful: {png_file}")
+                                    log_console(f"Auto-decode successful: {png_file}")
                                 else:
-                                    print(f"Auto-decode failed: {result.stderr}")
+                                    log_console(f"Auto-decode failed: {result.stderr}", "error")
                             except Exception as e:
-                                print(f"Auto-decode error: {e}")
+                                log_console(f"Auto-decode error: {e}", "error")
                         else:
                             decoded = True
                             png_file = os.path.basename(latest_png)
@@ -319,7 +339,7 @@ def scheduler_thread():
                 
                 time.sleep(10)
         except Exception as e:
-            print(f"Scheduler error: {e}")
+            log_console(f"Scheduler error: {e}", "error")
             time.sleep(60)
 
 def sdr_thread():
@@ -337,13 +357,13 @@ def sdr_thread():
                 ['rtl_sdr', '-f', freq_str, '-s', str(SDR_RATE), '-g', str(SDR_GAIN), '-'],
                 stdout=subprocess.PIPE, stderr=rtl_log_f
             )
-            print(f"rtl_sdr started (pid {rtl_sdr_proc.pid}), freq={freq_str}Hz, gain={SDR_GAIN}dB")
+            log_console(f"rtl_sdr started (pid {rtl_sdr_proc.pid}), freq={freq_str}Hz, gain={SDR_GAIN}dB")
             last_history_append = 0.0
 
             while True:
                 raw = rtl_sdr_proc.stdout.read(IQ_BLOCK)
                 if not raw or len(raw) < IQ_BLOCK:
-                    print("rtl_sdr stdout closed, restarting...")
+                    log_console("rtl_sdr stdout closed, restarting...", "warn")
                     break
 
                 # FFT for waterfall
@@ -392,15 +412,15 @@ def sdr_thread():
                     current_wav.setsampwidth(2)
                     current_wav.setframerate(AUDIO_RATE)
                     is_recording = True
-                    print(f"🎬 Recording started: {current_wav_path}")
+                    log_console(f"🎬 Recording started: {current_wav_path}")
 
                 elif not should_record and is_recording:
                     # Stop recording
                     try:
                         current_wav.close()
-                        print(f"🎬 Recording stopped: {current_wav_path}")
+                        log_console(f"🎬 Recording stopped: {current_wav_path}")
                     except Exception as e:
-                        print(f"WAV close error: {e}")
+                        log_console(f"WAV close error: {e}", "error")
                     current_wav = None
                     current_wav_path = None
                     is_recording = False
@@ -419,10 +439,10 @@ def sdr_thread():
                         if audio:
                             current_wav.writeframes(audio)
                     except Exception as e:
-                        print(f"WAV write error: {e}")
+                        log_console(f"WAV write error: {e}", "error")
 
         except Exception as e:
-            print(f"SDR thread error: {e}")
+            log_console(f"SDR thread error: {e}", "error")
         try: rtl_sdr_proc.kill()
         except: pass
         try:
@@ -504,6 +524,62 @@ def get_status():
         except: pass
     return status
 
+CONSOLE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOAAh's CrabArk — Debug Console</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: monospace; background: #12121e; color: #e0e0e0; padding: 12px 15px; }
+h1 { font-size: 1.1em; color: #53d769; margin-bottom: 4px; }
+.sub { font-size: 0.75em; color: #888; margin-bottom: 10px; }
+.sub a { color: #53d769; }
+#toolbar { display: flex; gap: 15px; font-size: 0.75em; color: #888; margin-bottom: 8px; align-items: center; }
+#toolbar label { cursor: pointer; }
+#count { color: #f39c12; }
+#console { background: #000; border: 1px solid #0f3460; border-radius: 4px; padding: 8px; height: calc(100vh - 110px); overflow-y: auto; font-size: 0.8em; line-height: 1.5; }
+.line { white-space: pre-wrap; word-break: break-all; }
+.line .t { color: #666; margin-right: 5px; }
+.line.error { color: #e74c3c; }
+.line.warn { color: #f39c12; }
+.line.info { color: #e0e0e0; }
+</style>
+</head>
+<body>
+<h1>🛰️ NOAAh's CrabArk — Debug Console</h1>
+<div class="sub">Last 100 server messages — <a href="/console.json">raw JSON</a> — <a href="/">dashboard</a></div>
+<div id="toolbar">
+    <label><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
+    <span id="count"></span>
+</div>
+<div id="console"></div>
+<script>
+const el = document.getElementById('console');
+const countEl = document.getElementById('count');
+function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+async function poll() {
+    try {
+        const res = await fetch('/console.json');
+        const lines = await res.json();
+        const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+        el.innerHTML = lines.map(l =>
+            '<div class="line ' + l.level + '"><span class="t">' + l.time + '</span>' + escapeHtml(l.msg) + '</div>'
+        ).join('');
+        countEl.textContent = lines.length + ' messages';
+        if (document.getElementById('autoscroll').checked && atBottom) el.scrollTop = el.scrollHeight;
+    } catch(e) {}
+}
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
+"""
+
 class NOAAHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/status.json':
@@ -555,6 +631,19 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(history).encode())
+        elif self.path == '/console.json':
+            with console_lock:
+                lines = list(console_buffer)
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(lines).encode())
+        elif self.path == '/console' or self.path == '/console.html':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(CONSOLE_HTML.encode())
         elif self.path.startswith('/audio/'):
             filename = self.path[7:]
             if '..' in filename or '/' in filename:
@@ -573,6 +662,7 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(b'Audio not found')
         elif self.path == '/live.wav':
+            log_console(f"🔊 Live audio listener connected ({self.client_address[0]})")
             # Endless WAV stream of the live FM-demodulated audio.
             # WAV header with a maxed-out size; browsers play it progressively.
             self.send_response(200)
@@ -605,16 +695,19 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                     self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass  # listener disconnected
+            log_console(f"🔊 Live audio listener disconnected ({self.client_address[0]})")
             return
         elif self.path.startswith('/decode/'):
             filename = self.path[8:]
             if '..' in filename or '/' in filename:
+                log_console(f"Decode rejected invalid filename: {filename!r}", "warn")
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(b'Invalid filename')
                 return
             wav_path = os.path.join(RECORD_DIR, filename)
             if not os.path.exists(wav_path):
+                log_console(f"Decode requested missing recording: {filename}", "warn")
                 self.send_response(404)
                 self.end_headers()
                 self.wfile.write(b'Recording not found')
@@ -634,6 +727,7 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                         "png": filename.replace('.wav', '.png'),
                     }).encode())
                 else:
+                    log_console(f"Decode failed for {filename}: {result.stderr or 'No output image'}", "error")
                     self.send_response(500)
                     self.send_header('Content-type', 'application/json')
                     self.end_headers()
@@ -642,10 +736,12 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                         "error": result.stderr or "No output image"
                     }).encode())
             except subprocess.TimeoutExpired:
+                log_console(f"Decode timeout for {filename}", "error")
                 self.send_response(504)
                 self.end_headers()
                 self.wfile.write(b'Decode timeout')
             except Exception as e:
+                log_console(f"Decode error for {filename}: {e}", "error")
                 self.send_response(500)
                 self.end_headers()
                 self.wfile.write(f'Error: {e}'.encode())
@@ -685,8 +781,8 @@ if __name__ == '__main__':
     sdr_t = threading.Thread(target=sdr_thread, daemon=True)
     sdr_t.start()
     
-    print(f"NOAA Receiver started (Regensburg {LAT}N {LON}E)")
-    print(f"Auto pass tracking enabled, recording only during passes (>{PASS_MIN_ALT}°)")
+    log_console(f"NOAA Receiver started (Regensburg {LAT}N {LON}E)")
+    log_console(f"Auto pass tracking enabled, recording only during passes (>{PASS_MIN_ALT}°)")
     with socketserver.ThreadingTCPServer(("0.0.0.0", PORT), NOAAHandler) as httpd:
-        print(f"Server running on port {PORT}")
+        log_console(f"Server running on port {PORT}")
         httpd.serve_forever()
