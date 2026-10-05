@@ -745,6 +745,51 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(500)
                 self.end_headers()
                 self.wfile.write(f'Error: {e}'.encode())
+        elif self.path.startswith('/delete/'):
+            filename = self.path[8:]
+            if '..' in filename or '/' in filename or not filename.endswith('.wav'):
+                log_console(f"Delete rejected invalid filename: {filename!r}", "warn")
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'Invalid filename')
+                return
+            wav_path = os.path.join(RECORD_DIR, filename)
+            if not os.path.exists(wav_path):
+                log_console(f"Delete requested missing recording: {filename}", "warn")
+                self.send_response(404)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Recording not found"}).encode())
+                return
+            # Never delete the file that is currently being written
+            with status_lock:
+                recording_now = is_recording and current_wav_path == wav_path
+            if recording_now:
+                log_console(f"Delete refused, recording in progress: {filename}", "warn")
+                self.send_response(409)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Recording in progress"}).encode())
+                return
+            deleted = []
+            try:
+                os.remove(wav_path)
+                deleted.append(filename)
+                png_path = wav_path[:-4] + '.png'
+                if os.path.exists(png_path):
+                    os.remove(png_path)
+                    deleted.append(os.path.basename(png_path))
+                log_console(f"🗑 Deleted: {', '.join(deleted)}")
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "deleted": deleted}).encode())
+            except Exception as e:
+                log_console(f"Delete error for {filename}: {e}", "error")
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode())
         elif self.path.startswith('/images/'):
             filename = self.path[8:]
             if '..' in filename or '/' in filename:

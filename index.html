@@ -41,6 +41,8 @@
         .recording .info { color: #a8b8d8; margin-top: 3px; font-size: 0.75em; }
         .recording button { margin-top: 5px; padding: 4px 10px; background: #53d769; color: #1a1a2e; border: none; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.8em; }
         .recording button:hover { background: #3eb852; }
+        .recording button.danger { background: #e74c3c; color: #fff; margin-left: 6px; }
+        .recording button.danger:hover { background: #c0392b; }
         .recording .decoded-img { max-width: 100%; margin-top: 8px; border-radius: 4px; }
         .status-item { margin-bottom: 8px; padding: 6px 8px; background: #0f3460; border-radius: 4px; }
         .status-label { color: #888; font-size: 0.7em; }
@@ -312,6 +314,7 @@
                         <div class="filename">${r.filename}</div>
                         <div class="info">${r.size_mb} MB${r.decoded ? ' — ✅ Decoded' : ''}</div>
                         <button onclick="decodeRecording('${r.filename}')">🔄 Decode APT Image</button>
+                        <button class="danger" onclick="deleteRecording('${r.filename}')">🗑 Delete</button>
                         <audio controls preload="none" style="width:100%;margin-top:5px;height:30px;">
                             <source src="/audio/${r.filename}" type="audio/wav">
                         </audio>
@@ -350,6 +353,22 @@
                 }
             } catch(e) {
                 resultDiv.innerHTML = `<div style="color:#e74c3c;padding:5px;">❌ Error: ${e}</div>`;
+            }
+        }
+
+        async function deleteRecording(filename) {
+            if (!confirm(`Delete ${filename} and its decoded image? This cannot be undone.`)) return;
+            try {
+                const res = await fetch('/delete/' + filename);
+                const data = await res.json();
+                if (data.success) {
+                    delete decodingInProcess[filename];
+                    fetchRecordings(); // refresh list immediately
+                } else {
+                    alert('Delete failed: ' + (data.error || 'unknown error'));
+                }
+            } catch(e) {
+                alert('Delete failed: ' + e);
             }
         }
 
