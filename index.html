@@ -71,13 +71,17 @@
     </div>
     <div id="pass-banner" class="pass-idle">Checking pass schedule...</div>
     <div id="waterfall-section">
-        <h2>Live Waterfall — <span id="wf-freq">137.620 MHz</span> ± 120 kHz</h2>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h2 style="margin-bottom:0;">Live Waterfall — <span id="wf-freq">137.620 MHz</span> ± 120 kHz</h2>
+            <button id="wf-overlay-btn" onclick="toggleWfOverlay()" style="padding:3px 10px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;">📐 Features</button>
+        </div>
         <div style="position:relative;">
             <canvas id="waterfall-canvas" width="512" height="120"></canvas>
             <canvas id="spectrum-canvas" width="512" height="25"></canvas>
             <div id="wf-highlight" style="display:none;position:absolute;top:0;bottom:0;left:50%;width:20%;transform:translateX(-50%);pointer-events:none;background:rgba(83,215,105,0.10);border-left:1px solid rgba(83,215,105,0.7);border-right:1px solid rgba(83,215,105,0.7);">
                 <div id="wf-highlight-label" style="position:absolute;top:2px;left:50%;transform:translateX(-50%);background:#53d769;color:#1a1a2e;font-size:0.6em;padding:1px 6px;border-radius:3px;white-space:nowrap;"></div>
             </div>
+            <canvas id="wf-overlay" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></canvas>
         </div>
         <div id="freq-labels">
             <span id="fl-1">137.500</span>
@@ -206,6 +210,86 @@
             document.getElementById('wf-freq').textContent = center.toFixed(3) + ' MHz';
             document.getElementById('freq-current').textContent = center.toFixed(4) + ' MHz';
         }
+
+        let wfOverlayOn = false;
+        function toggleWfOverlay() {
+            wfOverlayOn = !wfOverlayOn;
+            document.getElementById('wf-overlay').style.display = wfOverlayOn ? 'block' : 'none';
+            document.getElementById('wf-overlay-btn').textContent = wfOverlayOn ? '📐 Features ✓' : '📐 Features';
+            if (wfOverlayOn) drawWfOverlay();
+        }
+
+        function wfOverlayLabel(ctx, x, y, text, color, align) {
+            ctx.font = '10px monospace';
+            ctx.textAlign = align || 'center';
+            const tw = ctx.measureText(text).width;
+            const bx = align === 'right' ? x - tw : (align === 'left' ? x : x - tw / 2);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+            ctx.fillRect(bx - 3, y - 10, tw + 6, 14);
+            ctx.fillStyle = color;
+            ctx.fillText(text, x, y);
+        }
+
+        function drawWfOverlay() {
+            const canvas = document.getElementById('wf-overlay');
+            const w = canvas.clientWidth, h = canvas.clientHeight;
+            if (w === 0 || h === 0) return;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = Math.round(w * dpr);
+            canvas.height = Math.round(h * dpr);
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, w, h);
+
+            // x position of a frequency offset in kHz relative to the satellite (display spans ±60 kHz)
+            const x = khz => w / 2 + (khz / 60) * (w / 2);
+
+            // APT signal band: FM deviation ±17.5 kHz around the satellite center
+            ctx.fillStyle = 'rgba(83, 215, 105, 0.08)';
+            ctx.fillRect(x(-17.5), 0, x(17.5) - x(-17.5), h);
+            ctx.strokeStyle = 'rgba(83, 215, 105, 0.5)';
+            ctx.setLineDash([]);
+            for (const k of [-17.5, 17.5]) {
+                ctx.beginPath(); ctx.moveTo(x(k), 0); ctx.lineTo(x(k), h); ctx.stroke();
+            }
+
+            // Demod low-pass passband edges: ±22 kHz (audio band kept)
+            ctx.strokeStyle = 'rgba(243, 156, 18, 0.8)';
+            ctx.setLineDash([5, 4]);
+            for (const k of [-22, 22]) {
+                ctx.beginPath(); ctx.moveTo(x(k), 0); ctx.lineTo(x(k), h); ctx.stroke();
+            }
+            ctx.setLineDash([]);
+
+            // Signal-strength measurement band: center 20 FFT bins ≈ ±4.7 kHz
+            ctx.strokeStyle = 'rgba(46, 204, 113, 0.9)';
+            for (const k of [-4.7, 4.7]) {
+                ctx.beginPath(); ctx.moveTo(x(k), h - 46); ctx.lineTo(x(k), h - 26); ctx.stroke();
+            }
+
+            // DC spike: dongle is tuned +60 kHz off, spike lands at the right edge
+            ctx.strokeStyle = 'rgba(231, 76, 60, 0.9)';
+            ctx.setLineDash([2, 3]);
+            ctx.beginPath(); ctx.moveTo(x(60), 0); ctx.lineTo(x(60), h); ctx.stroke();
+            ctx.setLineDash([]);
+
+            // kHz axis relative to the satellite, along the bottom
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#888';
+            for (const k of [-60, -30, 0, 30, 60]) {
+                ctx.fillText((k > 0 ? '+' : '') + k, x(k), h - 4);
+            }
+
+            // Labels
+            wfOverlayLabel(ctx, x(0), 44, 'APT signal ±17.5 kHz', '#53d769');
+            wfOverlayLabel(ctx, x(-22), 16, '◄ demod filter ±22 kHz', '#f39c12');
+            wfOverlayLabel(ctx, x(22), 16, 'demod filter ±22 kHz ►', '#f39c12');
+            wfOverlayLabel(ctx, x(0), h - 30, 'signal meter ±5 kHz', '#2ecc71');
+            wfOverlayLabel(ctx, w - 6, 16, 'DC spike / RTL tuned +60 kHz off', '#e74c3c', 'right');
+        }
+
+        window.addEventListener('resize', () => { if (wfOverlayOn) drawWfOverlay(); });
 
         async function fetchWaterfall() {
             try {
