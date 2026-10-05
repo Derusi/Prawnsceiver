@@ -7,6 +7,7 @@ NOAA Weather Satellite Receiver with Auto Pass Tracking
 - Live waterfall always active (for monitoring noise floor between passes)
 - Serves web dashboard with pass schedule, waterfall, recordings, and APT decode
 """
+import glob
 import http.server
 import socketserver
 import json
@@ -29,6 +30,7 @@ except ImportError:
 PORT = 8085
 LOGDIR = "/var/log/noaa"
 RECORD_DIR = "/var/log/noaa/recordings"
+PASS_HISTORY_FILE = os.path.join(LOGDIR, "pass_history.json")
 RTL_LOG = os.path.join(LOGDIR, "rtl_sdr.log")
 WEBDIR = "/home/eugene/aprs_website"
 FFT_SIZE = 512
@@ -60,7 +62,9 @@ TLE_REFRESH_HOURS = 6  # Refresh TLE data every 6h
 waterfall_buffer = deque(maxlen=WATERFALL_ROWS)
 waterfall_lock = threading.Lock()
 signal_strength = 0.0
+pass_signal_peak = 0.0
 signal_lock = threading.Lock()
+signal_history = deque(maxlen=300)  # 5 min at 1 Hz
 rtl_sdr_proc = None
 current_frequency = 137620000
 current_sat_name = "NOAA 15 (idle)"
@@ -175,9 +179,34 @@ def passes_to_json(passes):
         })
     return result
 
+def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, signal_peak, decoded, png_file):
+    """Log a completed pass to the history file."""
+    history = []
+    if os.path.exists(PASS_HISTORY_FILE):
+        try:
+            with open(PASS_HISTORY_FILE, 'r') as f:
+                history = json.load(f)
+        except Exception:
+            pass
+    history.append({
+        "sat_name": sat_name,
+        "frequency_mhz": round(frequency / 1e6, 4),
+        "max_alt": max_alt,
+        "duration_min": duration_min,
+        "rise_local": (rise_time + timedelta(hours=UTC_OFFSET)).strftime("%d.%m %H:%M"),
+        "signal_peak": round(signal_peak, 1),
+        "decoded": decoded,
+        "png": png_file,
+        "timestamp": datetime.now().isoformat(),
+    })
+    # Keep last 50 passes
+    history = history[-50:]
+    with open(PASS_HISTORY_FILE, 'w') as f:
+        json.dump(history, f, indent=2)
+
 def scheduler_thread():
     """Background thread: refresh TLEs, predict passes, trigger frequency switches."""
-    global upcoming_passes, current_pass, current_frequency, current_sat_name, is_pass_active
+    global upcoming_passes, current_pass, current_frequency, current_sat_name, is_pass_active, pass_signal_peak
     while True:
         try:
             # Refresh TLEs if stale
@@ -208,22 +237,61 @@ def scheduler_thread():
                         triggered = p
                         break
                 
+                finished_pass = None
+                pass_peak = 0.0
                 with status_lock:
                     if triggered and current_pass != triggered:
                         current_pass = triggered
                         current_frequency = triggered["frequency"]
                         current_sat_name = triggered["sat_name"]
                         is_pass_active = True
+                        with signal_lock:
+                            pass_signal_peak = 0.0
                         local_rise = triggered["rise_utc"] + timedelta(hours=UTC_OFFSET)
                         print(f"🔴 PASS START: {triggered['sat_name']} {round(triggered['frequency']/1e6,4)} MHz, max {triggered['max_alt']}° at {local_rise.strftime('%H:%M')}")
                     elif not triggered and current_pass is not None:
-                        local_set = current_pass["set_utc"] + timedelta(hours=UTC_OFFSET)
-                        print(f"✅ PASS END: {current_pass['sat_name']} finished at {local_set.strftime('%H:%M')}")
+                        finished_pass = current_pass
+                        local_set = finished_pass["set_utc"] + timedelta(hours=UTC_OFFSET)
+                        print(f"✅ PASS END: {finished_pass['sat_name']} finished at {local_set.strftime('%H:%M')}")
                         current_pass = None
                         is_pass_active = False
                         # Return to NOAA 15 idle frequency
                         current_frequency = 137620000
                         current_sat_name = "NOAA 15 (idle)"
+                        with signal_lock:
+                            pass_peak = pass_signal_peak
+                            pass_signal_peak = 0.0
+
+                if finished_pass is not None:
+                    # Wait for the SDR thread to finalize the WAV, then auto-decode it
+                    time.sleep(2)
+                    decoded = False
+                    png_file = None
+                    recordings = sorted(glob.glob(os.path.join(RECORD_DIR, "*.wav")), key=os.path.getmtime, reverse=True)
+                    if recordings:
+                        latest = recordings[0]
+                        latest_png = latest.replace('.wav', '.png')
+                        if not os.path.exists(latest_png):
+                            print(f"Auto-decoding: {os.path.basename(latest)}")
+                            try:
+                                result = subprocess.run(
+                                    ['noaa-apt', latest, '-o', latest_png, '-q'],
+                                    capture_output=True, text=True, timeout=120
+                                )
+                                if os.path.exists(latest_png):
+                                    decoded = True
+                                    png_file = os.path.basename(latest_png)
+                                    print(f"Auto-decode successful: {png_file}")
+                                else:
+                                    print(f"Auto-decode failed: {result.stderr}")
+                            except Exception as e:
+                                print(f"Auto-decode error: {e}")
+                        else:
+                            decoded = True
+                            png_file = os.path.basename(latest_png)
+                    log_pass(finished_pass["sat_name"], finished_pass["frequency"],
+                             finished_pass["max_alt"], finished_pass["duration_min"],
+                             finished_pass["rise_utc"], pass_peak, decoded, png_file)
                 
                 # Refresh passes list every 30 min
                 if datetime.utcnow().minute % 30 == 0 and datetime.utcnow().second < 10:
@@ -250,6 +318,7 @@ def sdr_thread():
                 stdout=subprocess.PIPE, stderr=rtl_log_f
             )
             print(f"rtl_sdr started (pid {rtl_sdr_proc.pid}), freq={freq_str}Hz, gain={SDR_GAIN}dB")
+            last_history_append = 0.0
 
             while True:
                 raw = rtl_sdr_proc.stdout.read(IQ_BLOCK)
@@ -273,6 +342,13 @@ def sdr_thread():
                         band = magnitude[center-10:center+10].mean()
                         with signal_lock:
                             signal_strength = float(band)
+                            if is_recording:
+                                pass_signal_peak = max(pass_signal_peak, signal_strength)
+                        now_ts = time.time()
+                        if now_ts - last_history_append >= 1.0:
+                            last_history_append = now_ts
+                            with signal_lock:
+                                signal_history.append(float(band))
                         if magnitude.max() > 0:
                             magnitude = magnitude / magnitude.max() * 255
                         row = magnitude.astype(int).tolist()
@@ -430,6 +506,44 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(get_recordings()).encode())
+        elif self.path == '/signal_history.json':
+            with signal_lock:
+                history = list(signal_history)
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(history).encode())
+        elif self.path == '/pass_history.json':
+            history = []
+            if os.path.exists(PASS_HISTORY_FILE):
+                try:
+                    with open(PASS_HISTORY_FILE, 'r') as f:
+                        history = json.load(f)
+                except Exception:
+                    pass
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(history).encode())
+        elif self.path.startswith('/audio/'):
+            filename = self.path[7:]
+            if '..' in filename or '/' in filename:
+                self.send_response(400)
+                self.end_headers()
+                return
+            wav_path = os.path.join(RECORD_DIR, filename)
+            if os.path.exists(wav_path):
+                self.send_response(200)
+                self.send_header('Content-type', 'audio/wav')
+                self.end_headers()
+                with open(wav_path, 'rb') as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b'Audio not found')
         elif self.path.startswith('/decode/'):
             filename = self.path[8:]
             if '..' in filename or '/' in filename:

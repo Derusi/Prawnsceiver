@@ -59,6 +59,7 @@
     <div id="header">
         <div>
             <h1>🛰️ NOAAh's CrabArk — Shell</h1>
+            <span style="font-size:0.7em;color:#888;margin-left:10px;">🦀 Crabs caught: <span id="crab-count">0</span></span>
             <div class="info">Raspberry Pi 4 | RTL-SDR RTL2832U (R820T) | Regensburg 49.013°N 12.099°E | Auto Pass Tracking</div>
         </div>
         <div id="freq-display" style="text-align:right;font-size:0.85em;">
@@ -83,6 +84,8 @@
         <div id="main-panel">
             <div class="section-title">📅 Upcoming Passes (24h)</div>
             <div id="passes-list">Loading pass predictions...</div>
+            <div class="section-title">📜 Pass History</div>
+            <div id="pass-history-list">No passes logged yet.</div>
             <div class="section-title">📡 Recordings & Decoded Images</div>
             <div id="recordings-list"><div id="no-recordings">No recordings yet. Will record automatically during passes.</div></div>
         </div>
@@ -104,6 +107,10 @@
                 <div class="status-label">Signal Strength</div>
                 <div class="status-value" id="signal-value">—</div>
                 <div class="signal-bar"><div class="signal-fill" id="signal-fill" style="width:0%"></div></div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Signal Timeline (5 min)</div>
+                <canvas id="signal-canvas" width="240" height="60" style="width:100%;height:60px;background:#000;border:1px solid #0f3460;border-radius:4px;"></canvas>
             </div>
             <div class="status-item">
                 <div class="status-label">Recordings</div>
@@ -129,6 +136,9 @@
     </div>
     <script>
         const startTime = Date.now();
+        const decodingInProcess = {};
+        const signalHistory = [];
+        const MAX_SIGNAL_POINTS = 300; // 5 min at 1Hz
         const WF_WIDTH = 512, WF_HEIGHT = 120, SPEC_HEIGHT = 25;
         const wfCanvas = document.getElementById('waterfall-canvas');
         const wfCtx = wfCanvas.getContext('2d');
@@ -279,6 +289,9 @@
             try {
                 const res = await fetch('/recordings.json');
                 const recordings = await res.json();
+                const decoded = recordings.filter(r => r.decoded).length;
+                const crabEl = document.getElementById('crab-count');
+                if (crabEl) crabEl.textContent = decoded;
                 const panel = document.getElementById('recordings-list');
                 if (recordings.length === 0) {
                     panel.innerHTML = '<div id="no-recordings">No recordings yet. Will record automatically during passes.</div>';
@@ -291,6 +304,9 @@
                         <div class="filename">${r.filename}</div>
                         <div class="info">${r.size_mb} MB${r.decoded ? ' — ✅ Decoded' : ''}</div>
                         <button onclick="decodeRecording('${r.filename}')">🔄 Decode APT Image</button>
+                        <audio controls preload="none" style="width:100%;margin-top:5px;height:30px;">
+                            <source src="/audio/${r.filename}" type="audio/wav">
+                        </audio>
                         <div id="${resultId}"></div>
                     </div>`;
                 }
@@ -300,6 +316,13 @@
                     if (r.decoded && r.png) {
                         const resultId = 'result-' + r.filename.replace(/[^a-zA-Z0-9]/g, '');
                         document.getElementById(resultId).innerHTML = `<img class="decoded-img" src="/images/${r.png}" alt="APT image">`;
+                    }
+                }
+                // Auto-decode new recordings after a short delay
+                for (const r of recordings) {
+                    if (!r.decoded && !decodingInProcess[r.filename]) {
+                        decodingInProcess[r.filename] = true;
+                        setTimeout(() => decodeRecording(r.filename), 3000); // wait 3s for WAV to finalize
                     }
                 }
             } catch(e) { console.error('Error fetching recordings:', e); }
@@ -328,6 +351,87 @@
             document.getElementById('uptime').textContent = `${h}h ${m}m ${sec}s`;
         }
 
+        async function fetchSignal() {
+            try {
+                const res = await fetch('/status.json');
+                const data = await res.json();
+                signalHistory.push(data.signal_strength || 0);
+                if (signalHistory.length > MAX_SIGNAL_POINTS) signalHistory.shift();
+                drawSignalGraph();
+            } catch(e) {}
+        }
+
+        function drawSignalGraph() {
+            const canvas = document.getElementById('signal-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, w, h);
+
+            if (signalHistory.length < 2) return;
+
+            const maxVal = Math.max(...signalHistory, 50);
+            const step = w / (MAX_SIGNAL_POINTS - 1);
+
+            // Draw filled area
+            ctx.beginPath();
+            ctx.moveTo(0, h);
+            for (let i = 0; i < signalHistory.length; i++) {
+                const x = i * step;
+                const y = h - (signalHistory[i] / maxVal) * h;
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo((signalHistory.length - 1) * step, h);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(83, 215, 105, 0.2)';
+            ctx.fill();
+
+            // Draw line
+            ctx.beginPath();
+            for (let i = 0; i < signalHistory.length; i++) {
+                const x = i * step;
+                const y = h - (signalHistory[i] / maxVal) * h;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = '#53d769';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Draw "now" marker
+            ctx.fillStyle = '#53d769';
+            ctx.fillRect((signalHistory.length - 1) * step - 1, 0, 2, h);
+        }
+
+        async function fetchPassHistory() {
+            try {
+                const res = await fetch('/pass_history.json');
+                const history = await res.json();
+                const list = document.getElementById('pass-history-list');
+                if (history.length === 0) {
+                    list.innerHTML = '<div style="color:#666;padding:10px;">No passes logged yet.</div>';
+                    return;
+                }
+                let html = '';
+                // Show most recent first
+                for (const h of history.reverse()) {
+                    const qIcon = h.max_alt >= 35 ? '🟢' : (h.max_alt >= 15 ? '🟡' : '🔴');
+                    const decIcon = h.decoded ? '🖼️' : '❌';
+                    const imgLink = h.png ? ` <a href="/images/${h.png}" target="_blank" style="color:#53d769;">view</a>` : '';
+                    html += `<div class="pass-row ${h.max_alt >= 35 ? 'high' : (h.max_alt >= 15 ? 'medium' : 'low')}">
+                        <div class="pass-sat">${qIcon} ${h.sat_name}</div>
+                        <div class="pass-time">${h.rise_local}</div>
+                        <div class="pass-alt">${h.max_alt}°</div>
+                        <div style="font-size:0.75em;color:#888;width:50px;">${h.duration_min}min</div>
+                        <div style="font-size:0.75em;color:#888;width:50px;">peak:${h.signal_peak||'—'}</div>
+                        <div style="font-size:0.8em;">${decIcon}${imgLink}</div>
+                    </div>`;
+                }
+                list.innerHTML = html;
+            } catch(e) { console.error('Error fetching pass history:', e); }
+        }
+
         // Init
         wfCtx.fillStyle = '#000'; wfCtx.fillRect(0, 0, WF_WIDTH, WF_HEIGHT);
         specCtx.fillStyle = '#000'; specCtx.fillRect(0, 0, WF_WIDTH, SPEC_HEIGHT);
@@ -336,8 +440,10 @@
         setInterval(fetchStatus, 3000);
         setInterval(fetchPasses, 30000);
         setInterval(fetchRecordings, 5000);
+        setInterval(fetchPassHistory, 30000);
+        setInterval(fetchSignal, 1000);
         setInterval(updateUptime, 1000);
-        fetchWaterfall(); fetchStatus(); fetchPasses(); fetchRecordings(); updateUptime();
+        fetchWaterfall(); fetchStatus(); fetchPasses(); fetchRecordings(); fetchPassHistory(); fetchSignal(); updateUptime();
     </script>
 </body>
 </html>
