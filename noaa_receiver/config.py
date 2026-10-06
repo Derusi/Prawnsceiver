@@ -28,7 +28,7 @@ SDR_FREQ_CORRECTION_HZ = {
     137620000: 21600,   # NOAA 15 (measured: carrier +21.6 kHz in the waterfall)
     137912500: 21650,   # NOAA 18 (scaled by frequency within the band)
     137100000: 21500,   # NOAA 19 (scaled by frequency within the band)
-    437550000: 0,       # ISS (Zarya) — to be measured from the first pass
+    437550000: -30000,  # ISS (Zarya) — measured from the 15:08 pass waterfall (-26..-28 kHz raw, minus Doppler)
 }
 AUDIO_RATE = 48000
 IQ_BLOCK = FFT_SIZE * 2
