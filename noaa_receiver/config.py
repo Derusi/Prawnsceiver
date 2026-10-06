@@ -18,6 +18,18 @@ SDR_RATE = 240000
 # inherent center DC spike off the satellite signal (it would otherwise sit
 # exactly on the APT carrier).
 SDR_OFFSET_HZ = 60000
+# Per-frequency static tuning corrections (Hz), added to the rtl_sdr tune
+# command. This dongle's R820T never confirms PLL lock and is mistuned by a
+# per-band offset (measured: about +21.6 kHz at 137.6 MHz, -8.4 kHz at
+# 103 MHz — the error differs per VCO band, so a single ppm value doesn't
+# work). Values are measured from the live waterfall during passes: the
+# satellite carrier's distance from the FFT center is this correction.
+SDR_FREQ_CORRECTION_HZ = {
+    137620000: 21600,   # NOAA 15 (measured: carrier +21.6 kHz in the waterfall)
+    137912500: 21650,   # NOAA 18 (scaled by frequency within the band)
+    137100000: 21500,   # NOAA 19 (scaled by frequency within the band)
+    437550000: 0,       # ISS (Zarya) — to be measured from the first pass
+}
 AUDIO_RATE = 48000
 IQ_BLOCK = FFT_SIZE * 2
 DECIMATION = SDR_RATE // AUDIO_RATE

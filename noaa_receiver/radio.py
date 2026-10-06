@@ -6,16 +6,17 @@ import wave
 from datetime import datetime
 
 from . import state
-from .config import AUDIO_RATE, DECIMATION, FFT_SIZE, IQ_BLOCK, LOGDIR, RECORD_DIR, RTL_LOG, SDR_GAIN, SDR_OFFSET_HZ, SDR_RATE
+from .config import AUDIO_RATE, DECIMATION, FFT_SIZE, IQ_BLOCK, LOGDIR, RECORD_DIR, RTL_LOG, SDR_FREQ_CORRECTION_HZ, SDR_GAIN, SDR_OFFSET_HZ, SDR_RATE
 
 from .dsp import fm_demodulate, frequency_shift, iq_to_complex
 
 def _rtl_pll_failed(proc):
     """True if rtl_sdr logged 'PLL not locked' since the log was truncated.
 
-    The R820T prints this right after tuning; if the PLL is not locked the
-    tuner runs mistuned by tens of kHz and everything received is noise, so
-    the only sensible reaction is to restart rtl_sdr and try again.
+    Note: on some R820T dongles this lock bit is unreliable — the tuner
+    receives fine while never confirming lock. The receiver therefore only
+    warns and keeps running; the per-frequency mistune that such dongles
+    show is handled by SDR_FREQ_CORRECTION_HZ.
     """
     deadline = time.time() + 3.0
     while time.time() < deadline and proc.poll() is None:
@@ -34,11 +35,12 @@ def sdr_thread():
     os.makedirs(LOGDIR, exist_ok=True)
     os.makedirs(RECORD_DIR, exist_ok=True)
     rtl_log_f = open(RTL_LOG, 'w')
-    pll_failures = 0
+    pll_warned = False
 
     while True:
         try:
-            freq_str = f"{state.current_frequency + SDR_OFFSET_HZ}"
+            correction = SDR_FREQ_CORRECTION_HZ.get(state.current_frequency, 0)
+            freq_str = f"{state.current_frequency + SDR_OFFSET_HZ + correction}"
             tuned_freq = state.current_frequency
             record_sat = None
             # Fresh log per rtl_sdr start so the PLL check below only sees
@@ -49,26 +51,10 @@ def sdr_thread():
                 ['rtl_sdr', '-f', freq_str, '-s', str(SDR_RATE), '-g', str(SDR_GAIN), '-'],
                 stdout=subprocess.PIPE, stderr=rtl_log_f
             )
-            state.log_console(f"rtl_sdr started (pid {state.rtl_sdr_proc.pid}), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ}Hz, DC spike displaced), gain={SDR_GAIN}dB")
-            if _rtl_pll_failed(state.rtl_sdr_proc):
-                pll_failures += 1
-                wait = min(60, 5 * pll_failures)
-                state.log_console(f"R820T PLL did not lock (attempt {pll_failures}) — tuner is mistuned, restarting rtl_sdr in {wait}s (check USB power / dongle)", "warn")
-                try:
-                    state.rtl_sdr_proc.kill()
-                except Exception:
-                    pass
-                try:
-                    if state.current_wav:
-                        state.current_wav.close()
-                except Exception:
-                    pass
-                state.current_wav = None
-                state.current_wav_path = None
-                state.is_recording = False
-                time.sleep(wait)
-                continue
-            pll_failures = 0
+            state.log_console(f"rtl_sdr started (pid {state.rtl_sdr_proc.pid}), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ + correction}Hz, DC spike displaced), gain={SDR_GAIN}dB")
+            if _rtl_pll_failed(state.rtl_sdr_proc) and not pll_warned:
+                pll_warned = True
+                state.log_console("R820T PLL lock not confirmed — continuing anyway (lock bit unreliable on this dongle, mistune handled via SDR_FREQ_CORRECTION_HZ)", "warn")
             last_history_append = 0.0
 
             while True:
