@@ -35,24 +35,17 @@ PRIMARY_DONGLE_SN = "77771111153705700"
 #   'ppm': fallback for frequencies not listed (scaled); None = no fallback
 # Dongles not listed here fall back to the primary dongle's values.
 SDR_DONGLE_CORRECTIONS = {
-    # Primary R820T: never confirms PLL lock. Crystal error measured +79.6 ppm
-    # (LO tunes HIGH, correction is negative) at three independent points:
-    #   - 103.0 MHz: FM pilot 18998.05 Hz with -8.2 kHz applied -> +8198 Hz
-    #   - 144.8 MHz: local carriers vs. the 144.7/144.75/144.88 survey -> +11.5 kHz
-    #   - 437.55 MHz: 15:08 ISS ridges -22.5..-28.7 kHz raw fit +34.8 kHz with
-    #     approach Doppler +6..+12 kHz
-    # The earlier +21.6 kHz VHF3 value was an R820T spur misread as the
-    # satellite (with it applied, the 18:00 NOAA 15 pass showed no APT ridge
-    # anywhere in the +-120 kHz window on either dongle).
+    # Primary R820T: never confirms PLL lock; the error differs per VCO band
+    # (VHF3 ~157 ppm low, VHF2 ~80 ppm high) so a single ppm doesn't fit
     "77771111153705700": {
         "freqs": {
-            137620000: -10955,  # NOAA 15 (79.6 ppm x 137.62 MHz)
-            137912500: -10977,  # NOAA 18
-            137100000: -10913,  # NOAA 19
-            437550000: -34827,  # ISS (Zarya) (79.6 ppm x 437.55 MHz)
+            137620000: 21600,   # NOAA 15 (measured: carrier +21.6 kHz in the waterfall)
+            137912500: 21650,   # NOAA 18 (scaled by frequency within the band)
+            137100000: 21500,   # NOAA 19 (scaled by frequency within the band)
+            437550000: -30000,  # ISS (Zarya) — measured from the 15:08 pass waterfall (-26..-28 kHz raw, minus Doppler)
         },
         "fm_band": -8200,  # VHF2: tunes ~8 kHz HIGH (carriers 6-11 kHz below nominal, measured on 89.7/93.0/95.0/99.6/103.0/105.0)
-        "ppm": 80,
+        "ppm": None,
     },
     # FC0013 dongle: ~39 ppm low, measured at 89.7 MHz (carrier landed +11.7
     # kHz off with the R820T correction applied -> own error ~+3.5 kHz there).
