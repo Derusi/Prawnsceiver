@@ -38,6 +38,7 @@ def _dongle_list():
                 "wav": os.path.basename(e["wav_path"]) if e["wav_path"] else None,
                 "correction_hz": e.get("correction", 0),
                 "correction_src": e.get("correction_src", "none"),
+                "manual_frequency_mhz": round(state.manual_dongle_freq[sn] / 1e6, 4) if sn in state.manual_dongle_freq else None,
             })
     return dongles
 
@@ -330,6 +331,51 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 state.current_frequency = freq_hz
                 state.current_sat_name = f"Manual {mhz:.4f} MHz"
             state.log_console(f"📻 Manual tune: {mhz:.4f} MHz — satellite tracking paused")
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "mode": "manual", "frequency_mhz": mhz}).encode())
+        elif self.path.startswith('/tune_dongle'):
+            # Per-dongle manual frequency override:
+            # /tune_dongle?d=<serial>&f=<mhz> tunes just that dongle (e.g.
+            # to compare receive quality around a signal); f=auto clears
+            # the override and the dongle rejoins the shared frequency.
+            query = parse_qs(urlparse(self.path).query)
+            dev = (query.get('d') or [''])[0]
+            f = (query.get('f') or [''])[0].strip().lower()
+            entry = state.sdrs.get(dev)
+            if entry is None:
+                self.send_response(404)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Unknown dongle"}).encode())
+                return
+            if f in ('', 'auto', 'sync'):
+                state.manual_dongle_freq.pop(dev, None)
+                state.log_console(f"🎛 Dongle {dev} frequency override cleared — back to the shared frequency")
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "mode": "sync"}).encode())
+                return
+            try:
+                mhz = float(f)
+            except ValueError:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Invalid frequency"}).encode())
+                return
+            if not 24.0 <= mhz <= 1766.0:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Frequency out of R820T range (24-1766 MHz)"}).encode())
+                return
+            state.manual_dongle_freq[dev] = int(round(mhz * 1e6))
+            state.log_console(f"🎛 Dongle {dev} frequency override: {mhz:.4f} MHz")
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')

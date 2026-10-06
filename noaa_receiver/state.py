@@ -66,6 +66,10 @@ rtl_sdr_proc = None
 # Manual tune (FM radio test): while set, the scheduler must not retune or
 # record — the operator controls the frequency from the dashboard.
 manual_frequency = None
+# Per-dongle manual frequency override (serial -> Hz): a dongle with an
+# entry tunes there instead of the shared current_frequency (e.g. to compare
+# receive quality at a slightly different center). Cleared per dongle.
+manual_dongle_freq = {}
 current_frequency = 137620000
 current_sat_name = "NOAA 15 (idle)"
 is_recording = False

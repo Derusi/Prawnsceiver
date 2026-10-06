@@ -167,7 +167,7 @@ def sdr_capture_thread(serial):
         proc = None
         try:
             with state.status_lock:
-                tune_target = state.current_frequency
+                tune_target = state.manual_dongle_freq.get(serial) or state.current_frequency
             correction = tuning_correction(tune_target, serial)
             # shown in the dongle cards' tuning infobox
             entry['correction'], entry['correction_src'] = correction_info(tune_target, serial)
@@ -260,6 +260,8 @@ def sdr_capture_thread(serial):
                 with state.status_lock:
                     freq_now = state.current_frequency
                     sat_now = state.current_sat_name
+                if serial in state.manual_dongle_freq:
+                    freq_now = state.manual_dongle_freq[serial]
                 if freq_now != tuned_freq and (not entry['is_recording'] or sat_now != record_sat):
                     if primary:
                         state.log_console(f"Retuning: {tuned_freq} Hz -> {freq_now} Hz ({sat_now})")

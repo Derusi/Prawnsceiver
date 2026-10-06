@@ -6,10 +6,10 @@
     <title>NOAAh's CrabArk — Shell</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; }
+        body { font-family: monospace; font-size: 17px; background: #1a1a2e; color: #e0e0e0; }
         #header { background: #16213e; padding: 12px 20px; border-bottom: 2px solid #0f3460; display: flex; justify-content: space-between; align-items: center; }
         #header h1 { font-size: 1.3em; color: #53d769; }
-        #header .info { font-size: 0.75em; color: #888; margin-top: 3px; }
+        #header .info { font-size:0.9em; color: #888; margin-top: 3px; }
         #pass-banner { padding: 10px 20px; text-align: center; font-size: 1em; font-weight: bold; transition: background 0.5s; }
         .pass-idle { background: #0f3460; color: #888; }
         .pass-active { background: #1a4a2e; color: #53d769; animation: pulse 2s infinite; }
@@ -19,7 +19,7 @@
         #waterfall-section h2 { color: #53d769; font-size: 1em; margin-bottom: 6px; }
         .wf-canvas { width: 100%; height: 180px; background: #000; border: 1px solid #0f3460; border-radius: 4px; image-rendering: pixelated; }
         .wf-spec { width: 100%; height: 50px; background: #000; border: 1px solid #0f3460; border-radius: 4px; margin-top: 4px; }
-        #freq-labels { display: flex; justify-content: space-between; font-size: 0.7em; color: #666; margin-top: 3px; }
+        #freq-labels { display: flex; justify-content: space-between; font-size:0.85em; color: #666; margin-top: 3px; }
         #container { display: flex; height: calc(100vh - 380px); min-height: 300px; }
         #main-panel { flex: 1; overflow-y: auto; padding: 12px 15px; }
         #status-panel { width: 260px; background: #16213e; padding: 12px 15px; border-left: 2px solid #0f3460; overflow-y: auto; }
@@ -31,29 +31,29 @@
         .pass-row.high { border-left-color: #53d769; }
         .pass-row.medium { border-left-color: #f39c12; }
         .pass-row.low { border-left-color: #e74c3c; }
-        .pass-sat { font-weight: bold; font-size: 0.9em; width: 90px; }
-        .pass-time { font-size: 0.85em; color: #a8b8d8; width: 140px; }
-        .pass-alt { font-size: 0.85em; width: 50px; text-align: right; }
-        .pass-freq { font-size: 0.75em; color: #888; width: 90px; }
-        .pass-countdown { font-size: 0.8em; color: #f39c12; font-weight: bold; text-align: right; min-width: 60px; }
+        .pass-sat { font-weight: bold; font-size:1em; width: 90px; }
+        .pass-time { font-size:1em; color: #a8b8d8; width: 140px; }
+        .pass-alt { font-size:1em; width: 50px; text-align: right; }
+        .pass-freq { font-size:0.9em; color: #888; width: 90px; }
+        .pass-countdown { font-size:0.95em; color: #f39c12; font-weight: bold; text-align: right; min-width: 60px; }
         .recording { background: #0f3460; margin-bottom: 6px; padding: 8px; border-radius: 4px; border-left: 3px solid #53d769; }
-        .recording .filename { font-weight: bold; color: #53d769; font-size: 0.85em; word-break: break-all; }
-        .recording .info { color: #a8b8d8; margin-top: 3px; font-size: 0.75em; }
-        .recording button { margin-top: 5px; padding: 4px 10px; background: #53d769; color: #1a1a2e; border: none; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.8em; }
+        .recording .filename { font-weight: bold; color: #53d769; font-size:1em; word-break: break-all; }
+        .recording .info { color: #a8b8d8; margin-top: 3px; font-size:0.9em; }
+        .recording button { margin-top: 5px; padding: 4px 10px; background: #53d769; color: #1a1a2e; border: none; border-radius: 3px; cursor: pointer; font-family: monospace; font-size:0.95em; }
         .recording button:hover { background: #3eb852; }
         .recording button.danger { background: #e74c3c; color: #fff; margin-left: 6px; }
         .recording button.danger:hover { background: #c0392b; }
         .recording .decoded-img { max-width: 100%; margin-top: 8px; border-radius: 4px; }
         .status-item { margin-bottom: 8px; padding: 6px 8px; background: #0f3460; border-radius: 4px; }
-        .status-label { color: #888; font-size: 0.7em; }
-        .status-value { color: #e0e0e0; font-size: 0.85em; margin-top: 2px; }
+        .status-label { color: #888; font-size:0.85em; }
+        .status-value { color: #e0e0e0; font-size:1em; margin-top: 2px; }
         .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
         .green { background: #2ecc71; }
         .red { background: #e74c3c; }
         .yellow { background: #f39c12; }
         .signal-bar { width: 100%; height: 6px; background: #0f3460; border-radius: 3px; margin-top: 4px; overflow: hidden; }
         .signal-fill { height: 100%; background: #53d769; border-radius: 3px; transition: width 0.3s; }
-        #no-recordings { text-align: center; padding: 20px; color: #666; font-size: 0.85em; }
+        #no-recordings { text-align: center; padding: 20px; color: #666; font-size:1em; }
         .countdown-big { font-size: 1.2em; font-weight: bold; color: #f39c12; }
     </style>
 </head>
@@ -63,12 +63,12 @@
             <img src="/prawnceiver.jpg" alt="Prawnsceiver" onclick="toggleLogoLightbox()" style="height:48px;width:auto;border-radius:6px;border:1px solid #0f3460;cursor:zoom-in;">
             <div>
                 <h1>🛰️ NOAAh's CrabArk — Shell</h1>
-                <span style="font-size:0.7em;color:#888;margin-left:10px;">🦀 Crabs caught: <span id="crab-count">0</span></span>
-                <a href="/history" style="font-size:0.7em;color:#53d769;margin-left:14px;">📚 Pass History &amp; Recordings →</a>
+                <span style="font-size:0.85em;color:#888;margin-left:10px;">🦀 Crabs caught: <span id="crab-count">0</span></span>
+                <a href="/history" style="font-size:0.85em;color:#53d769;margin-left:14px;">📚 Pass History &amp; Recordings →</a>
                 <div class="info">Raspberry Pi 4 | RTL-SDR RTL2832U (R820T) | Regensburg 49.013°N 12.099°E | Auto Pass Tracking</div>
             </div>
         </div>
-        <div id="freq-display" style="text-align:right;font-size:0.85em;">
+        <div id="freq-display" style="text-align:right;font-size:1em;">
             <div style="color:#53d769;font-weight:bold;" id="freq-current">137.620 MHz</div>
             <div style="color:#888;" id="sat-current">NOAA 15 (idle)</div>
         </div>
@@ -79,7 +79,7 @@
             <div style="flex:1;min-width:0;">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
                     <h2 style="margin-bottom:0;">Live Waterfall — <span id="wf-freq">137.620 MHz</span> ± 120 kHz</h2>
-                    <button id="wf-overlay-btn" onclick="toggleWfOverlay()" style="padding:3px 10px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;">📐 Features</button>
+                    <button id="wf-overlay-btn" onclick="toggleWfOverlay()" style="padding:3px 10px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.9em;">📐 Features</button>
                 </div>
                 <div id="wf-list"></div>
                 <div id="freq-labels">
@@ -104,15 +104,15 @@
                 <div style="display:flex;gap:15px;flex-wrap:wrap;align-items:flex-start;">
                     <div style="flex:0 1 440px;max-width:440px;">
                         <canvas id="track-canvas" width="440" height="440" style="width:100%;max-width:440px;background:#000;border:1px solid #0f3460;border-radius:4px;"></canvas>
-                        <div style="font-size:0.7em;color:#888;margin-top:3px;">Polar view: center = zenith (90°), outer ring = horizon (0°). North is up.</div>
+                        <div style="font-size:0.85em;color:#888;margin-top:3px;">Polar view: center = zenith (90°), outer ring = horizon (0°). North is up.</div>
                     </div>
                     <div id="liveimg-panel" style="flex:1 1 340px;min-width:280px;">
-                        <div style="font-size:0.85em;color:#a8b8d8;margin-bottom:4px;">🖼️ Live Image — <span id="liveimg-mode" style="color:#53d769;">—</span></div>
+                        <div style="font-size:1em;color:#a8b8d8;margin-bottom:4px;">🖼️ Live Image — <span id="liveimg-mode" style="color:#53d769;">—</span></div>
                         <div style="position:relative;background:#000;border:1px solid #0f3460;border-radius:4px;overflow:hidden;">
                             <canvas id="liveimg-canvas" width="909" height="900" style="width:100%;display:block;image-rendering:pixelated;"></canvas>
-                            <div id="liveimg-status" style="position:absolute;top:4px;left:6px;font-size:0.7em;color:#53d769;background:rgba(0,0,0,0.6);padding:1px 6px;border-radius:3px;white-space:nowrap;">—</div>
+                            <div id="liveimg-status" style="position:absolute;top:4px;left:6px;font-size:0.85em;color:#53d769;background:rgba(0,0,0,0.6);padding:1px 6px;border-radius:3px;white-space:nowrap;">—</div>
                         </div>
-                        <div style="font-size:0.7em;color:#888;margin-top:3px;">Decoded live from the FM demod audio. APT: channel A (top) / channel B (bottom). Robot 36 image builds line by line.</div>
+                        <div style="font-size:0.85em;color:#888;margin-top:3px;">Decoded live from the FM demod audio. APT: channel A (top) / channel B (bottom). Robot 36 image builds line by line.</div>
                     </div>
                 </div>
             </div>
@@ -124,11 +124,11 @@
             <div class="status-item">
                 <div class="status-label">FM Radio Test (manual tune)</div>
                 <div class="status-value" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-                    <input id="tune-freq" type="number" step="0.025" min="24" max="1766" value="89.7" style="width:75px;background:#0f3460;border:1px solid #53d769;color:#e0e0e0;border-radius:3px;padding:3px;font-family:monospace;font-size:0.8em;"> MHz
-                    <button onclick="tuneManual()" style="padding:3px 8px;background:#53d769;color:#1a1a2e;border:none;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;">📻 Tune</button>
-                    <button onclick="tuneAuto()" style="padding:3px 8px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;">🛰 Auto</button>
+                    <input id="tune-freq" type="number" step="0.025" min="24" max="1766" value="89.7" style="width:75px;background:#0f3460;border:1px solid #53d769;color:#e0e0e0;border-radius:3px;padding:3px;font-family:monospace;font-size:0.95em;"> MHz
+                    <button onclick="tuneManual()" style="padding:3px 8px;background:#53d769;color:#1a1a2e;border:none;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.9em;">📻 Tune</button>
+                    <button onclick="tuneAuto()" style="padding:3px 8px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.9em;">🛰 Auto</button>
                 </div>
-                <div style="font-size:0.6em;color:#888;margin-top:3px;">Parks the dongle on any frequency and pauses satellite tracking. Then use ▶ Listen Live to hear it (e.g. 89.7 = FM radio).</div>
+                <div style="font-size:0.75em;color:#888;margin-top:3px;">Parks the dongle on any frequency and pauses satellite tracking. Then use ▶ Listen Live to hear it (e.g. 89.7 = FM radio).</div>
             </div>
             <div class="status-item">
                 <div class="status-label">Recordings</div>
@@ -140,12 +140,12 @@
             </div>
             <div class="status-item">
                 <div class="status-label">RTL-SDR Log</div>
-                <div class="status-value" id="rtl-log" style="font-size:0.65em;max-height:100px;overflow-y:auto;">—</div>
-                <div style="font-size:0.7em;margin-top:4px;"><a href="/console" target="_blank" style="color:#53d769;">Full debug console →</a></div>
+                <div class="status-value" id="rtl-log" style="font-size:0.8em;max-height:100px;overflow-y:auto;">—</div>
+                <div style="font-size:0.85em;margin-top:4px;"><a href="/console" target="_blank" style="color:#53d769;">Full debug console →</a></div>
             </div>
             <div class="status-item">
                 <div class="status-label">Satellite Frequencies</div>
-                <div class="status-value" style="font-size:0.7em;">
+                <div class="status-value" style="font-size:0.85em;">
                     NOAA 15: 137.620 MHz<br>
                     NOAA 18: 137.9125 MHz<br>
                     NOAA 19: 137.100 MHz<br>
@@ -180,7 +180,7 @@
             const block = document.createElement('div');
             block.style.cssText = 'margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #0f3460;';
             const head = document.createElement('div');
-            head.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.75em;color:#a8b8d8;margin-bottom:3px;';
+            head.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.9em;color:#a8b8d8;margin-bottom:3px;';
             const led = document.createElement('span');
             led.className = 'indicator yellow';
             const title = document.createElement('span');
@@ -202,7 +202,7 @@
                 hl.style.cssText = 'display:none;position:absolute;top:0;bottom:0;left:50%;width:20%;transform:translateX(-50%);pointer-events:none;background:rgba(83,215,105,0.10);border-left:1px solid rgba(83,215,105,0.7);border-right:1px solid rgba(83,215,105,0.7);';
                 const lbl = document.createElement('div');
                 lbl.id = 'wf-highlight-label';
-                lbl.style.cssText = 'position:absolute;top:2px;left:50%;transform:translateX(-50%);background:#53d769;color:#1a1a2e;font-size:0.6em;padding:1px 6px;border-radius:3px;white-space:nowrap;';
+                lbl.style.cssText = 'position:absolute;top:2px;left:50%;transform:translateX(-50%);background:#53d769;color:#1a1a2e;font-size:0.75em;padding:1px 6px;border-radius:3px;white-space:nowrap;';
                 hl.appendChild(lbl);
                 wrap.appendChild(hl);
             }
@@ -279,7 +279,7 @@
         }
 
         function wfOverlayLabel(ctx, x, y, text, color, align) {
-            ctx.font = '10px monospace';
+            ctx.font = '12px monospace';
             ctx.textAlign = align || 'center';
             const tw = ctx.measureText(text).width;
             const bx = align === 'right' ? x - tw : (align === 'left' ? x : x - tw / 2);
@@ -336,7 +336,7 @@
             ctx.setLineDash([]);
 
             // kHz axis relative to the satellite, along the bottom
-            ctx.font = '10px monospace';
+            ctx.font = '12px monospace';
             ctx.textAlign = 'center';
             ctx.fillStyle = '#888';
             for (const k of [-60, -30, 0, 30, 60]) {
@@ -375,6 +375,16 @@
         // ---------- Per-dongle status cards (right of the waterfalls) ----------
         const dongleCards = {};      // serial -> card handles
         const MAX_CARD_POINTS = 300; // ~5 min of signal history at 1 Hz
+        let lastSharedMHz = null;    // shared tune frequency (from status.json)
+
+        // Effective MHz of a dongle: its manual override, else the shared one
+        function curDongleMHz(serial) {
+            const c = dongleCards[serial];
+            if (!c || !c.lastD) return null;
+            if (c.lastD.manual_frequency_mhz !== null && c.lastD.manual_frequency_mhz !== undefined)
+                return c.lastD.manual_frequency_mhz;
+            return lastSharedMHz;
+        }
 
         function ensureDongleCard(d) {
             let c = dongleCards[d.id];
@@ -386,17 +396,17 @@
             // the border visually separates the dongles
             card.style.cssText = 'flex:1;display:flex;flex-direction:column;border-bottom:1px solid #0f3460;margin-bottom:8px;';
             const head = document.createElement('div');
-            head.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.8em;color:#a8b8d8;';
+            head.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.95em;color:#a8b8d8;';
             const led = document.createElement('span');
             led.className = 'indicator yellow';
             const title = document.createElement('span');
             title.style.cssText = 'font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
             head.appendChild(led); head.appendChild(title);
             const sn = document.createElement('div');
-            sn.style.cssText = 'font-size:0.6em;color:#888;margin-top:2px;';
+            sn.style.cssText = 'font-size:0.75em;color:#888;margin-top:2px;';
             sn.textContent = 'SN ' + d.serial;
             const sigRow = document.createElement('div');
-            sigRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px;font-size:0.75em;';
+            sigRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px;font-size:0.9em;';
             const sigVal = document.createElement('span');
             sigVal.style.cssText = 'color:#e0e0e0;min-width:44px;';
             const bar = document.createElement('div');
@@ -411,30 +421,66 @@
             tl.width = 250; tl.height = 46;
             tl.style.cssText = 'width:100%;height:46px;background:#000;border:1px solid #0f3460;border-radius:4px;margin-top:5px;';
             const recRow = document.createElement('div');
-            recRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px;font-size:0.7em;';
+            recRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px;font-size:0.85em;';
             const recLed = document.createElement('span');
             recLed.className = 'indicator red';
             const recTxt = document.createElement('span');
             recTxt.style.cssText = 'color:#a8b8d8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
             recTxt.textContent = 'Idle';
             recRow.appendChild(recLed); recRow.appendChild(recTxt);
+            // Manual frequency override: 1 kHz steps (input + Tune), quick
+            // nudges, and Sync to rejoin the shared frequency
+            const tuneRow = document.createElement('div');
+            tuneRow.style.cssText = 'display:flex;gap:4px;align-items:center;margin-top:6px;';
+            const dinput = document.createElement('input');
+            dinput.type = 'number'; dinput.step = '0.001'; dinput.min = '24'; dinput.max = '1766';
+            dinput.style.cssText = 'flex:1;min-width:0;background:#0f3460;border:1px solid #53d769;color:#e0e0e0;border-radius:3px;padding:2px 4px;font-family:monospace;font-size:0.9em;';
+            const dTune = document.createElement('button');
+            dTune.textContent = 'Tune';
+            dTune.style.cssText = 'padding:2px 8px;background:#53d769;color:#1a1a2e;border:none;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.85em;';
+            tuneRow.appendChild(dinput); tuneRow.appendChild(dTune);
+            const nudgeRow = document.createElement('div');
+            nudgeRow.style.cssText = 'display:flex;gap:4px;margin-top:4px;';
+            const mkNudge = (label) => {
+                const b = document.createElement('button');
+                b.textContent = label;
+                b.style.cssText = 'flex:1;padding:2px 0;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.85em;';
+                return b;
+            };
+            const dMinus = mkNudge('−1 kHz'), dPlus = mkNudge('+1 kHz'), dSync = mkNudge('Sync');
+            nudgeRow.appendChild(dMinus); nudgeRow.appendChild(dPlus); nudgeRow.appendChild(dSync);
+            const sn_t = d.id;
+            const tuneD = (mhz) => fetch('/tune_dongle?d=' + encodeURIComponent(sn_t) + '&f=' + mhz);
+            dTune.onclick = () => {
+                const v = parseFloat(dinput.value);
+                if (!isNaN(v)) tuneD(v);
+            };
+            const nudge = (delta) => {
+                const cur = curDongleMHz(sn_t);
+                if (cur !== null) tuneD((cur + delta).toFixed(4));
+            };
+            dMinus.onclick = () => nudge(-0.001);
+            dPlus.onclick = () => nudge(0.001);
+            dSync.onclick = () => tuneD('auto');
             // Tuning/adjustments infobox (per-dongle correction from the
-            // server + the shared offset/gain settings)
+            // server + the shared offset/gain settings). margin-top:auto
+            // pins it (with the Listen button) to the card bottom, against
+            // the divider that separates this dongle from the next.
             const info = document.createElement('div');
-            info.style.cssText = 'font-size:0.6em;color:#888;background:rgba(15,52,96,0.5);border:1px solid #0f3460;border-radius:3px;padding:3px 5px;margin-top:5px;line-height:1.5;';
+            info.style.cssText = 'margin-top:auto;font-size:0.75em;color:#888;background:rgba(15,52,96,0.5);border:1px solid #0f3460;border-radius:3px;padding:3px 5px;line-height:1.5;';
             const listenBtn = document.createElement('button');
-            listenBtn.style.cssText = 'width:100%;margin-top:auto;padding:4px 10px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;';
+            listenBtn.style.cssText = 'width:100%;margin-top:5px;padding:4px 10px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.9em;';
             listenBtn.textContent = '🔊 Listen';
             const sn_card = d.id;
             listenBtn.onclick = () => toggleLiveAudio(sn_card);
             card.appendChild(head); card.appendChild(sn); card.appendChild(sigRow);
-            card.appendChild(tl); card.appendChild(recRow); card.appendChild(info);
-            card.appendChild(document.createElement('div')).style.marginTop = '4px';
-            card.appendChild(listenBtn);
+            card.appendChild(tl); card.appendChild(recRow);
+            card.appendChild(tuneRow); card.appendChild(nudgeRow);
+            card.appendChild(info); card.appendChild(listenBtn);
             col.appendChild(card);
             c = dongleCards[d.id] = {
                 led, title, sigVal, sigFill, tlCtx: tl.getContext('2d'),
-                hist: [], recLed, recTxt, info, listenBtn, lastHistTs: 0,
+                hist: [], recLed, recTxt, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
             };
             return c;
         }
@@ -480,11 +526,20 @@
             }
             c.recLed.className = 'indicator ' + (d.recording ? 'green' : 'red');
             c.recTxt.textContent = d.recording ? (d.wav || 'Recording…') : 'Idle';
-            // Tuning infobox: this dongle's correction (value + source) and
-            // the settings shared by all dongles
+            // Manual tuner state: show the effective frequency, highlight
+            // the input while this dongle overrides the shared frequency
+            c.lastD = d;
+            const eff = curDongleMHz(d.id);
+            if (document.activeElement !== c.dinput && eff !== null) {
+                c.dinput.value = eff.toFixed(4);
+            }
+            c.dinput.style.border = '1px solid ' + (d.manual_frequency_mhz ? '#f39c12' : '#53d769');
+            // Tuning infobox: this dongle's correction (value + source), the
+            // settings shared by all dongles, and any manual override
             const cor = (d.correction_hz || 0) / 1000;
             c.info.innerHTML = `⚙ tune ${cor >= 0 ? '+' : ''}${cor.toFixed(1)} kHz <span style="color:#666">(${d.correction_src || 'n/a'})</span><br>` +
-                               `IF offset +60 kHz · gain auto`;
+                               `IF offset +60 kHz · gain auto` +
+                               (d.manual_frequency_mhz ? `<br>🎛 manual override ${d.manual_frequency_mhz.toFixed(4)} MHz` : '');
             c.listenBtn.textContent = (liveAudioOn === d.id) ? '⏹ Stop Listening' : '🔊 Listen';
             c.listenBtn.style.background = (liveAudioOn === d.id) ? '#53d769' : '#0f3460';
             c.listenBtn.style.color = (liveAudioOn === d.id) ? '#1a1a2e' : '#53d769';
@@ -502,6 +557,7 @@
 
                 // Update frequency display
                 updateFreqLabels(data.frequency_mhz);
+                lastSharedMHz = data.frequency_mhz;
 
                 // Waterfall recording-band highlight (the primary block is
                 // built dynamically, so guard for it not existing yet)
@@ -558,7 +614,7 @@
             const list = document.getElementById('passes-list');
             if (!list || !tleInfo || !tleInfo.active) return;
             const pct = tleInfo.total ? Math.round((tleInfo.done / tleInfo.total) * 100) : 0;
-            list.innerHTML = `<div style="padding:8px;font-size:0.8em;color:#888;">
+            list.innerHTML = `<div style="padding:8px;font-size:0.95em;color:#888;">
                 📡 Updating TLE data — ${tleInfo.current || ''} (${tleInfo.done}/${tleInfo.total})
                 <div class="signal-bar" style="margin-top:4px;"><div class="signal-fill" style="width:${pct}%;"></div></div>
             </div>`;
