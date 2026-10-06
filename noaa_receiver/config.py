@@ -9,7 +9,9 @@ RTL_LOG = os.path.join(LOGDIR, "rtl_sdr.log")
 WEBDIR = "/home/eugene/aprs_website"
 FFT_SIZE = 512
 WATERFALL_ROWS = 120
-SDR_GAIN = 35
+# Gain: 0 = auto (RTL-SDR AGC), or fixed dB like 35. Auto adapts to signal
+# strength during passes, which is better than a fixed value.
+SDR_GAIN = 0  # auto-gain
 SDR_RATE = 240000
 # Offset tuning: rtl_sdr tunes SDR_OFFSET_HZ above the target frequency and the
 # signal is shifted back to baseband in software. This moves the dongle's
@@ -34,7 +36,7 @@ NOAA_SATS = {
 # Pass scheduling
 PASS_MIN_ALT = 10.0  # Only care about passes above 10°
 PASS_PREDICT_HOURS = 24  # Predict 24h ahead
-PASS_MARGIN_SECS = 30  # Start recording 30s before rise, stop 30s after set
+PASS_MARGIN_SECS = 60  # Start recording 60s before rise, stop 60s after set
 TLE_REFRESH_HOURS = 6  # Refresh TLE data every 6h
 TLE_CACHE_FILE = os.path.join(LOGDIR, "tle_cache.json")  # last good TLEs, used when Celestrak is unreachable
 # Celestrak rejects requests with generic bot user-agents (HTTP 403)

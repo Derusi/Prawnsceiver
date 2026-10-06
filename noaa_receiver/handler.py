@@ -243,9 +243,20 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 return
             output_png = wav_path.replace('.wav', '.png')
             try:
+                # Detect satellite from filename (NOAA_15_, NOAA_18_, NOAA_19_)
+                sat_arg = None
+                fname_lower = filename.lower()
+                if 'noaa_15' in fname_lower or 'noaa15' in fname_lower:
+                    sat_arg = 'noaa_15'
+                elif 'noaa_18' in fname_lower or 'noaa18' in fname_lower:
+                    sat_arg = 'noaa_18'
+                elif 'noaa_19' in fname_lower or 'noaa19' in fname_lower:
+                    sat_arg = 'noaa_19'
+                cmd = ['noaa-apt', wav_path, '-o', output_png, '-q', '-m', 'yes', '-R', 'auto']
+                if sat_arg:
+                    cmd.extend(['-s', sat_arg])
                 result = subprocess.run(
-                    ['noaa-apt', wav_path, '-o', output_png, '-q'],
-                    capture_output=True, text=True, timeout=120
+                    cmd, capture_output=True, text=True, timeout=120
                 )
                 if os.path.exists(output_png):
                     self.send_response(200)

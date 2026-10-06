@@ -83,10 +83,21 @@ def scheduler_thread():
                         latest_png = latest.replace('.wav', '.png')
                         if not os.path.exists(latest_png):
                             state.log_console(f"Auto-decoding: {wav_name}")
+                            # Detect satellite from filename
+                            sat_arg = None
+                            wl = wav_name.lower()
+                            if 'noaa_15' in wl or 'noaa15' in wl:
+                                sat_arg = 'noaa_15'
+                            elif 'noaa_18' in wl or 'noaa18' in wl:
+                                sat_arg = 'noaa_18'
+                            elif 'noaa_19' in wl or 'noaa19' in wl:
+                                sat_arg = 'noaa_19'
+                            cmd = ['noaa-apt', latest, '-o', latest_png, '-q', '-m', 'yes', '-R', 'auto']
+                            if sat_arg:
+                                cmd.extend(['-s', sat_arg])
                             try:
                                 result = subprocess.run(
-                                    ['noaa-apt', latest, '-o', latest_png, '-q'],
-                                    capture_output=True, text=True, timeout=120
+                                    cmd, capture_output=True, text=True, timeout=120
                                 )
                                 if os.path.exists(latest_png):
                                     decoded = True
