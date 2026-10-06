@@ -17,11 +17,13 @@ from collections import deque
 from datetime import datetime
 
 from . import state
-from .config import (AUDIO_RATE, DECIMATION, FFT_SIZE, FM_BAND, IQ_BLOCK, LOGDIR,
-                     PRIMARY_DONGLE_SN, RECORD_DIR, RTL_LOG, SDR_GAIN, SDR_OFFSET_HZ,
-                     SDR_RATE, WATERFALL_ROWS, correction_info, tuning_correction)
+from .calibration import (FM_BAND, PRIMARY_DONGLE_SN, correction_info,
+                          tuning_correction)
+from .config import (AUDIO_RATE, DOPPLER_APPLY_RANGE_HZ, DECIMATION, FFT_SIZE,
+                     IQ_BLOCK, LOGDIR, RECORD_DIR, RTL_LOG, SDR_GAIN,
+                     SDR_OFFSET_HZ, SDR_RATE, WATERFALL_ROWS)
 
-from .dsp import fm_demodulate, frequency_shift, iq_to_complex, new_state
+from .dsp import doppler_shift, fm_demodulate, frequency_shift, iq_to_complex, new_state
 
 # Waterfall/signal FFT cadence: compute the FFT only every Nth IQ block. The
 # dashboard draws ~5 rows/s, so ~59 rows/s (469 blocks/s / 8) is still 10x
@@ -206,6 +208,15 @@ def sdr_capture_thread(serial):
                 # displaced to +SDR_OFFSET_HZ. Shared by waterfall FFT and demod.
                 c = iq_to_complex(raw)
                 c = frequency_shift(c, SDR_OFFSET_HZ, SDR_RATE, dst)
+
+                # Live Doppler correction (scheduler-computed during passes):
+                # rotate the satellite's Doppler-drifted carrier into the demod
+                # center in software — retuning rtl_sdr would need a restart
+                # and gap the recording. Applied only when this dongle's
+                # target is near the tracked satellite frequency.
+                if (state.doppler_hz
+                        and abs(tune_target - state.doppler_freq_hz) < DOPPLER_APPLY_RANGE_HZ):
+                    c = doppler_shift(c, state.doppler_hz, SDR_RATE, dst)
 
                 # FFT for waterfall + signal strength, every FFT_EVERY-th
                 # block (see FFT_EVERY — CPU budget, not display needs)

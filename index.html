@@ -591,7 +591,8 @@
                     banner.textContent = `📻 Manual tune: ${data.manual_frequency_mhz} MHz — satellite tracking paused (click 🛰 Auto to resume)`;
                 } else if (data.pass_active && data.current_pass) {
                     banner.className = 'pass-active';
-                    banner.textContent = `🔴 LIVE PASS: ${data.current_pass.sat_name} (${data.current_pass.frequency_mhz} MHz) — Max ${data.current_pass.max_alt}° — Sets at ${data.current_pass.set_local}`;
+                    banner.textContent = `🔴 LIVE PASS: ${data.current_pass.sat_name} (${data.current_pass.frequency_mhz} MHz) — Max ${data.current_pass.max_alt}° — Sets at ${data.current_pass.set_local}` +
+                        (data.doppler_hz ? ` — Doppler ${(data.doppler_hz/1000 >= 0 ? '+' : '')}${(data.doppler_hz/1000).toFixed(2)} kHz` : '');
                 } else if (data.next_pass) {
                     const mins = data.next_pass.countdown_min;
                     if (mins < 60) {

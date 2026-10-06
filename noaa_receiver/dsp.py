@@ -12,7 +12,7 @@ def iq_to_complex(iq_bytes):
 # own state dict (dsp.new_state()) — a shared one would corrupt the
 # demodulation once several dongles demodulate concurrently.
 def new_state():
-    return {"rot": 0, "fir_tail": None, "afir_tail": None, "last_c": None, "audio_pos": 0}
+    return {"rot": 0, "fir_tail": None, "afir_tail": None, "last_c": None, "audio_pos": 0, "nco_k": 0}
 
 demod_state = new_state()  # default for single-stream callers
 
@@ -97,6 +97,25 @@ def lowpass_audio(a, cutoff_hz, st=None):
     out = np.convolve(x, taps, mode='valid')
     st["afir_tail"] = x[-(len(taps) - 1):].copy()
     return out
+
+def doppler_shift(c, doppler_hz, fs, st):
+    """Rotate baseband by -doppler_hz with an NCO, phase-continuous across
+    blocks (st["nco_k"] counts samples).
+
+    Compensates a Doppler-shifted carrier into the demod center: a signal
+    observed at +doppler_hz (approaching satellite) lands at 0 Hz. The
+    rotation runs at the capture block rate; the scheduler updates
+    doppler_hz every few seconds — the NCO phase carries the signal
+    continuously between updates.
+    """
+    import numpy as np
+    if doppler_hz == 0:
+        return c
+    n = len(c)
+    k = st["nco_k"] + np.arange(n, dtype=np.float64)
+    st["nco_k"] = int(k[-1]) + 1
+    rot = np.exp(-2j * np.pi * doppler_hz * k / fs)
+    return (c * rot.astype(np.complex64)).astype(np.complex64)
 
 def fm_demodulate(c, decimation=5, iq_cutoff_hz=22000.0, audio_cutoff_hz=None, st=None):
     st = st if st is not None else demod_state

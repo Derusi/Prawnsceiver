@@ -5,12 +5,28 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from . import state
-from .config import PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, RECORD_ISS, TLE_REFRESH_HOURS, UTC_OFFSET
+from .config import LAT, LON, PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, RECORD_ISS, TLE_REFRESH_HOURS, UTC_OFFSET
 
 from .decode import decode_recording
 from .history import log_pass
-from .passes import predict_passes, refresh_tles
+from .passes import HAS_SKYFIELD, load, predict_passes, refresh_tles, wgs84
 from .quality import estimate_quality
+
+def _doppler_hz(sat, freq_hz):
+    """Live Doppler shift of the satellite's carrier at the site (Hz).
+
+    f_observed = f * (1 - v_los/c) with v_los the range rate (positive when
+    receding), so the correction the receiver applies is -v_los/c * f.
+    """
+    ts = load.timescale()
+    site = wgs84.latlon(LAT, LON)
+    now = datetime.utcnow().replace(tzinfo=timezone.utc)
+    t0 = ts.from_datetime(now)
+    t1 = ts.from_datetime(now + timedelta(seconds=2))
+    r0 = (sat - site).at(t0).distance().m
+    r1 = (sat - site).at(t1).distance().m
+    v_los = (r1 - r0) / 2.0
+    return int(round(-v_los / 299792458.0 * freq_hz))
 
 def scheduler_thread():
     """Background thread: refresh TLEs, predict passes, trigger frequency switches."""
@@ -111,6 +127,21 @@ def scheduler_thread():
                         with state.signal_lock:
                             pass_peak = state.pass_signal_peak
                             state.pass_signal_peak = 0.0
+
+                # Doppler correction for the active pass: range-rate from the
+                # same TLEs, applied in software by the capture threads
+                # (steps stay < ~1 kHz between ticks even on ISS passes)
+                with state.status_lock:
+                    cur = state.current_pass
+                if cur is not None and HAS_SKYFIELD and cur.get("sat") is not None:
+                    try:
+                        state.doppler_freq_hz = cur["frequency"]
+                        state.doppler_hz = _doppler_hz(cur["sat"], cur["frequency"])
+                    except Exception as e:
+                        state.log_console(f"Doppler computation failed: {e}", "error")
+                elif state.doppler_hz:
+                    state.doppler_hz = 0
+                    state.doppler_freq_hz = 0
 
                 if finished_pass is not None:
                     # Wait for the capture threads to finalize their WAVs, then

@@ -70,6 +70,12 @@ manual_frequency = None
 # entry tunes there instead of the shared current_frequency (e.g. to compare
 # receive quality at a slightly different center). Cleared per dongle.
 manual_dongle_freq = {}
+# Live Doppler correction for the active pass's satellite: computed by the
+# scheduler (range-rate via skyfield), applied in software by the capture
+# threads. doppler_freq_hz is the satellite's nominal frequency the value
+# applies to; doppler_hz is 0 outside passes.
+doppler_hz = 0
+doppler_freq_hz = 0
 current_frequency = 137620000
 current_sat_name = "NOAA 15 (idle)"
 is_recording = False

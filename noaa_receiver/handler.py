@@ -56,6 +56,7 @@ def get_status():
     status = {
         "rtl_sdr_running": state.rtl_sdr_proc is not None and state.rtl_sdr_proc.poll() is None,
         "frequency_mhz": round(freq / 1e6, 4),
+        "doppler_hz": state.doppler_hz,
         "manual_frequency_mhz": round(manual / 1e6, 4) if manual else None,
         "dongles": dongles,
         "satellite": sat,
