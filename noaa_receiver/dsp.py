@@ -11,24 +11,33 @@ def iq_to_complex(iq_bytes):
 # and FIR filter tail, both continuous across blocks
 demod_state = {"rot": 0, "fir_tail": None, "afir_tail": None, "last_c": None, "audio_pos": 0}
 
+_phasor_luts = {}
+
 def frequency_shift(c, offset_hz, fs):
     """Rotate baseband so a signal at -offset_hz moves to 0 Hz.
 
     The dongle is tuned offset_hz ABOVE the wanted frequency, so the signal
     arrives at -offset_hz and the DC spike at 0; this rotation centers the
     signal and displaces the DC spike to +offset_hz. Phase is continuous
-    across calls via demod_state["rot"].
+    across calls via demod_state["rot"]. The phasor is periodic in
+    fs/gcd(offset_hz, fs) samples (4 for 60 kHz at 240 kHz), so a tiny LUT
+    replaces computing exp() for every sample — this runs per IQ block.
     """
     import numpy as np
-    from math import gcd
     if offset_hz == 0:
         return c
-    period = int(fs // gcd(int(offset_hz), int(fs)))
+    key = (int(offset_hz), int(fs))
+    lut = _phasor_luts.get(key)
+    if lut is None:
+        from math import gcd
+        period = int(fs // gcd(int(offset_hz), int(fs)))
+        lut = np.exp(2j * np.pi * offset_hz / fs * np.arange(period)).astype(np.complex64)
+        _phasor_luts[key] = lut
+    period = len(lut)
     n = len(c)
     idx = (np.arange(n) + demod_state["rot"]) % period
     demod_state["rot"] = int((demod_state["rot"] + n) % period)
-    w = 2.0 * np.pi * offset_hz / fs
-    return (c * np.exp(1j * w * idx)).astype(np.complex64)
+    return (c * lut[idx]).astype(np.complex64)
 
 _lowpass_taps = {}
 

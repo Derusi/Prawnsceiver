@@ -23,6 +23,22 @@ from .config import (AUDIO_RATE, DECIMATION, FFT_SIZE, FM_BAND, IQ_BLOCK, LOGDIR
 
 from .dsp import fm_demodulate, frequency_shift, iq_to_complex
 
+# Waterfall/signal FFT cadence: compute the FFT only every Nth IQ block. The
+# dashboard draws ~5 rows/s, so ~59 rows/s (469 blocks/s / 8) is still 10x
+# oversampled. At full block rate the FFT + row conversion (~1 ms/block on
+# the Pi) starved the demod once two dongles were attached.
+FFT_EVERY = 8
+
+_fft_window = None
+
+def _get_fft_window():
+    """FFT_SIZE-point Hamming window, computed once."""
+    global _fft_window
+    if _fft_window is None:
+        import numpy as np
+        _fft_window = np.hamming(FFT_SIZE)
+    return _fft_window
+
 def _rtl_pll_failed(proc):
     """True if rtl_sdr logged 'PLL not locked' since the log was truncated.
 
@@ -168,6 +184,7 @@ def sdr_capture_thread(serial):
             else:
                 state.log_console(f"rtl_sdr started (pid {proc.pid}, dongle {serial}), tuned {freq_str}Hz")
             last_history_append = 0.0
+            block_count = 0
 
             while True:
                 raw = proc.stdout.read(IQ_BLOCK)
@@ -181,34 +198,37 @@ def sdr_capture_thread(serial):
                 c = iq_to_complex(raw)
                 c = frequency_shift(c, SDR_OFFSET_HZ, SDR_RATE)
 
-                # FFT for waterfall
-                try:
-                    if len(c) >= FFT_SIZE:
-                        window = np.hamming(FFT_SIZE)
-                        windowed = c[:FFT_SIZE] * window
-                        fft_result = np.fft.fftshift(np.fft.fft(windowed))
-                        magnitude = np.abs(fft_result)
-                        center = len(magnitude) // 2
-                        band = magnitude[center-10:center+10].mean()
-                        with entry['lock']:
-                            entry['signal'] = float(band)
-                        if primary:
-                            with state.signal_lock:
-                                state.signal_strength = float(band)
-                                if state.is_recording:
-                                    state.pass_signal_peak = max(state.pass_signal_peak, state.signal_strength)
-                            now_ts = time.time()
-                            if now_ts - last_history_append >= 1.0:
-                                last_history_append = now_ts
+                # FFT for waterfall + signal strength, every FFT_EVERY-th
+                # block (see FFT_EVERY — CPU budget, not display needs)
+                block_count += 1
+                if block_count % FFT_EVERY == 0:
+                    try:
+                        if len(c) >= FFT_SIZE:
+                            window = _get_fft_window()
+                            windowed = c[:FFT_SIZE] * window
+                            fft_result = np.fft.fftshift(np.fft.fft(windowed))
+                            magnitude = np.abs(fft_result)
+                            center = len(magnitude) // 2
+                            band = magnitude[center-10:center+10].mean()
+                            with entry['lock']:
+                                entry['signal'] = float(band)
+                            if primary:
                                 with state.signal_lock:
-                                    state.signal_history.append(float(band))
-                        if magnitude.max() > 0:
-                            magnitude = magnitude / magnitude.max() * 255
-                        row = magnitude.astype(int).tolist()
-                        with entry['lock']:
-                            entry['waterfall'].append(row)
-                except Exception:
-                    pass
+                                    state.signal_strength = float(band)
+                                    if state.is_recording:
+                                        state.pass_signal_peak = max(state.pass_signal_peak, state.signal_strength)
+                                now_ts = time.time()
+                                if now_ts - last_history_append >= 1.0:
+                                    last_history_append = now_ts
+                                    with state.signal_lock:
+                                        state.signal_history.append(float(band))
+                            if magnitude.max() > 0:
+                                magnitude = magnitude / magnitude.max() * 255
+                            row = magnitude.astype(int).tolist()
+                            with entry['lock']:
+                                entry['waterfall'].append(row)
+                    except Exception:
+                        pass
 
                 # Retune when the scheduler moves to another satellite's
                 # frequency: restart rtl_sdr on the new frequency. Between
