@@ -71,12 +71,16 @@ function render() {
                 + ' &nbsp;|&nbsp; ' + (h.decoded ? '🖼️ decoded' : '❌ not decoded')
                 + qualityBadge(h.quality !== null && h.quality !== undefined ? h.quality : (rec ? rec.quality : null)) + '</div>';
             if (rec) {
-                html += '<div class="filename">' + esc(rec.filename) + ' (' + esc(rec.size_mb) + ' MB)</div>'
-                    + (rec.decoded ? '' : '<button onclick="decodeRecording(\'' + esc(rec.filename) + '\')">🔄 Decode APT Image</button>')
-                    + '<button class="danger" onclick="deleteRecording(\'' + esc(rec.filename) + '\')">🗑 Delete</button>'
-                    + '<audio controls preload="none"><source src="/audio/' + esc(rec.filename) + '" type="audio/wav"></audio>'
-                    + '<div class="result" id="' + rid + '"></div>'
-                    + (img ? '<img class="decoded-img" src="/images/' + esc(img) + '" alt="APT image" onclick="window.open(\'/images/' + esc(img) + '\')" style="cursor:pointer;">' : '');
+                html += '<div class="filename">' + esc(rec.filename) + ' (' + esc(rec.size_mb) + ' MB)</div>';
+                if (rec.recording_in_progress) {
+                    html += '<div class="result" style="color:#f39c12;">🔴 Pass is being recorded right now — audio and decoding are available after the pass ends.</div>';
+                } else {
+                    html += (rec.decoded ? '' : '<button onclick="decodeRecording(\'' + esc(rec.filename) + '\')">🔄 Decode APT Image</button>')
+                        + '<button class="danger" onclick="deleteRecording(\'' + esc(rec.filename) + '\')">🗑 Delete</button>'
+                        + '<audio controls preload="none"><source src="/audio/' + esc(rec.filename) + '" type="audio/wav"></audio>'
+                        + '<div class="result" id="' + rid + '"></div>'
+                        + (img ? '<img class="decoded-img" src="/images/' + esc(img) + '" alt="APT image" onclick="window.open(\'/images/' + esc(img) + '\')" style="cursor:pointer;">' : '');
+                }
             } else {
                 html += '<div class="muted" style="padding:4px 0;">' + (h.wav ? 'recording file deleted' : 'no recording on disk') + '</div>';
             }
@@ -92,18 +96,20 @@ function render() {
         const rid = 'result-' + safeId(r.filename);
         uhtml += '<div class="pass-card">'
             + '<div class="card-head"><span class="sat">🎧 ' + esc(r.filename) + '</span> &nbsp;|&nbsp; ' + esc(r.size_mb) + ' MB' + qualityBadge(r.quality) + '</div>'
-            + '<button onclick="decodeRecording(\'' + esc(r.filename) + '\')">🔄 Decode APT Image</button>'
-            + '<button class="danger" onclick="deleteRecording(\'' + esc(r.filename) + '\')">🗑 Delete</button>'
-            + '<audio controls preload="none"><source src="/audio/' + esc(r.filename) + '" type="audio/wav"></audio>'
-            + '<div class="result" id="' + rid + '"></div>'
-            + (r.png ? '<img class="decoded-img" src="/images/' + esc(r.png) + '" alt="APT image">' : '')
+            + (r.recording_in_progress
+                ? '<div class="result" style="color:#f39c12;">🔴 Pass is being recorded right now — audio and decoding are available after the pass ends.</div>'
+                : '<button onclick="decodeRecording(\'' + esc(r.filename) + '\')">🔄 Decode APT Image</button>'
+                    + '<button class="danger" onclick="deleteRecording(\'' + esc(r.filename) + '\')">🗑 Delete</button>'
+                    + '<audio controls preload="none"><source src="/audio/' + esc(r.filename) + '" type="audio/wav"></audio>'
+                    + '<div class="result" id="' + rid + '"></div>')
+            + (r.png && !r.recording_in_progress ? '<img class="decoded-img" src="/images/' + esc(r.png) + '" alt="APT image">' : '')
             + '</div>';
     }
     utable.innerHTML = uhtml;
     document.getElementById('crab-count').textContent = recordingsData.filter(r => r.decoded).length;
-    // Auto-decode recordings that are not decoded yet
+    // Auto-decode recordings that are not decoded yet (never the one being written)
     for (const r of recordingsData) {
-        if (!r.decoded && !decodingInProcess[r.filename]) {
+        if (!r.decoded && !r.recording_in_progress && !decodingInProcess[r.filename]) {
             decodingInProcess[r.filename] = true;
             setTimeout(() => decodeRecording(r.filename), 3000);
         }

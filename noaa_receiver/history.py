@@ -131,6 +131,8 @@ def migrate_pass_history():
 def get_recordings():
     """List available recordings (with reception quality where known)."""
     qualities = quality_map()
+    with state.status_lock:
+        active_wav = state.current_wav_path if state.is_recording else None
     recordings = []
     if os.path.exists(RECORD_DIR):
         for f in sorted(os.listdir(RECORD_DIR), reverse=True):
@@ -144,5 +146,8 @@ def get_recordings():
                     "decoded": has_png,
                     "png": f.replace('.wav', '.png') if has_png else None,
                     "quality": qualities.get(f),
+                    # A wav that is still being written must not be played or
+                    # decoded: its WAV header is stale and the file incomplete
+                    "recording_in_progress": bool(active_wav and os.path.abspath(path) == os.path.abspath(active_wav)),
                 })
     return recordings

@@ -183,16 +183,57 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
             wav_path = os.path.join(RECORD_DIR, filename)
-            if os.path.exists(wav_path):
-                self.send_response(200)
-                self.send_header('Content-type', 'audio/wav')
-                self.end_headers()
-                with open(wav_path, 'rb') as f:
-                    self.wfile.write(f.read())
-            else:
+            if not os.path.exists(wav_path):
                 self.send_response(404)
                 self.end_headers()
                 self.wfile.write(b'Audio not found')
+                return
+            # Never serve a recording that is still being written: its WAV
+            # header is stale the moment we read it, which makes browsers
+            # play a few seconds and show a full progress bar.
+            with state.status_lock:
+                recording_now = state.is_recording and state.current_wav_path == wav_path
+            if recording_now:
+                self.send_response(409)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Recording in progress"}).encode())
+                return
+            size = os.path.getsize(wav_path)
+            # Audio elements need Content-Length + range support to seek
+            range_header = self.headers.get('Range')
+            start, end = 0, size - 1
+            partial = False
+            if range_header and range_header.startswith('bytes='):
+                try:
+                    r = range_header[6:].split('-')
+                    start = int(r[0]) if r[0] else 0
+                    end = int(r[1]) if r[1] else size - 1
+                    if start >= size or start > end:
+                        raise ValueError
+                    end = min(end, size - 1)
+                    partial = True
+                except ValueError:
+                    self.send_response(416)
+                    self.send_header('Content-Range', f'bytes */{size}')
+                    self.end_headers()
+                    return
+            self.send_response(206 if partial else 200)
+            self.send_header('Content-type', 'audio/wav')
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('Content-Length', str(end - start + 1))
+            if partial:
+                self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+            self.end_headers()
+            with open(wav_path, 'rb') as f:
+                f.seek(start)
+                remaining = end - start + 1
+                while remaining > 0:
+                    chunk = f.read(min(remaining, 1 << 20))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
         elif self.path == '/live.wav':
             state.log_console(f"🔊 Live audio listener connected ({self.client_address[0]})")
             # Endless WAV stream of the live FM-demodulated audio.
