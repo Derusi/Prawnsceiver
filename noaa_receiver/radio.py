@@ -20,6 +20,8 @@ def sdr_thread():
     while True:
         try:
             freq_str = f"{state.current_frequency + SDR_OFFSET_HZ}"
+            tuned_freq = state.current_frequency
+            record_sat = None
             state.rtl_sdr_proc = subprocess.Popen(
                 ['rtl_sdr', '-f', freq_str, '-s', str(SDR_RATE), '-g', str(SDR_GAIN), '-'],
                 stdout=subprocess.PIPE, stderr=rtl_log_f
@@ -64,6 +66,19 @@ def sdr_thread():
                 except Exception:
                     pass
 
+                # Retune when the scheduler moves to another satellite's
+                # frequency: restart rtl_sdr on the new frequency. Between
+                # passes (idle) this parks the dongle on NOAA 15; at a pass
+                # boundary it switches bands (e.g. 137 MHz -> 437 MHz ISS).
+                # Mid-recording retunes only happen when the satellite itself
+                # changed, so each WAV holds exactly one satellite's audio.
+                with state.status_lock:
+                    freq_now = state.current_frequency
+                    sat_now = state.current_sat_name
+                if freq_now != tuned_freq and (not state.is_recording or sat_now != record_sat):
+                    state.log_console(f"Retuning: {tuned_freq} Hz -> {freq_now} Hz ({sat_now})")
+                    break
+
                 # Record to WAV only during passes
                 should_record = False
                 with state.status_lock:
@@ -73,6 +88,7 @@ def sdr_thread():
                     # Start new recording
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     sat_short = state.current_sat_name.replace(" ", "_").replace("(idle)", "idle")
+                    record_sat = state.current_sat_name
                     state.current_wav_path = os.path.join(RECORD_DIR, f"{sat_short}_{timestamp}.wav")
                     state.current_wav = wave.open(state.current_wav_path, 'wb')
                     state.current_wav.setnchannels(1)

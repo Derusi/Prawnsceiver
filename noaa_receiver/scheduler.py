@@ -1,13 +1,13 @@
 """Pass scheduler: TLE refresh, pass windows, auto-decode, pass logging."""
 import glob
 import os
-import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
 from . import state
-from .config import PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, TLE_REFRESH_HOURS, UTC_OFFSET
+from .config import PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, RECORD_ISS, TLE_REFRESH_HOURS, UTC_OFFSET
 
+from .decode import decode_recording
 from .history import log_pass
 from .passes import predict_passes, refresh_tles
 
@@ -34,14 +34,30 @@ def scheduler_thread():
             # Check every 10 seconds if we need to switch for an upcoming pass
             while True:
                 now = datetime.utcnow().replace(tzinfo=timezone.utc)
-                triggered = None
+                # All passes whose recording window (rise/set ± margin) is open now
+                candidates = []
                 for p in passes:
-                    # Start pass recording 30s before rise
+                    if not RECORD_ISS and p["sat_name"].startswith("ISS"):
+                        continue
                     start_time = p["rise_utc"] - timedelta(seconds=PASS_MARGIN_SECS)
                     end_time = p["set_utc"] + timedelta(seconds=PASS_MARGIN_SECS)
                     if start_time <= now <= end_time:
-                        triggered = p
-                        break
+                        candidates.append(p)
+                
+                triggered = None
+                if candidates:
+                    # Stick with the ongoing pass while its window is open, so
+                    # overlapping passes don't flip the receiver back and forth
+                    with state.status_lock:
+                        cur = state.current_pass
+                    if cur is not None:
+                        for c in candidates:
+                            if c["sat_name"] == cur["sat_name"] and c["rise_utc"] == cur["rise_utc"]:
+                                triggered = c
+                                break
+                    # New pass window: take the highest-elevation candidate
+                    if triggered is None:
+                        triggered = max(candidates, key=lambda p: p["max_alt"])
                 
                 finished_pass = None
                 pass_peak = 0.0
@@ -49,6 +65,13 @@ def scheduler_thread():
                     if triggered and (state.current_pass is None
                                       or state.current_pass["sat_name"] != triggered["sat_name"]
                                       or state.current_pass["rise_utc"] != triggered["rise_utc"]):
+                        if state.current_pass is not None:
+                            # Direct switch between overlapping passes: close
+                            # out the old pass (log + decode) before moving on
+                            finished_pass = state.current_pass
+                            with state.signal_lock:
+                                pass_peak = state.pass_signal_peak
+                                state.pass_signal_peak = 0.0
                         state.current_pass = triggered
                         state.current_frequency = triggered["frequency"]
                         state.current_sat_name = triggered["sat_name"]
@@ -56,7 +79,7 @@ def scheduler_thread():
                         with state.signal_lock:
                             state.pass_signal_peak = 0.0
                         local_rise = triggered["rise_utc"] + timedelta(hours=UTC_OFFSET)
-                        state.log_console(f"🔴 PASS START: {triggered['sat_name']} {round(triggered['frequency']/1e6,4)} MHz, max {triggered['max_alt']}° at {local_rise.strftime('%H:%M')}")
+                        state.log_console(f"🔴 PASS START: {triggered['sat_name']} {round(triggered['frequency']/1e6,4)} MHz, max {triggered['max_alt']:.0f}° at {local_rise.strftime('%H:%M')}")
                     elif not triggered and state.current_pass is not None:
                         finished_pass = state.current_pass
                         local_set = finished_pass["set_utc"] + timedelta(hours=UTC_OFFSET)
@@ -77,37 +100,23 @@ def scheduler_thread():
                     png_file = None
                     wav_name = None
                     recordings = sorted(glob.glob(os.path.join(RECORD_DIR, "*.wav")), key=os.path.getmtime, reverse=True)
+                    # Never pick the WAV that is still being written
+                    with state.status_lock:
+                        active_wav = state.current_wav_path
+                    if active_wav:
+                        recordings = [r for r in recordings if os.path.abspath(r) != os.path.abspath(active_wav)]
                     if recordings:
                         latest = recordings[0]
                         wav_name = os.path.basename(latest)
                         latest_png = latest.replace('.wav', '.png')
                         if not os.path.exists(latest_png):
                             state.log_console(f"Auto-decoding: {wav_name}")
-                            # Detect satellite from filename
-                            sat_arg = None
-                            wl = wav_name.lower()
-                            if 'noaa_15' in wl or 'noaa15' in wl:
-                                sat_arg = 'noaa_15'
-                            elif 'noaa_18' in wl or 'noaa18' in wl:
-                                sat_arg = 'noaa_18'
-                            elif 'noaa_19' in wl or 'noaa19' in wl:
-                                sat_arg = 'noaa_19'
-                            cmd = ['noaa-apt', latest, '-o', latest_png, '-q', '-m', 'yes', '-R', 'auto',
-                                    '-T', '/var/log/noaa/weather.txt']
-                            if sat_arg:
-                                cmd.extend(['-s', sat_arg])
-                            try:
-                                result = subprocess.run(
-                                    cmd, capture_output=True, text=True, timeout=120, cwd='/opt/noaa-apt'
-                                )
-                                if os.path.exists(latest_png):
-                                    decoded = True
-                                    png_file = os.path.basename(latest_png)
-                                    state.log_console(f"Auto-decode successful: {png_file}")
-                                else:
-                                    state.log_console(f"Auto-decode failed: {result.stderr}", "error")
-                            except Exception as e:
-                                state.log_console(f"Auto-decode error: {e}", "error")
+                            decoded, png_path, err = decode_recording(latest)
+                            if decoded:
+                                png_file = os.path.basename(png_path)
+                                state.log_console(f"Auto-decode successful: {png_file}")
+                            else:
+                                state.log_console(f"Auto-decode failed: {err}", "error")
                         else:
                             decoded = True
                             png_file = os.path.basename(latest_png)

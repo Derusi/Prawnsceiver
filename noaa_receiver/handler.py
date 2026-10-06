@@ -3,12 +3,12 @@ import http.server
 import json
 import os
 import struct
-import subprocess
 from datetime import datetime, timedelta, timezone
 
 from . import state
 from .config import AUDIO_RATE, LAT, LON, PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, UTC_OFFSET, WEBDIR
 
+from .decode import decode_recording
 from .history import get_recordings
 from .pages import CONSOLE_HTML, HISTORY_HTML
 from .passes import HAS_SKYFIELD, load, passes_to_json, wgs84
@@ -242,49 +242,24 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(b'Recording not found')
                 return
             output_png = wav_path.replace('.wav', '.png')
-            try:
-                # Detect satellite from filename (NOAA_15_, NOAA_18_, NOAA_19_)
-                sat_arg = None
-                fname_lower = filename.lower()
-                if 'noaa_15' in fname_lower or 'noaa15' in fname_lower:
-                    sat_arg = 'noaa_15'
-                elif 'noaa_18' in fname_lower or 'noaa18' in fname_lower:
-                    sat_arg = 'noaa_18'
-                elif 'noaa_19' in fname_lower or 'noaa19' in fname_lower:
-                    sat_arg = 'noaa_19'
-                cmd = ['noaa-apt', wav_path, '-o', output_png, '-q', '-m', 'yes', '-R', 'auto',
-                        '-T', '/var/log/noaa/weather.txt']
-                if sat_arg:
-                    cmd.extend(['-s', sat_arg])
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=120, cwd='/opt/noaa-apt')
-                if os.path.exists(output_png):
-                    self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({
-                        "success": True,
-                        "png": filename.replace('.wav', '.png'),
-                    }).encode())
-                else:
-                    state.log_console(f"Decode failed for {filename}: {result.stderr or 'No output image'}", "error")
-                    self.send_response(500)
-                    self.send_header('Content-type', 'application/json')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({
-                        "success": False,
-                        "error": result.stderr or "No output image"
-                    }).encode())
-            except subprocess.TimeoutExpired:
-                state.log_console(f"Decode timeout for {filename}", "error")
-                self.send_response(504)
+            decoded, png_path, err = decode_recording(wav_path)
+            if decoded:
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
                 self.end_headers()
-                self.wfile.write(b'Decode timeout')
-            except Exception as e:
-                state.log_console(f"Decode error for {filename}: {e}", "error")
+                self.wfile.write(json.dumps({
+                    "success": True,
+                    "png": filename.replace('.wav', '.png'),
+                }).encode())
+            else:
+                state.log_console(f"Decode failed for {filename}: {err}", "error")
                 self.send_response(500)
+                self.send_header('Content-type', 'application/json')
                 self.end_headers()
-                self.wfile.write(f'Error: {e}'.encode())
+                self.wfile.write(json.dumps({
+                    "success": False,
+                    "error": err
+                }).encode())
         elif self.path.startswith('/delete/'):
             filename = self.path[8:]
             if '..' in filename or '/' in filename or not filename.endswith('.wav'):

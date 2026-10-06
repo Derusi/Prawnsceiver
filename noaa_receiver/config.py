@@ -1,4 +1,4 @@
-"""Static configuration for the NOAA APT receiver."""
+"""Static configuration for the NOAA APT / ISS SSTV receiver."""
 import os
 
 PORT = 8085
@@ -26,12 +26,19 @@ DECIMATION = SDR_RATE // AUDIO_RATE
 LAT, LON = 49.013, 12.099
 UTC_OFFSET = 2  # Germany UTC+2
 
-# NOAA satellites: catalog number -> (name, frequency_hz)
-NOAA_SATS = {
+# Tracked satellites: catalog number -> (name, frequency_hz)
+# ISS: ARISS SSTV (Robot 36) on 437.550 MHz during active events
+TRACKED_SATS = {
     25338: ("NOAA 15", 137620000),
     28654: ("NOAA 18", 137912500),
     33591: ("NOAA 19", 137100000),
+    25544: ("ISS (Zarya)", 437550000),
 }
+
+# ISS only transmits SSTV during ARISS events; outside events its passes would
+# be recorded as empty WAVs (~350 MB/day). Set False to track ISS in the pass
+# list without recording it.
+RECORD_ISS = True
 
 # Pass scheduling
 PASS_MIN_ALT = 10.0  # Only care about passes above 10°

@@ -17,6 +17,9 @@ Live at: https://prawnceiver.derusi.de
   browser-playable WAV
 - 🖼️ APT decoding — recordings are decoded to weather images with noaa-apt
   (map overlay, auto-rotate), one click from the dashboard
+- 🛰️ ISS SSTV — ISS (Zarya) passes on 437.550 MHz are tracked and recorded;
+  Robot 36 images from ARISS events are decoded automatically with the sstv
+  tool (`RECORD_ISS` in config.py turns ISS recording off outside events)
 - 🧭 Polar pass tracker — live az/el ground-track view of the active pass
 - 📚 Pass history — every pass and recording is kept in a browsable history
   with decoded images
@@ -36,6 +39,7 @@ Live at: https://prawnceiver.derusi.de
 - Skyfield — TLE-based pass prediction (TLEs refreshed from Celestrak every
   6 h, with a local cache fallback)
 - noaa-apt — APT image decoding
+- sstv — ISS Slow-Scan TV decoding (Robot 36)
 - nginx — HTTPS reverse proxy (Let's Encrypt) in front of the Python server
 
 ## Architecture
@@ -65,6 +69,9 @@ pip install skyfield
 
 # noaa-apt (APT image decoder) — grab a release binary from
 # https://github.com/martinber/noaa-apt/releases and put it on PATH
+
+# sstv (ISS SSTV decoder)
+pip install sstv
 
 # Clone and run
 git clone https://github.com/Derusi/Prawnsceiver.git

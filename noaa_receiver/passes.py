@@ -6,7 +6,7 @@ import urllib.request
 from datetime import timedelta
 
 from . import state
-from .config import LAT, LON, NOAA_SATS, PASS_MIN_ALT, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
+from .config import LAT, LON, TRACKED_SATS, PASS_MIN_ALT, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
 
 try:
     from skyfield.api import load, wgs84, EarthSatellite
@@ -65,7 +65,7 @@ def refresh_tles():
     ts = load.timescale()
     sats = {}
     tle_data = {}
-    for catnr, (name, freq) in NOAA_SATS.items():
+    for catnr, (name, freq) in TRACKED_SATS.items():
         try:
             lines = fetch_tle_lines(catnr)
             if lines:
@@ -89,7 +89,7 @@ def refresh_tles():
                 cached = json.load(f)
             for catnr_str, lines in cached.items():
                 catnr = int(catnr_str)
-                name, freq = NOAA_SATS[catnr]
+                name, freq = TRACKED_SATS[catnr]
                 sats[catnr] = (_sat_from_lines(lines, ts), name, freq)
             state.log_console(f"Loaded {len(sats)} TLEs from cache")
         except Exception as e:
