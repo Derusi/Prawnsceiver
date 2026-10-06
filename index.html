@@ -181,7 +181,9 @@
         const MAX_SIGNAL_POINTS = 300; // 5 min at 1Hz
         const WF_WIDTH = 512, WF_HEIGHT = 120, SPEC_HEIGHT = 25;
         const wfCanvas = document.getElementById('waterfall-canvas');
-        const wfCtx = wfCanvas.getContext('2d');
+        // willReadFrequently: the waterfall scrolls via getImageData/putImageData
+        // every 200 ms — keep this canvas in CPU memory to avoid GPU readbacks
+        const wfCtx = wfCanvas.getContext('2d', { willReadFrequently: true });
         const specCanvas = document.getElementById('spectrum-canvas');
         const specCtx = specCanvas.getContext('2d');
 
