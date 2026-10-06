@@ -3,7 +3,7 @@ import json
 import os
 import time
 import urllib.request
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from . import state
 from .config import LAT, LON, TRACKED_SATS, PASS_MIN_ALT, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
@@ -117,12 +117,16 @@ def predict_passes(sats, hours=24):
     ts = load.timescale()
     site = wgs84.latlon(LAT, LON)
     now = ts.now()
+    # Start the search before "now" so a pass that already rose but has not
+    # set yet (e.g. the receiver was restarted mid-pass) is still predicted;
+    # fully-past passes are dropped below.
+    start = ts.tt_jd(now.tt - 1.0 / 24.0)
     end = ts.tt_jd(now.tt + hours / 24.0)
     
     passes = []
     for catnr, (sat, name, freq) in sats.items():
         try:
-            t, events = sat.find_events(site, now, end, altitude_degrees=PASS_MIN_ALT)
+            t, events = sat.find_events(site, start, end, altitude_degrees=PASS_MIN_ALT)
             for i, (ti, event) in enumerate(zip(t, events)):
                 if event == 0:  # rise
                     rise_time = ti.utc_datetime()
@@ -151,6 +155,8 @@ def predict_passes(sats, hours=24):
         except Exception as e:
             state.log_console(f"Pass prediction failed for {name}: {e}", "error")
     
+    # Drop passes that have fully set (lookback window above)
+    passes = [p for p in passes if p["set_utc"] > datetime.now(timezone.utc)]
     passes.sort(key=lambda p: p["rise_utc"])
     return passes
 
