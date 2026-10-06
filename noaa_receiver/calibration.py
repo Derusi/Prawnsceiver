@@ -26,25 +26,36 @@ FM_BAND = (87_500_000, 108_000_000)
 #   'ppm': fallback for frequencies not listed (scaled); None = no fallback
 # Dongles not listed here fall back to the primary dongle's values.
 SDR_DONGLE_CORRECTIONS = {
-    # Primary R820T: never confirms PLL lock; the error differs per VCO band
-    # (VHF3 ~157 ppm low, VHF2 ~80 ppm high) so a single ppm doesn't fit
+    # Primary R820T: never confirms PLL lock, but the crystal error is a
+    # smooth +72..82 ppm HIGH across all bands (LO tunes high -> correction
+    # negative). Measured 2026-10-06, four independent methods agree:
+    #   - rtl_test -p: cumulative PPM 82 / 72 (sample clock = PLL reference)
+    #   - 103.0 MHz: FM stereo pilot 18998.05 Hz with -8200 applied -> +8198 Hz
+    #   - 144.8 MHz: local carriers line up with the 144.6929/144.754/144.8761
+    #     survey (that survey reported true RF minus the LO error)
+    #   - 437.55 MHz: 15:08 ISS ridges -22.5..-28.7 kHz raw fit +34.8 kHz
+    #     with approach Doppler +6..+12 kHz
+    # The earlier +21.6 kHz VHF3 value came from an R820T spur at bin 302
+    # misread as the satellite: with +21600 applied, neither dongle showed
+    # any APT ridge anywhere in the +/-120 kHz window during the 18:00 and
+    # 19:38 NOAA 15 passes (58 deg max elevation).
     "77771111153705700": {
         "freqs": {
-            137620000: 21600,   # NOAA 15 (measured: carrier +21.6 kHz in the waterfall)
-            137912500: 21650,   # NOAA 18 (scaled by frequency within the band)
-            137100000: 21500,   # NOAA 19 (scaled by frequency within the band)
-            437550000: -30000,  # ISS (Zarya) — measured from the 15:08 pass waterfall (-26..-28 kHz raw, minus Doppler)
+            137620000: -10955,  # NOAA 15 (79.6 ppm x 137.62 MHz)
+            137912500: -10977,  # NOAA 18
+            137100000: -10913,  # NOAA 19
+            437550000: -34827,  # ISS (Zarya) (79.6 ppm x 437.55 MHz)
         },
         "fm_band": -8200,  # VHF2: tunes ~8 kHz HIGH (carriers 6-11 kHz below nominal, measured on 89.7/93.0/95.0/99.6/103.0/105.0)
-        "ppm": None,
+        "ppm": 80,
     },
-    # FC0013 dongle: ~39 ppm low, measured at 89.7 MHz (carrier landed +11.7
-    # kHz off with the R820T correction applied -> own error ~+3.5 kHz there).
-    # The NOAA/VHF3 correction follows the ppm fallback until measured on a pass.
+    # FC0013 dongle: rtl_test -p measured cumulative PPM 47 / 44 (crystal
+    # high), consistent with the 89.7 MHz carrier measurement (+3.5 kHz
+    # = +39 ppm there). NOAA-band corrections use the ppm fallback.
     "00000991": {
         "freqs": {},
         "fm_band": 3500,
-        "ppm": 39,
+        "ppm": 45,
     },
 }
 
