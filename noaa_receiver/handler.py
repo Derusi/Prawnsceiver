@@ -333,7 +333,7 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps({"success": True, "mode": "manual", "frequency_mhz": mhz}).encode())
-        elif self.path == '/live.wav':
+        elif self.path.split('?')[0] == '/live.wav':
             # Endless WAV stream of the live FM-demodulated audio of one
             # dongle (default: the primary). WAV header with a maxed-out
             # size; browsers play it progressively.
