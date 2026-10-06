@@ -21,7 +21,7 @@ from .config import (AUDIO_RATE, DECIMATION, FFT_SIZE, FM_BAND, IQ_BLOCK, LOGDIR
                      PRIMARY_DONGLE_SN, RECORD_DIR, RTL_LOG, SDR_GAIN, SDR_OFFSET_HZ,
                      SDR_RATE, WATERFALL_ROWS, tuning_correction)
 
-from .dsp import fm_demodulate, frequency_shift, iq_to_complex
+from .dsp import fm_demodulate, frequency_shift, iq_to_complex, new_state
 
 # Waterfall/signal FFT cadence: compute the FFT only every Nth IQ block. The
 # dashboard draws ~5 rows/s, so ~59 rows/s (469 blocks/s / 8) is still 10x
@@ -108,6 +108,10 @@ def enumerate_dongles():
             'primary': primary,
             'waterfall': waterfall, 'lock': lock,
             'signal': 0.0, 'proc': None, 'last_data': 0.0,
+            # Live audio ring for this dongle's demodulated audio
+            'la': {'data': [], 'base': 0, 'total': 0, 'cond': threading.Condition()},
+            # WAV recording state (every dongle records its own file)
+            'is_recording': False, 'wav': None, 'wav_path': None,
         }
         state.log_console(f"🔌 Dongle {idx_s.strip()}: {label.strip()} ({tuner.strip()}), SN {serial}" + (" — primary" if primary else ""))
 
@@ -155,6 +159,9 @@ def sdr_capture_thread(serial):
     os.makedirs(RECORD_DIR, exist_ok=True)
     rtl_log_f = open(rtl_log_path, 'w')
     pll_warned = False
+    # This dongle's own DSP chain state — demod filters must not share state
+    # across the concurrently demodulating capture threads
+    dst = new_state()
 
     while True:
         proc = None
@@ -196,7 +203,7 @@ def sdr_capture_thread(serial):
                 # Offset-shift the baseband once: satellite to 0 Hz, DC spike
                 # displaced to +SDR_OFFSET_HZ. Shared by waterfall FFT and demod.
                 c = iq_to_complex(raw)
-                c = frequency_shift(c, SDR_OFFSET_HZ, SDR_RATE)
+                c = frequency_shift(c, SDR_OFFSET_HZ, SDR_RATE, dst)
 
                 # FFT for waterfall + signal strength, every FFT_EVERY-th
                 # block (see FFT_EVERY — CPU budget, not display needs)
@@ -251,74 +258,84 @@ def sdr_capture_thread(serial):
                 with state.status_lock:
                     freq_now = state.current_frequency
                     sat_now = state.current_sat_name
-                if freq_now != tuned_freq and (not state.is_recording or sat_now != record_sat):
+                if freq_now != tuned_freq and (not entry['is_recording'] or sat_now != record_sat):
                     if primary:
                         state.log_console(f"Retuning: {tuned_freq} Hz -> {freq_now} Hz ({sat_now})")
                     break
 
-                # Record to WAV only during passes (primary dongle only —
-                # comparison dongles feed waterfalls, not recordings)
-                if primary:
-                    should_record = False
-                    with state.status_lock:
-                        should_record = state.is_pass_active
+                # Record to WAV during passes — every dongle records its own
+                # file (suffixed with its serial); the primary additionally
+                # mirrors its state into the legacy globals used by the
+                # status/handler/scheduler.
+                should_record = False
+                with state.status_lock:
+                    should_record = state.is_pass_active
 
-                    if should_record and not state.is_recording:
-                        # Start new recording
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        sat_short = state.current_sat_name.replace(" ", "_").replace("(idle)", "idle")
-                        record_sat = state.current_sat_name
-                        state.current_wav_path = os.path.join(RECORD_DIR, f"{sat_short}_{timestamp}.wav")
-                        state.current_wav = wave.open(state.current_wav_path, 'wb')
-                        state.current_wav.setnchannels(1)
-                        state.current_wav.setsampwidth(2)
-                        state.current_wav.setframerate(AUDIO_RATE)
+                if should_record and not entry['is_recording']:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    sat_short = state.current_sat_name.replace(" ", "_").replace("(idle)", "idle")
+                    record_sat = state.current_sat_name
+                    suffix = "" if primary else f"_{serial}"
+                    entry['wav_path'] = os.path.join(RECORD_DIR, f"{sat_short}_{timestamp}{suffix}.wav")
+                    entry['wav'] = wave.open(entry['wav_path'], 'wb')
+                    entry['wav'].setnchannels(1)
+                    entry['wav'].setsampwidth(2)
+                    entry['wav'].setframerate(AUDIO_RATE)
+                    entry['is_recording'] = True
+                    if primary:
+                        state.current_wav_path = entry['wav_path']
                         state.is_recording = True
-                        state.log_console(f"🎬 Recording started: {state.current_wav_path}")
+                    state.log_console(f"🎬 Recording started (dongle {serial}): {entry['wav_path']}")
 
-                    elif not should_record and state.is_recording:
-                        # Stop recording
-                        try:
-                            state.current_wav.close()
-                            state.log_console(f"🎬 Recording stopped: {state.current_wav_path}")
-                        except Exception as e:
-                            state.log_console(f"WAV close error: {e}", "error")
+                elif not should_record and entry['is_recording']:
+                    try:
+                        entry['wav'].close()
+                        state.log_console(f"🎬 Recording stopped (dongle {serial}): {entry['wav_path']}")
+                    except Exception as e:
+                        state.log_console(f"WAV close error (dongle {serial}): {e}", "error")
+                    entry['wav'] = None
+                    entry['wav_path'] = None
+                    entry['is_recording'] = False
+                    if primary:
                         state.current_wav = None
                         state.current_wav_path = None
                         state.is_recording = False
 
-                    # FM-demodulate every block: feeds the live audio stream,
-                    # and is written to the WAV during passes. Broadcast FM
-                    # (manual radio test tunes) deviates ±75 kHz, so the whole
-                    # ±120 kHz capture band is demodulated and only the audio
-                    # is low-passed; satellite APT/SSTV keeps the narrow 22 kHz.
-                    try:
-                        if FM_BAND[0] <= freq_now <= FM_BAND[1]:
-                            audio = fm_demodulate(c, DECIMATION, iq_cutoff_hz=None, audio_cutoff_hz=18000)
-                        else:
-                            audio = fm_demodulate(c, DECIMATION)
-                    except Exception:
-                        audio = b''
-                    if audio:
-                        state.push_live_audio(audio)
+                # FM-demodulate every block (every dongle: each feeds its own
+                # live audio ring and its own WAV). Broadcast FM (manual radio
+                # test tunes) deviates ±75 kHz, so the whole ±120 kHz capture
+                # band is demodulated and only the audio is low-passed;
+                # satellite APT/SSTV keeps the narrow 22 kHz.
+                try:
+                    if FM_BAND[0] <= freq_now <= FM_BAND[1]:
+                        audio = fm_demodulate(c, DECIMATION, iq_cutoff_hz=None, audio_cutoff_hz=18000, st=dst)
+                    else:
+                        audio = fm_demodulate(c, DECIMATION, st=dst)
+                except Exception:
+                    audio = b''
+                if audio:
+                    state.push_live_audio(entry, audio)
 
-                    if state.is_recording and state.current_wav:
-                        try:
-                            if audio:
-                                state.current_wav.writeframes(audio)
-                        except Exception as e:
-                            state.log_console(f"WAV write error: {e}", "error")
+                if entry['is_recording'] and entry['wav']:
+                    try:
+                        if audio:
+                            entry['wav'].writeframes(audio)
+                    except Exception as e:
+                        state.log_console(f"WAV write error (dongle {serial}): {e}", "error")
 
         except Exception as e:
             state.log_console(f"SDR thread error (dongle {serial}): {e}", "error")
         try: proc.kill()
         except: pass
+        try:
+            if entry['wav']:
+                entry['wav'].close()
+        except: pass
+        entry['wav'] = None
+        entry['wav_path'] = None
+        entry['is_recording'] = False
         if primary:
-            try:
-                if state.current_wav:
-                    state.current_wav.close()
-            except: pass
-            state.is_recording = False
             state.current_wav = None
             state.current_wav_path = None
+            state.is_recording = False
         time.sleep(5)

@@ -25,24 +25,23 @@ pass_signal_peak = 0.0
 signal_lock = threading.Lock()
 signal_history = deque(maxlen=300)  # 5 min at 1 Hz
 
-# Live audio stream (FM demodulated, ring buffer of demod blocks)
+# Live audio (FM demodulated): every dongle entry owns a ring
+# {'data': [...], 'base': int, 'total': int, 'cond': Condition} created by
+# radio.enumerate_dongles, fed by its capture thread and served by
+# /live.wav?d=<serial>.
 LIVE_AUDIO_CHUNKS = 2048  # ~4s of live audio retained
-live_audio_data = []
-live_audio_base = 0      # global index of live_audio_data[0]
-live_audio_total = 0     # total demod blocks ever produced
-live_audio_cond = threading.Condition()
 
-def push_live_audio(pcm):
-    """Append a demodulated PCM block to the live audio ring buffer."""
-    global live_audio_total, live_audio_base
-    with live_audio_cond:
-        live_audio_data.append(pcm)
-        live_audio_total += 1
-        if len(live_audio_data) > LIVE_AUDIO_CHUNKS:
-            drop = len(live_audio_data) - LIVE_AUDIO_CHUNKS
-            del live_audio_data[:drop]
-            live_audio_base += drop
-        live_audio_cond.notify_all()
+def push_live_audio(entry, pcm):
+    """Append a demodulated PCM block to a dongle entry's live audio ring."""
+    ring = entry['la']
+    with ring['cond']:
+        ring['data'].append(pcm)
+        ring['total'] += 1
+        if len(ring['data']) > LIVE_AUDIO_CHUNKS:
+            drop = len(ring['data']) - LIVE_AUDIO_CHUNKS
+            del ring['data'][:drop]
+            ring['base'] += drop
+        ring['cond'].notify_all()
 
 # Debug console ring buffer (served at /console)
 console_buffer = deque(maxlen=100)

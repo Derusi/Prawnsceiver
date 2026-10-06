@@ -113,37 +113,46 @@ def scheduler_thread():
                             state.pass_signal_peak = 0.0
 
                 if finished_pass is not None:
-                    # Wait for the SDR thread to finalize the WAV, then auto-decode it
+                    # Wait for the capture threads to finalize their WAVs, then
+                    # auto-decode every recording of this pass — one per dongle.
+                    # The pass history tracks the primary dongle's recording.
                     time.sleep(2)
                     decoded = False
                     png_file = None
                     wav_name = None
                     quality = None
+                    pass_start_ts = finished_pass["rise_utc"].timestamp() - PASS_MARGIN_SECS
                     recordings = sorted(glob.glob(os.path.join(RECORD_DIR, "*.wav")), key=os.path.getmtime, reverse=True)
-                    # Never pick the WAV that is still being written
+                    # Never pick WAVs that are still being written
                     with state.status_lock:
                         active_wav = state.current_wav_path
                     if active_wav:
                         recordings = [r for r in recordings if os.path.abspath(r) != os.path.abspath(active_wav)]
-                    if recordings:
-                        latest = recordings[0]
-                        wav_name = os.path.basename(latest)
+                    dongle_suffixes = tuple(f"_{sn}.wav" for sn in state.sdrs)
+                    for latest in recordings:
+                        if os.path.getmtime(latest) < pass_start_ts:
+                            break  # sorted newest-first: older files belong to earlier passes
+                        wav_base = os.path.basename(latest)
                         latest_png = latest.replace('.wav', '.png')
-                        if not os.path.exists(latest_png):
-                            state.log_console(f"Auto-decoding: {wav_name}")
-                            decoded, png_path, err = decode_recording(latest)
-                            if decoded:
-                                png_file = os.path.basename(png_path)
-                                state.log_console(f"Auto-decode successful: {png_file}")
+                        rec_decoded = os.path.exists(latest_png)
+                        if not rec_decoded:
+                            state.log_console(f"Auto-decoding: {wav_base}")
+                            rec_decoded, png_path, err = decode_recording(latest)
+                            if rec_decoded:
+                                state.log_console(f"Auto-decode successful: {os.path.basename(png_path)}")
                             else:
-                                state.log_console(f"Auto-decode failed: {err}", "error")
-                        else:
-                            decoded = True
-                            png_file = os.path.basename(latest_png)
-                        # Reception quality (sync/SNR analysis), independent of decode success
-                        quality = estimate_quality(latest)
-                        if quality is not None:
-                            state.log_console(f"Reception quality for {wav_name}: {quality}%")
+                                state.log_console(f"Auto-decode failed for {wav_base}: {err}", "error")
+                        rec_quality = estimate_quality(latest)
+                        if rec_quality is not None:
+                            state.log_console(f"Reception quality for {wav_base}: {rec_quality}%")
+                        # Comparison-dongle recordings (serial-suffixed) are
+                        # decoded but not part of the pass history
+                        if wav_base.endswith(dongle_suffixes):
+                            continue
+                        decoded = bool(rec_decoded)
+                        png_file = os.path.basename(latest_png) if rec_decoded else None
+                        wav_name = wav_base
+                        quality = rec_quality
                     log_pass(finished_pass["sat_name"], finished_pass["frequency"],
                              finished_pass["max_alt"], finished_pass["duration_min"],
                              finished_pass["rise_utc"], finished_pass["set_utc"],

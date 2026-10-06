@@ -34,6 +34,8 @@ def _dongle_list():
                 "primary": e["primary"],
                 "signal": round(e["signal"], 2),
                 "running": e["proc"] is not None and e["proc"].poll() is None,
+                "recording": e["is_recording"],
+                "wav": os.path.basename(e["wav_path"]) if e["wav_path"] else None,
             })
     return dongles
 
@@ -332,9 +334,19 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"success": True, "mode": "manual", "frequency_mhz": mhz}).encode())
         elif self.path == '/live.wav':
-            state.log_console(f"🔊 Live audio listener connected ({self.client_address[0]})")
-            # Endless WAV stream of the live FM-demodulated audio.
-            # WAV header with a maxed-out size; browsers play it progressively.
+            # Endless WAV stream of the live FM-demodulated audio of one
+            # dongle (default: the primary). WAV header with a maxed-out
+            # size; browsers play it progressively.
+            query = parse_qs(urlparse(self.path).query)
+            dev = (query.get('d') or [''])[0] or (state.primary_serial or '')
+            entry = state.sdrs.get(dev)
+            if entry is None:
+                self.send_response(404)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Unknown dongle"}).encode())
+                return
+            state.log_console(f"🔊 Live audio listener connected ({self.client_address[0]}, dongle {dev})")
             self.send_response(200)
             self.send_header('Content-type', 'audio/wav')
             self.send_header('Cache-Control', 'no-cache')
@@ -343,29 +355,30 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             header = (b'RIFF' + struct.pack('<I', data_size) + b'WAVE'
                       + b'fmt ' + struct.pack('<IHHIIHH', 16, 1, 1, AUDIO_RATE, AUDIO_RATE * 2, 2, 16)
                       + b'data' + struct.pack('<I', data_size))
+            ring = entry['la']
             try:
                 self.wfile.write(header)
-                with state.live_audio_cond:
-                    pos = state.live_audio_total  # start at the live edge for low latency
+                with ring['cond']:
+                    pos = ring['total']  # start at the live edge for low latency
                 while True:
                     data = None
-                    with state.live_audio_cond:
-                        if pos >= state.live_audio_total:
-                            state.live_audio_cond.wait(timeout=5)
-                        if pos >= state.live_audio_total:
+                    with ring['cond']:
+                        if pos >= ring['total']:
+                            ring['cond'].wait(timeout=5)
+                        if pos >= ring['total']:
                             # No new audio (SDR idle/restarting): send 100 ms of
                             # silence to keep the connection alive and notice a
                             # disconnected client on write
                             data = b'\x00\x00' * (AUDIO_RATE // 10)
                         else:
-                            if pos < state.live_audio_base:
-                                pos = state.live_audio_base  # fell behind, skip dropped chunks
-                            data = b''.join(state.live_audio_data[pos - state.live_audio_base:])
-                            pos = state.live_audio_total
+                            if pos < ring['base']:
+                                pos = ring['base']  # fell behind, skip dropped chunks
+                            data = b''.join(ring['data'][pos - ring['base']:])
+                            pos = ring['total']
                     self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass  # listener disconnected
-            state.log_console(f"🔊 Live audio listener disconnected ({self.client_address[0]})")
+            state.log_console(f"🔊 Live audio listener disconnected ({self.client_address[0]}, dongle {dev})")
             return
         elif self.path.startswith('/decode/'):
             filename = self.path[8:]
