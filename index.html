@@ -99,8 +99,20 @@
         <div id="main-panel">
             <div id="track-section" style="display:none;margin-bottom:12px;">
                 <div class="section-title">🧭 Live Pass — <span id="track-sat"></span></div>
-                <canvas id="track-canvas" width="440" height="440" style="width:100%;max-width:440px;background:#000;border:1px solid #0f3460;border-radius:4px;"></canvas>
-                <div style="font-size:0.7em;color:#888;margin-top:3px;">Polar view: center = zenith (90°), outer ring = horizon (0°). North is up.</div>
+                <div style="display:flex;gap:15px;flex-wrap:wrap;align-items:flex-start;">
+                    <div style="flex:0 1 440px;max-width:440px;">
+                        <canvas id="track-canvas" width="440" height="440" style="width:100%;max-width:440px;background:#000;border:1px solid #0f3460;border-radius:4px;"></canvas>
+                        <div style="font-size:0.7em;color:#888;margin-top:3px;">Polar view: center = zenith (90°), outer ring = horizon (0°). North is up.</div>
+                    </div>
+                    <div style="flex:1 1 340px;min-width:280px;">
+                        <div style="font-size:0.85em;color:#a8b8d8;margin-bottom:4px;">🖼️ Live Image — <span id="liveimg-mode" style="color:#53d769;">—</span></div>
+                        <div style="position:relative;background:#000;border:1px solid #0f3460;border-radius:4px;overflow:hidden;">
+                            <canvas id="liveimg-canvas" width="909" height="900" style="width:100%;display:block;image-rendering:pixelated;"></canvas>
+                            <div id="liveimg-status" style="position:absolute;top:4px;left:6px;font-size:0.7em;color:#53d769;background:rgba(0,0,0,0.6);padding:1px 6px;border-radius:3px;white-space:nowrap;">—</div>
+                        </div>
+                        <div style="font-size:0.7em;color:#888;margin-top:3px;">Decoded live from the FM demod audio. APT: channel A (top) / channel B (bottom). Robot 36 image builds line by line.</div>
+                    </div>
+                </div>
             </div>
             <div class="section-title">📅 Upcoming Passes (24h)</div>
             <div id="passes-list">Loading pass predictions...</div>
@@ -343,6 +355,14 @@
                     document.getElementById('rec-led').className = 'indicator red';
                     document.getElementById('rec-status').textContent = 'Idle';
                     document.getElementById('wf-highlight').style.display = 'none';
+                }
+
+                // Live image renderer follows the active pass
+                const liMode = /iss/i.test(data.satellite || '') ? 'sstv' : 'apt';
+                if (data.pass_active) {
+                    if (!liveImg.active || liveImg.mode !== liMode) liveImgStart(liMode);
+                } else if (liveImg.active) {
+                    liveImgStop();
                 }
 
                 // Pass banner
@@ -606,6 +626,428 @@
             ctx.fillRect((signalHistory.length - 1) * step - 1, 0, 2, h);
         }
 
+        // ---------- Live image renderer (NOAA APT / ISS Robot 36) ----------
+        // Decodes the /live.wav FM-demod audio in the browser and paints the
+        // image as it arrives, next to the polar pass view.
+        //   APT: AM on a 2400 Hz subcarrier, one 2080-px row (channel A + B)
+        //        every 0.5 s, synced on the 1040 Hz sync frame
+        //   Robot 36: 1500-2300 Hz frequency tones, 320x240, 150 ms/line,
+        //        synced on the 1900/1200 Hz calibration header + VIS code
+        const LI_RATE = 48000;
+        const APT = {
+            PX: 4160, ROW: 2080, IMG: 909, IMG_OFF: 86, CH_B: 1040,
+            TPL: (() => { const t = [-1, -1]; for (let k = 0; k < 7; k++) t.push(1, 1, -1, -1); for (let k = 0; k < 8; k++) t.push(-1); return t; })()
+        };
+        const R36 = { W: 320, H: 240, LINE_MS: 150, SYNC_MS: 9, Y_OFF_MS: 12, Y_PX_MS: 0.275, Y_WIN_MS: 2.12, C_OFF_MS: 106, C_PX_MS: 0.1375, C_WIN_MS: 1.06 };
+        const liveImg = { active: false, mode: null, streaming: false, gen: 0 };
+
+        // ---- raw PCM ring buffer, absolute sample indexing ----
+        const liBuf = { arr: new Float32Array(LI_RATE * 30), start: 0, end: 0, abs: 0 };
+        function liAppend(samples) {
+            if (liBuf.end + samples.length > liBuf.arr.length) {
+                const keep = liBuf.end - liBuf.start;
+                if (keep > 0) liBuf.arr.copyWithin(0, liBuf.start, liBuf.end);
+                liBuf.abs += liBuf.start;
+                liBuf.start = 0;
+                liBuf.end = keep;
+            }
+            if (samples.length > liBuf.arr.length) return; // unreachable at 30 s cap
+            if (liBuf.end + samples.length > liBuf.arr.length) {
+                // drop oldest data, decoders resync on the next marker
+                const drop = liBuf.end + samples.length - liBuf.arr.length;
+                liBuf.abs += drop;
+                liBuf.start += drop;
+            }
+            liBuf.arr.set(samples, liBuf.end);
+            liBuf.end += samples.length;
+        }
+        function liAvail() { return liBuf.end - liBuf.start; }
+        function liWin(absStart, len, out) {
+            const off = absStart - liBuf.abs;
+            if (off < 0 || off + len > liBuf.end - liBuf.start) return false;
+            out.set(liBuf.arr.subarray(liBuf.start + off, liBuf.start + off + len));
+            return true;
+        }
+
+        // ---- /live.wav ingestion (skip 44-byte WAV header, byte-align, int16 -> float) ----
+        let liSkip = 44, liCarry = new Uint8Array(0), liLastData = 0, liAbort = null;
+        function liFeed(bytes) {
+            if (liSkip > 0) {
+                if (bytes.length <= liSkip) { liSkip -= bytes.length; return; }
+                bytes = bytes.subarray(liSkip);
+                liSkip = 0;
+            }
+            let buf = bytes;
+            if (liCarry.length) {
+                buf = new Uint8Array(liCarry.length + bytes.length);
+                buf.set(liCarry); buf.set(bytes, liCarry.length);
+                liCarry = new Uint8Array(0);
+            }
+            const usable = buf.length & ~1;
+            if (usable < buf.length) liCarry = buf.subarray(usable);
+            const n = usable >> 1;
+            const f = new Float32Array(n);
+            for (let i = 0; i < n; i++) f[i] = (buf[2 * i] | (buf[2 * i + 1] << 8)) / 32768;
+            liAppend(f);
+            liLastData = Date.now();
+        }
+
+        async function liStream() {
+            liveImg.streaming = true;
+            const myGen = liveImg.gen;
+            let backoff = 2000;
+            while (liveImg.active && myGen === liveImg.gen) {
+                const ctrl = new AbortController();
+                liAbort = ctrl;
+                try {
+                    const res = await fetch('/live.wav', { signal: ctrl.signal });
+                    if (!res.ok || !res.body) throw new Error('stream unavailable');
+                    const reader = res.body.getReader();
+                    for (;;) {
+                        const { done, value } = await reader.read();
+                        if (done || !liveImg.active) break;
+                        liFeed(value);
+                        backoff = 2000;
+                    }
+                } catch (e) { /* aborted or connection dropped */ }
+                if (liveImg.active && myGen === liveImg.gen) {
+                    liStatus('reconnecting…');
+                    await new Promise(r => setTimeout(r, backoff));
+                    backoff = Math.min(backoff * 2, 15000);
+                }
+            }
+            liveImg.streaming = false;
+        }
+
+        function liStatus(text) { document.getElementById('liveimg-status').textContent = text; }
+
+        // ---- Goertzel tone power (evaluates the DTFT at an exact frequency;
+        // short pixel windows are too coarse for integer-bin rounding) ----
+        function goertzel(win, freq) {
+            const n = win.length;
+            const coeff = 2 * Math.cos(2 * Math.PI * freq / LI_RATE);
+            let s1 = 0, s2 = 0;
+            for (let i = 0; i < n; i++) { const s0 = win[i] + coeff * s1 - s2; s2 = s1; s1 = s0; }
+            return (s1 * s1 + s2 * s2 - coeff * s1 * s2) / (n * n);
+        }
+
+        // ---- tone -> level (1500 Hz black .. 2300 Hz white, 1900 Hz = chroma 128) ----
+        const LUM_FREQS = [];
+        for (let f = 1500; f <= 2300; f += 50) LUM_FREQS.push(f);
+        const liBank = new Float64Array(LUM_FREQS.length);
+        function toneLevel(win) {
+            for (let i = 0; i < LUM_FREQS.length; i++) liBank[i] = goertzel(win, LUM_FREQS[i]);
+            let bi = 0;
+            for (let i = 1; i < LUM_FREQS.length; i++) if (liBank[i] > liBank[bi]) bi = i;
+            let f = LUM_FREQS[bi];
+            if (bi > 0 && bi < LUM_FREQS.length - 1) {
+                const a = liBank[bi - 1], b = liBank[bi], c = liBank[bi + 1];
+                const denom = a - 2 * b + c;
+                if (denom !== 0) {
+                    const delta = 0.5 * (a - c) / denom;
+                    if (delta > -1 && delta < 1) f += delta * 50;
+                }
+            }
+            return Math.max(0, Math.min(255, (f - 1500) / 3.1372549));
+        }
+
+        // ---- canvas ----
+        let liAptImgA = null, liAptImgB = null, liRowImg = null, liPairImg = null;
+        function liCanvasMode(mode) {
+            const c = document.getElementById('liveimg-canvas');
+            const ctx = c.getContext('2d');
+            if (mode === 'sstv') { c.width = R36.W; c.height = R36.H; liRowImg = ctx.createImageData(R36.W, 1); liPairImg = ctx.createImageData(R36.W, 2); }
+            else { c.width = APT.IMG; c.height = 900; liAptImgA = ctx.createImageData(APT.IMG, 1); liAptImgB = ctx.createImageData(APT.IMG, 1); }
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, c.width, c.height);
+        }
+
+        // ---- APT decoder ----
+        const aptPx = new Float32Array(1 << 16);          // 64k px ≈ 15 s ring
+        const aptScratch = new Float32Array(LI_RATE * 5); // per-tick work buffer
+        let aptPxWritten = 0, aptSyncIdx = 0;
+        let aptCandIdx = 0, aptCandCorr = -1e18, aptLastCorr = 0;
+        let aptCandHist = [];
+        let aptQueue = [], aptScale = 1e-6, aptRowsA = 0, aptRowsB = 0;
+        const aptSt = { i: 0, q: 0, e: 0, ePrev: 0, consumed: 0, resPos: 0 };
+
+        function liAptPx(absIdx) { return aptPx[absIdx & (aptPx.length - 1)]; }
+        function liAptCorr(i) {
+            let c = 0;
+            for (let j = 0; j < APT.TPL.length; j++) c += APT.TPL[j] * liAptPx(i - APT.TPL.length + 1 + j);
+            return c;
+        }
+
+        function liApt() {
+            const absEnd = liBuf.abs + liAvail();
+            const A = 0.28; // one-pole low-pass ≈ 2.5 kHz @ 48 kHz
+            while (aptSt.consumed < absEnd) {
+                const len = Math.min(absEnd - aptSt.consumed, aptScratch.length);
+                if (!liWin(aptSt.consumed, len, aptScratch)) break;
+                const base = aptSt.consumed;
+                for (let k = 0; k < len; k++) {
+                    const x = aptScratch[k];
+                    const ph = 2 * Math.PI * 2400 * (base + k) / LI_RATE;
+                    aptSt.i += A * (x * Math.cos(ph) - aptSt.i);
+                    aptSt.q += A * (x * Math.sin(ph) - aptSt.q);
+                    const e0 = Math.sqrt(aptSt.i * aptSt.i + aptSt.q * aptSt.q);
+                    aptSt.e += A * (e0 - aptSt.e);
+                    // resample to the 4160 Hz pixel rate (interpolate between envelopes)
+                    while (aptSt.resPos <= base + k) {
+                        const frac = aptSt.resPos - (base + k - 1);
+                        const v = aptSt.ePrev + (aptSt.e - aptSt.ePrev) * Math.max(0, Math.min(1, frac));
+                        aptPx[aptPxWritten & (aptPx.length - 1)] = v;
+                        aptPxWritten++;
+                        aptSt.resPos += LI_RATE / APT.PX;
+                    }
+                    aptSt.ePrev = aptSt.e;
+                }
+                aptSt.consumed += len;
+            }
+            // sync correlation on the pixel stream
+            while (aptSyncIdx < aptPxWritten) {
+                const c = liAptCorr(aptSyncIdx);
+                if (aptSyncIdx - aptCandIdx > APT.ROW * 0.8) {
+                    aptQueue.push({ idx: aptCandIdx, corr: aptCandCorr });
+                    aptCandIdx = aptSyncIdx;
+                    aptCandCorr = c;
+                } else if (c > aptCandCorr) {
+                    aptCandIdx = aptSyncIdx;
+                    aptCandCorr = c;
+                }
+                aptSyncIdx++;
+            }
+            // paint confirmed rows (data fully written, not yet overwritten)
+            while (aptQueue.length) {
+                const cand = aptQueue[0];
+                if (cand.idx + APT.ROW > aptPxWritten) break;
+                aptQueue.shift();
+                if (cand.idx < aptPxWritten - aptPx.length + APT.ROW) continue; // already overwritten
+                liAptPaintRow(cand.idx, cand.corr);
+            }
+        }
+
+        const aptRowVals = new Float32Array(APT.ROW);
+        function liAptPaintRow(idx, corr) {
+            for (let j = 0; j < APT.ROW; j++) aptRowVals[j] = liAptPx(idx + j);
+            let rowMax = 0;
+            for (let j = APT.IMG_OFF; j < APT.IMG_OFF + APT.IMG; j++) if (aptRowVals[j] > rowMax) rowMax = aptRowVals[j];
+            for (let j = APT.CH_B + APT.IMG_OFF; j < APT.CH_B + APT.IMG_OFF + APT.IMG; j++) if (aptRowVals[j] > rowMax) rowMax = aptRowVals[j];
+            aptScale = Math.max(aptScale * 0.99, rowMax);
+            const da = liAptImgA.data, db = liAptImgB.data;
+            for (let x = 0; x < APT.IMG; x++) {
+                const va = Math.max(0, Math.min(255, 255 * aptRowVals[APT.IMG_OFF + x] / aptScale));
+                const vb = Math.max(0, Math.min(255, 255 * aptRowVals[APT.CH_B + APT.IMG_OFF + x] / aptScale));
+                da[4 * x] = da[4 * x + 1] = da[4 * x + 2] = va; da[4 * x + 3] = 255;
+                db[4 * x] = 0.8 * vb; db[4 * x + 1] = vb; db[4 * x + 2] = Math.min(255, 1.15 * vb); db[4 * x + 3] = 255;
+            }
+            const ctx = document.getElementById('liveimg-canvas').getContext('2d');
+            ctx.putImageData(liAptImgA, 0, aptRowsA % 450);
+            ctx.putImageData(liAptImgB, 0, 450 + (aptRowsB % 450));
+            aptRowsA++; aptRowsB++;
+            aptLastCorr = corr;
+            // Lock = recent sync candidates agree: a real APT sync is a
+            // near-constant correlation, noise candidates are erratic.
+            aptCandHist.push(corr);
+            if (aptCandHist.length > 8) aptCandHist.shift();
+            let locked = false;
+            if (aptCandHist.length >= 3) {
+                const mean = aptCandHist.reduce((a, b) => a + b, 0) / aptCandHist.length;
+                const vr = aptCandHist.reduce((a, b) => a + (b - mean) * (b - mean), 0) / aptCandHist.length;
+                locked = mean > 0 && Math.sqrt(vr) / mean < 0.6;
+            }
+            liStatus(`APT — ${aptRowsA} rows · sync ${locked ? 'locked' : 'searching'}`);
+        }
+
+        // ---- Robot 36 decoder ----
+        const w480 = new Float32Array(480), w605 = new Float32Array(605), w432 = new Float32Array(432), w102 = new Float32Array(102), w51 = new Float32Array(51), w1440 = new Float32Array(1440);
+        const sstv = { scan: 0, state: 'hdr', header: -1, imageStart: -1, lineStart: -1, y: 0, Y: null, C: null, hdrStart: 0, toneRef: 0 };
+        const ms = n => Math.round(n * LI_RATE / 1000);
+
+        function liFindSync(from, limit) {
+            // Two-stage sync alignment. Coarse: a window dominated by 1200 Hz.
+            // Refine: the 432-sample window (sync length) with the highest
+            // 1200 Hz power marks the pulse start to ~0.25 ms.
+            let hit = -1;
+            for (let j = from; j + w605.length <= limit; j += 24) {
+                if (!liWin(j, w605.length, w605)) return -1;
+                const g12 = goertzel(w605, 1200);
+                if (g12 > 4 * goertzel(w605, 1500) && g12 > 4 * goertzel(w605, 1900)) { hit = j; break; }
+            }
+            if (hit < 0) return -1;
+            let best = -1, bestP = -1;
+            for (let k = hit - 24; k + w432.length <= limit; k += 24) {
+                if (!liWin(k, w432.length, w432)) break;
+                const p = goertzel(w432, 1200);
+                if (p > bestP) { bestP = p; best = k; }
+                if (k > hit + w605.length) break;
+            }
+            // Reject noise: the sync must be within ~12 dB of the header leader tone
+            if (best < 0 || sstv.toneRef <= 0 || bestP < sstv.toneRef / 4) return -1;
+            return best;
+        }
+
+        function liSstv() {
+            const absEnd = liBuf.abs + liAvail();
+            if (sstv.state === 'hdr') {
+                if (!liSstv.searchShown && sstv.scan > sstv.hdrStart + ms(2000)) {
+                    liStatus('Robot 36 — searching for SSTV header…');
+                    liSstv.searchShown = true;
+                }
+                while (sstv.scan + ms(650) <= absEnd) {
+                    const s = sstv.scan;
+                    const hdr = liWin(s, 480, w480) && goertzel(w480, 1900) > 4 * goertzel(w480, 1200)
+                        && liWin(s + ms(300), 480, w480) && goertzel(w480, 1200) > 4 * goertzel(w480, 1900)
+                        && liWin(s + ms(310), 480, w480) && goertzel(w480, 1900) > 4 * goertzel(w480, 1200)
+                        && liWin(s + ms(610), 480, w480) && goertzel(w480, 1200) > 4 * goertzel(w480, 1900);
+                    if (hdr) {
+                        sstv.header = s;
+                        sstv.toneRef = goertzel(w480, 1900);
+                        sstv.state = 'vis';
+                        liStatus('Robot 36 — header found, VIS…');
+                        break;
+                    }
+                    sstv.scan += 96; // 2 ms steps
+                }
+            }
+            if (sstv.state === 'vis' && sstv.header + ms(910) <= absEnd) {
+                let code = 0, ones = 0, ok = true;
+                for (let i = 0; i < 8; i++) {
+                    if (!liWin(sstv.header + ms(640) + i * ms(30), 1440, w1440)) { ok = false; break; }
+                    if (goertzel(w1440, 1100) > goertzel(w1440, 1300)) { ones++; if (i < 7) code |= 1 << i; }
+                }
+                if (ok) {
+                    if (ones % 2 === 0 && code === 8) { // Robot 36
+                        sstv.imageStart = sstv.header + ms(910);
+                        sstv.lineStart = -1;
+                        sstv.y = 0;
+                        sstv.state = 'img';
+                        sstv.Y = new Float32Array(R36.W * R36.H);
+                        sstv.C = new Float32Array(R36.W * R36.H);
+                        liCanvasMode('sstv');
+                        liStatus('Robot 36 — image incoming…');
+                    } else {
+                        liSstvToHdr(sstv.header + 96);
+                    }
+                }
+            }
+            if (sstv.state === 'img') {
+                while (sstv.state === 'img') {
+                    if (sstv.lineStart < 0) {
+                        if (sstv.imageStart + ms(150) > absEnd) break;
+                        const p = liFindSync(sstv.imageStart, Math.min(absEnd, sstv.imageStart + ms(2500)));
+                        if (p < 0) {
+                            if (sstv.imageStart + ms(2500) > absEnd) break;
+                            liSstvToHdr(sstv.imageStart);
+                            break;
+                        }
+                        sstv.lineStart = p;
+                    }
+                    if (sstv.lineStart + ms(R36.LINE_MS) > absEnd) break;
+                    liDecodeR36Line(sstv.lineStart, sstv.y);
+                    sstv.y++;
+                    if (sstv.y >= R36.H) {
+                        liSstvToHdr(sstv.lineStart + ms(R36.LINE_MS));
+                        liStatus('Robot 36 — image complete ✓');
+                        break;
+                    }
+                    const next = liFindSync(sstv.lineStart + ms(R36.LINE_MS), Math.min(absEnd, sstv.lineStart + ms(R36.LINE_MS + 40)));
+                    if (next < 0) {
+                        if (sstv.lineStart + ms(R36.LINE_MS + 40) > absEnd) break;
+                        liSstvToHdr(sstv.lineStart + ms(R36.LINE_MS));
+                        liStatus(`Robot 36 — signal lost after ${sstv.y} lines`);
+                        break;
+                    }
+                    sstv.lineStart = next;
+                    liStatus(`Robot 36 — line ${sstv.y}/${R36.H}`);
+                }
+            }
+        }
+
+        function liSstvToHdr(scanPos) {
+            sstv.state = 'hdr';
+            sstv.scan = scanPos;
+            sstv.hdrStart = scanPos;
+            liSstv.searchShown = false;
+        }
+
+        function liDecodeR36Line(start, y) {
+            const base = y * R36.W;
+            for (let i = 0; i < R36.W; i++) {
+                const s = Math.round(start + (R36.Y_OFF_MS + i * R36.Y_PX_MS - R36.Y_WIN_MS / 2) * LI_RATE / 1000);
+                if (!liWin(s, 102, w102)) return;
+                sstv.Y[base + i] = toneLevel(w102);
+            }
+            for (let i = 0; i < R36.W; i++) {
+                const s = Math.round(start + (R36.C_OFF_MS + i * R36.C_PX_MS - R36.C_WIN_MS / 2) * LI_RATE / 1000);
+                if (!liWin(s, 51, w51)) return;
+                sstv.C[base + i] = toneLevel(w51);
+            }
+            // show luma immediately, colorize the line pair once chroma is in
+            const ctx = document.getElementById('liveimg-canvas').getContext('2d');
+            const d = liRowImg.data;
+            for (let x = 0; x < R36.W; x++) {
+                const v = sstv.Y[base + x];
+                d[4 * x] = d[4 * x + 1] = d[4 * x + 2] = v; d[4 * x + 3] = 255;
+            }
+            ctx.putImageData(liRowImg, 0, y);
+            if (y % 2 === 1) {
+                const p = liPairImg.data;
+                for (let yy = 0; yy < 2; yy++) {
+                    const row = (y - 1 + yy) * R36.W;
+                    for (let x = 0; x < R36.W; x++) {
+                        const Y = sstv.Y[row + x];
+                        const even = ((y - 1 + yy) % 2 === 0);
+                        const cb = sstv.C[(even ? y - 1 + yy + 1 : y - 1 + yy) * R36.W + x];
+                        const cr = sstv.C[(even ? y - 1 + yy : y - 1 + yy - 1) * R36.W + x];
+                        const o = 4 * (yy * R36.W + x);
+                        p[o] = Math.max(0, Math.min(255, Y + 1.402 * (cr - 128)));
+                        p[o + 1] = Math.max(0, Math.min(255, Y - 0.344136 * (cb - 128) - 0.714136 * (cr - 128)));
+                        p[o + 2] = Math.max(0, Math.min(255, Y + 1.772 * (cb - 128)));
+                        p[o + 3] = 255;
+                    }
+                }
+                ctx.putImageData(liPairImg, 0, y - 1);
+            }
+        }
+
+        // ---- lifecycle ----
+        function liveImgStart(mode) {
+            liveImg.active = true;
+            liveImg.gen++;
+            liveImg.mode = mode;
+            document.getElementById('liveimg-mode').textContent = mode === 'sstv' ? 'ISS Robot 36' : 'NOAA APT';
+            liCanvasMode(mode);
+            // reset all decoder state
+            liBuf.start = liBuf.end = 0; liBuf.abs = 0;
+            liSkip = 44; liCarry = new Uint8Array(0); liLastData = Date.now();
+            Object.assign(aptSt, { i: 0, q: 0, e: 0, ePrev: 0, consumed: 0, resPos: 0 });
+            aptPxWritten = 0; aptSyncIdx = APT.TPL.length;
+            aptCandIdx = 0; aptCandCorr = -1e18; aptMeanCorr = 1e-9; aptLastCorr = 0;
+            aptQueue = []; aptScale = 1e-6; aptRowsA = 0; aptRowsB = 0;
+            Object.assign(sstv, { scan: 0, state: 'hdr', header: -1, imageStart: -1, lineStart: -1, y: 0, Y: null, C: null, hdrStart: 0, toneRef: 0 });
+            liSstv.searchShown = false;
+            liStatus(mode === 'sstv' ? 'Robot 36 — waiting for transmission…' : 'APT — waiting for signal…');
+            liStream();
+        }
+
+        function liveImgStop() {
+            liveImg.active = false;
+            liStatus('pass ended');
+            if (liAbort) { try { liAbort.abort(); } catch (e) {} }
+        }
+
+        function liveImgTick() {
+            if (!liveImg.active) return;
+            if (Date.now() - liLastData > 12000 && liAbort) {
+                // stalled stream (server restart): force a reconnect
+                try { liAbort.abort(); } catch (e) {}
+                liLastData = Date.now();
+            }
+            if (liveImg.mode === 'sstv') liSstv();
+            else liApt();
+        }
+
         // Init
         wfCtx.fillStyle = '#000'; wfCtx.fillRect(0, 0, WF_WIDTH, WF_HEIGHT);
         specCtx.fillStyle = '#000'; specCtx.fillRect(0, 0, WF_WIDTH, SPEC_HEIGHT);
@@ -617,6 +1059,7 @@
         setInterval(fetchCrabCount, 10000);
         setInterval(fetchSignal, 1000);
         setInterval(updateUptime, 1000);
+        setInterval(liveImgTick, 250);
         fetchWaterfall(); fetchStatus(); fetchPasses(); fetchTrack(); fetchCrabCount(); fetchSignal(); updateUptime();
     </script>
 </body>
