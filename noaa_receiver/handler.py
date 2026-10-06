@@ -36,6 +36,8 @@ def _dongle_list():
                 "running": e["proc"] is not None and e["proc"].poll() is None,
                 "recording": e["is_recording"],
                 "wav": os.path.basename(e["wav_path"]) if e["wav_path"] else None,
+                "correction_hz": e.get("correction", 0),
+                "correction_src": e.get("correction_src", "none"),
             })
     return dongles
 

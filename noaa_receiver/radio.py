@@ -19,7 +19,7 @@ from datetime import datetime
 from . import state
 from .config import (AUDIO_RATE, DECIMATION, FFT_SIZE, FM_BAND, IQ_BLOCK, LOGDIR,
                      PRIMARY_DONGLE_SN, RECORD_DIR, RTL_LOG, SDR_GAIN, SDR_OFFSET_HZ,
-                     SDR_RATE, WATERFALL_ROWS, tuning_correction)
+                     SDR_RATE, WATERFALL_ROWS, correction_info, tuning_correction)
 
 from .dsp import fm_demodulate, frequency_shift, iq_to_complex, new_state
 
@@ -169,6 +169,8 @@ def sdr_capture_thread(serial):
             with state.status_lock:
                 tune_target = state.current_frequency
             correction = tuning_correction(tune_target, serial)
+            # shown in the dongle cards' tuning infobox
+            entry['correction'], entry['correction_src'] = correction_info(tune_target, serial)
             freq_str = f"{tune_target + SDR_OFFSET_HZ + correction}"
             tuned_freq = tune_target
             record_sat = None

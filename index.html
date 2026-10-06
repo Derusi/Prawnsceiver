@@ -75,7 +75,7 @@
     </div>
     <div id="pass-banner" class="pass-idle">Checking pass schedule...</div>
     <div id="waterfall-section">
-        <div style="display:flex;gap:12px;align-items:flex-start;">
+        <div style="display:flex;gap:12px;align-items:stretch;">
             <div style="flex:1;min-width:0;">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
                     <h2 style="margin-bottom:0;">Live Waterfall — <span id="wf-freq">137.620 MHz</span> ± 120 kHz</h2>
@@ -90,9 +90,9 @@
                     <span id="fl-5">137.740</span>
                 </div>
             </div>
-            <div id="dongle-status-col" style="width:280px;flex-shrink:0;">
+            <div id="dongle-status-col" style="width:280px;flex-shrink:0;display:flex;flex-direction:column;">
                 <div class="section-title" style="margin-top:0;margin-bottom:8px;">Dongles</div>
-                <div id="dongle-cards"></div>
+                <div id="dongle-cards" style="flex:1;display:flex;flex-direction:column;"></div>
                 <audio id="live-audio" preload="none" style="display:none;"></audio>
             </div>
         </div>
@@ -178,7 +178,7 @@
             }
             const list = document.getElementById('wf-list');
             const block = document.createElement('div');
-            block.style.marginBottom = '12px';
+            block.style.cssText = 'margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #0f3460;';
             const head = document.createElement('div');
             head.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.75em;color:#a8b8d8;margin-bottom:3px;';
             const led = document.createElement('span');
@@ -382,7 +382,9 @@
             const col = document.getElementById('dongle-cards');
             const card = document.createElement('div');
             card.className = 'status-item';
-            card.style.marginBottom = '10px';
+            // flex:1 stretches the card to line up with its waterfall block;
+            // the border visually separates the dongles
+            card.style.cssText = 'flex:1;display:flex;flex-direction:column;border-bottom:1px solid #0f3460;margin-bottom:8px;';
             const head = document.createElement('div');
             head.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.8em;color:#a8b8d8;';
             const led = document.createElement('span');
@@ -416,17 +418,23 @@
             recTxt.style.cssText = 'color:#a8b8d8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
             recTxt.textContent = 'Idle';
             recRow.appendChild(recLed); recRow.appendChild(recTxt);
+            // Tuning/adjustments infobox (per-dongle correction from the
+            // server + the shared offset/gain settings)
+            const info = document.createElement('div');
+            info.style.cssText = 'font-size:0.6em;color:#888;background:rgba(15,52,96,0.5);border:1px solid #0f3460;border-radius:3px;padding:3px 5px;margin-top:5px;line-height:1.5;';
             const listenBtn = document.createElement('button');
-            listenBtn.style.cssText = 'width:100%;margin-top:6px;padding:4px 10px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;';
+            listenBtn.style.cssText = 'width:100%;margin-top:auto;padding:4px 10px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;';
             listenBtn.textContent = '🔊 Listen';
             const sn_card = d.id;
             listenBtn.onclick = () => toggleLiveAudio(sn_card);
             card.appendChild(head); card.appendChild(sn); card.appendChild(sigRow);
-            card.appendChild(tl); card.appendChild(recRow); card.appendChild(listenBtn);
+            card.appendChild(tl); card.appendChild(recRow); card.appendChild(info);
+            card.appendChild(document.createElement('div')).style.marginTop = '4px';
+            card.appendChild(listenBtn);
             col.appendChild(card);
             c = dongleCards[d.id] = {
                 led, title, sigVal, sigFill, tlCtx: tl.getContext('2d'),
-                hist: [], recLed, recTxt, listenBtn, lastHistTs: 0,
+                hist: [], recLed, recTxt, info, listenBtn, lastHistTs: 0,
             };
             return c;
         }
@@ -472,6 +480,11 @@
             }
             c.recLed.className = 'indicator ' + (d.recording ? 'green' : 'red');
             c.recTxt.textContent = d.recording ? (d.wav || 'Recording…') : 'Idle';
+            // Tuning infobox: this dongle's correction (value + source) and
+            // the settings shared by all dongles
+            const cor = (d.correction_hz || 0) / 1000;
+            c.info.innerHTML = `⚙ tune ${cor >= 0 ? '+' : ''}${cor.toFixed(1)} kHz <span style="color:#666">(${d.correction_src || 'n/a'})</span><br>` +
+                               `IF offset +60 kHz · gain auto`;
             c.listenBtn.textContent = (liveAudioOn === d.id) ? '⏹ Stop Listening' : '🔊 Listen';
             c.listenBtn.style.background = (liveAudioOn === d.id) ? '#53d769' : '#0f3460';
             c.listenBtn.style.color = (liveAudioOn === d.id) ? '#1a1a2e' : '#53d769';
