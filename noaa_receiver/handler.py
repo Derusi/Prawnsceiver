@@ -9,9 +9,10 @@ from . import state
 from .config import AUDIO_RATE, LAT, LON, PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, UTC_OFFSET, WEBDIR
 
 from .decode import decode_recording
-from .history import get_recordings
+from .history import get_recordings, quality_map, set_recording_quality
 from .pages import CONSOLE_HTML, HISTORY_HTML
 from .passes import HAS_SKYFIELD, load, passes_to_json, wgs84
+from .quality import estimate_quality
 
 def get_status():
     with state.status_lock:
@@ -245,6 +246,13 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 return
             output_png = wav_path.replace('.wav', '.png')
             decoded, png_path, err = decode_recording(wav_path)
+            # Reception quality: reuse the pass-end value if present, otherwise
+            # analyze the recording now (takes a few seconds on a Pi)
+            quality = quality_map().get(filename)
+            if quality is None:
+                quality = estimate_quality(wav_path)
+            if quality is not None:
+                set_recording_quality(filename, quality)
             if decoded:
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
@@ -252,6 +260,7 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps({
                     "success": True,
                     "png": filename.replace('.wav', '.png'),
+                    "quality": quality
                 }).encode())
             else:
                 state.log_console(f"Decode failed for {filename}: {err}", "error")
@@ -260,7 +269,8 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({
                     "success": False,
-                    "error": err
+                    "error": err,
+                    "quality": quality
                 }).encode())
         elif self.path.startswith('/delete/'):
             filename = self.path[8:]

@@ -6,15 +6,9 @@ from datetime import datetime, timedelta, timezone
 from . import state
 from .config import PASS_HISTORY_FILE, RECORD_DIR, UTC_OFFSET
 
-def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, signal_peak, decoded, png_file, wav_file):
+def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, signal_peak, decoded, png_file, wav_file, quality=None):
     """Log a completed pass (with recording metadata) to the history file."""
-    history = []
-    if os.path.exists(PASS_HISTORY_FILE):
-        try:
-            with open(PASS_HISTORY_FILE, 'r') as f:
-                history = json.load(f)
-        except Exception:
-            pass
+    history = _load_history()
     history.append({
         "sat_name": sat_name,
         "frequency_mhz": round(frequency / 1e6, 4),
@@ -28,12 +22,43 @@ def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, si
         "decoded": decoded,
         "png": png_file,
         "wav": wav_file,
+        "quality": quality,
         "timestamp": datetime.now().isoformat(),
     })
     # Keep last 50 passes
     history = history[-50:]
-    with open(PASS_HISTORY_FILE, 'w') as f:
-        json.dump(history, f, indent=2)
+    _save_history(history)
+
+def _load_history():
+    if not os.path.exists(PASS_HISTORY_FILE):
+        return []
+    try:
+        with open(PASS_HISTORY_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def _save_history(history):
+    try:
+        with open(PASS_HISTORY_FILE, 'w') as f:
+            json.dump(history, f, indent=2)
+    except Exception as e:
+        state.log_console(f"History write failed: {e}", "error")
+
+def set_recording_quality(wav_name, quality):
+    """Persist a reception-quality value in the matching history entry."""
+    history = _load_history()
+    for h in reversed(history):
+        if h.get("wav") == wav_name:
+            h["quality"] = quality
+            _save_history(history)
+            return True
+    return False
+
+def quality_map():
+    """Map recording filename -> stored reception quality."""
+    return {h.get("wav"): h.get("quality")
+            for h in _load_history() if h.get("wav")}
 
 def migrate_pass_history():
     """One-time migration for entries written before the metadata change:
@@ -104,7 +129,8 @@ def migrate_pass_history():
             state.log_console(f"History migration failed: {e}", "error")
 
 def get_recordings():
-    """List available recordings."""
+    """List available recordings (with reception quality where known)."""
+    qualities = quality_map()
     recordings = []
     if os.path.exists(RECORD_DIR):
         for f in sorted(os.listdir(RECORD_DIR), reverse=True):
@@ -117,5 +143,6 @@ def get_recordings():
                     "size_mb": round(size / (1024*1024), 1),
                     "decoded": has_png,
                     "png": f.replace('.wav', '.png') if has_png else None,
+                    "quality": qualities.get(f),
                 })
     return recordings

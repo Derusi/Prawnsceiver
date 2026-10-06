@@ -44,6 +44,12 @@ let recordingsData = [];
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function safeId(f) { return f.replace(/[^a-zA-Z0-9]/g, ''); }
 
+function qualityBadge(q) {
+    if (q === null || q === undefined) return '';
+    const color = q >= 70 ? '#53d769' : (q >= 40 ? '#f39c12' : '#e74c3c');
+    return ' <span style="color:' + color + ';font-weight:bold;" title="Reception quality (sync + signal integrity)">&#128246; ' + esc(q) + '%</span>';
+}
+
 function render() {
     const list = document.getElementById('history-list');
     if (historyData.length === 0) {
@@ -62,7 +68,8 @@ function render() {
                 + ' &nbsp;|&nbsp; ' + esc(h.frequency_mhz) + ' MHz</div>'
                 + '<div class="card-meta">max ' + esc(h.max_alt) + '° &nbsp;|&nbsp; '
                 + esc(h.duration_min) + ' min &nbsp;|&nbsp; peak: ' + esc(h.signal_peak || '—')
-                + ' &nbsp;|&nbsp; ' + (h.decoded ? '🖼️ decoded' : '❌ not decoded') + '</div>';
+                + ' &nbsp;|&nbsp; ' + (h.decoded ? '🖼️ decoded' : '❌ not decoded')
+                + qualityBadge(h.quality !== null && h.quality !== undefined ? h.quality : (rec ? rec.quality : null)) + '</div>';
             if (rec) {
                 html += '<div class="filename">' + esc(rec.filename) + ' (' + esc(rec.size_mb) + ' MB)</div>'
                     + (rec.decoded ? '' : '<button onclick="decodeRecording(\'' + esc(rec.filename) + '\')">🔄 Decode APT Image</button>')
@@ -84,7 +91,7 @@ function render() {
     for (const r of unmatched) {
         const rid = 'result-' + safeId(r.filename);
         uhtml += '<div class="pass-card">'
-            + '<div class="card-head"><span class="sat">🎧 ' + esc(r.filename) + '</span> &nbsp;|&nbsp; ' + esc(r.size_mb) + ' MB</div>'
+            + '<div class="card-head"><span class="sat">🎧 ' + esc(r.filename) + '</span> &nbsp;|&nbsp; ' + esc(r.size_mb) + ' MB' + qualityBadge(r.quality) + '</div>'
             + '<button onclick="decodeRecording(\'' + esc(r.filename) + '\')">🔄 Decode APT Image</button>'
             + '<button class="danger" onclick="deleteRecording(\'' + esc(r.filename) + '\')">🗑 Delete</button>'
             + '<audio controls preload="none"><source src="/audio/' + esc(r.filename) + '" type="audio/wav"></audio>'
@@ -110,7 +117,7 @@ async function decodeRecording(filename) {
         const res = await fetch('/decode/' + filename);
         const data = await res.json();
         if (data.success && resultDiv) {
-            resultDiv.innerHTML = '<span style="color:#53d769;">✅ Decoded!</span><img class="decoded-img" src="/images/' + esc(data.png) + '?t=' + Date.now() + '" alt="Decoded APT image">';
+            resultDiv.innerHTML = '<span style="color:#53d769;">✅ Decoded!</span>' + qualityBadge(data.quality) + '<img class="decoded-img" src="/images/' + esc(data.png) + '?t=' + Date.now() + '" alt="Decoded APT image">';
         } else if (resultDiv) {
             resultDiv.innerHTML = '<span style="color:#e74c3c;">❌ ' + esc(data.error || 'Decode failed') + '</span>';
         }

@@ -10,6 +10,7 @@ from .config import PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, RECORD_ISS
 from .decode import decode_recording
 from .history import log_pass
 from .passes import predict_passes, refresh_tles
+from .quality import estimate_quality
 
 def scheduler_thread():
     """Background thread: refresh TLEs, predict passes, trigger frequency switches."""
@@ -104,6 +105,7 @@ def scheduler_thread():
                     decoded = False
                     png_file = None
                     wav_name = None
+                    quality = None
                     recordings = sorted(glob.glob(os.path.join(RECORD_DIR, "*.wav")), key=os.path.getmtime, reverse=True)
                     # Never pick the WAV that is still being written
                     with state.status_lock:
@@ -125,10 +127,14 @@ def scheduler_thread():
                         else:
                             decoded = True
                             png_file = os.path.basename(latest_png)
+                        # Reception quality (sync/SNR analysis), independent of decode success
+                        quality = estimate_quality(latest)
+                        if quality is not None:
+                            state.log_console(f"Reception quality for {wav_name}: {quality}%")
                     log_pass(finished_pass["sat_name"], finished_pass["frequency"],
                              finished_pass["max_alt"], finished_pass["duration_min"],
                              finished_pass["rise_utc"], finished_pass["set_utc"],
-                             pass_peak, decoded, png_file, wav_name)
+                             pass_peak, decoded, png_file, wav_name, quality)
                 
                 # Refresh passes list every 30 min
                 if datetime.utcnow().minute % 30 == 0 and datetime.utcnow().second < 10:
