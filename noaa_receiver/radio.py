@@ -10,23 +10,65 @@ from .config import AUDIO_RATE, DECIMATION, FFT_SIZE, IQ_BLOCK, LOGDIR, RECORD_D
 
 from .dsp import fm_demodulate, frequency_shift, iq_to_complex
 
+def _rtl_pll_failed(proc):
+    """True if rtl_sdr logged 'PLL not locked' since the log was truncated.
+
+    The R820T prints this right after tuning; if the PLL is not locked the
+    tuner runs mistuned by tens of kHz and everything received is noise, so
+    the only sensible reaction is to restart rtl_sdr and try again.
+    """
+    deadline = time.time() + 3.0
+    while time.time() < deadline and proc.poll() is None:
+        time.sleep(0.5)
+        try:
+            with open(RTL_LOG, 'r', errors='replace') as f:
+                if 'PLL not locked' in f.read():
+                    return True
+        except OSError:
+            return False
+    return False
+
 def sdr_thread():
     """Main SDR thread: rtl_sdr → FFT waterfall + FM demod → WAV recording during passes."""
     import numpy as np
     os.makedirs(LOGDIR, exist_ok=True)
     os.makedirs(RECORD_DIR, exist_ok=True)
     rtl_log_f = open(RTL_LOG, 'w')
+    pll_failures = 0
 
     while True:
         try:
             freq_str = f"{state.current_frequency + SDR_OFFSET_HZ}"
             tuned_freq = state.current_frequency
             record_sat = None
+            # Fresh log per rtl_sdr start so the PLL check below only sees
+            # messages from the process it is validating
+            rtl_log_f.seek(0)
+            rtl_log_f.truncate()
             state.rtl_sdr_proc = subprocess.Popen(
                 ['rtl_sdr', '-f', freq_str, '-s', str(SDR_RATE), '-g', str(SDR_GAIN), '-'],
                 stdout=subprocess.PIPE, stderr=rtl_log_f
             )
             state.log_console(f"rtl_sdr started (pid {state.rtl_sdr_proc.pid}), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ}Hz, DC spike displaced), gain={SDR_GAIN}dB")
+            if _rtl_pll_failed(state.rtl_sdr_proc):
+                pll_failures += 1
+                wait = min(60, 5 * pll_failures)
+                state.log_console(f"R820T PLL did not lock (attempt {pll_failures}) — tuner is mistuned, restarting rtl_sdr in {wait}s (check USB power / dongle)", "warn")
+                try:
+                    state.rtl_sdr_proc.kill()
+                except Exception:
+                    pass
+                try:
+                    if state.current_wav:
+                        state.current_wav.close()
+                except Exception:
+                    pass
+                state.current_wav = None
+                state.current_wav_path = None
+                state.is_recording = False
+                time.sleep(wait)
+                continue
+            pll_failures = 0
             last_history_append = 0.0
 
             while True:
