@@ -75,17 +75,26 @@
     </div>
     <div id="pass-banner" class="pass-idle">Checking pass schedule...</div>
     <div id="waterfall-section">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-            <h2 style="margin-bottom:0;">Live Waterfall — <span id="wf-freq">137.620 MHz</span> ± 120 kHz</h2>
-            <button id="wf-overlay-btn" onclick="toggleWfOverlay()" style="padding:3px 10px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;">📐 Features</button>
-        </div>
-        <div id="wf-list"></div>
-        <div id="freq-labels">
-            <span id="fl-1">137.500</span>
-            <span id="fl-2">137.560</span>
-            <span id="fl-3">137.620</span>
-            <span id="fl-4">137.680</span>
-            <span id="fl-5">137.740</span>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+            <div style="flex:1;min-width:0;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <h2 style="margin-bottom:0;">Live Waterfall — <span id="wf-freq">137.620 MHz</span> ± 120 kHz</h2>
+                    <button id="wf-overlay-btn" onclick="toggleWfOverlay()" style="padding:3px 10px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;">📐 Features</button>
+                </div>
+                <div id="wf-list"></div>
+                <div id="freq-labels">
+                    <span id="fl-1">137.500</span>
+                    <span id="fl-2">137.560</span>
+                    <span id="fl-3">137.620</span>
+                    <span id="fl-4">137.680</span>
+                    <span id="fl-5">137.740</span>
+                </div>
+            </div>
+            <div id="dongle-status-col" style="width:280px;flex-shrink:0;">
+                <div class="section-title" style="margin-top:0;margin-bottom:8px;">Dongles</div>
+                <div id="dongle-cards"></div>
+                <audio id="live-audio" preload="none" style="display:none;"></audio>
+            </div>
         </div>
     </div>
     <div id="container">
@@ -97,7 +106,7 @@
                         <canvas id="track-canvas" width="440" height="440" style="width:100%;max-width:440px;background:#000;border:1px solid #0f3460;border-radius:4px;"></canvas>
                         <div style="font-size:0.7em;color:#888;margin-top:3px;">Polar view: center = zenith (90°), outer ring = horizon (0°). North is up.</div>
                     </div>
-                    <div style="flex:1 1 340px;min-width:280px;">
+                    <div id="liveimg-panel" style="flex:1 1 340px;min-width:280px;">
                         <div style="font-size:0.85em;color:#a8b8d8;margin-bottom:4px;">🖼️ Live Image — <span id="liveimg-mode" style="color:#53d769;">—</span></div>
                         <div style="position:relative;background:#000;border:1px solid #0f3460;border-radius:4px;overflow:hidden;">
                             <canvas id="liveimg-canvas" width="909" height="900" style="width:100%;display:block;image-rendering:pixelated;"></canvas>
@@ -113,25 +122,6 @@
         <div id="status-panel">
             <div class="section-title">System Status</div>
             <div class="status-item">
-                <div class="status-label">Dongle (rtl_sdr)</div>
-                <div class="status-value"><span class="indicator yellow" id="dongle-led"></span><span id="dongle-status">Checking...</span></div>
-            </div>
-            <div class="status-item">
-                <div class="status-label">Waterfall</div>
-                <div class="status-value"><span class="indicator yellow" id="waterfall-led"></span><span id="waterfall-status">Starting...</span></div>
-            </div>
-            <div class="status-item">
-                <div class="status-label">Recording</div>
-                <div class="status-value"><span class="indicator red" id="rec-led"></span><span id="rec-status">Idle</span></div>
-            </div>
-            <div class="status-item">
-                <div class="status-label">Live Audio (FM demod)</div>
-                <div class="status-value">
-                    <audio id="live-audio" preload="none" style="display:none;"></audio>
-                    <button id="live-audio-btn" onclick="toggleLiveAudio()" style="width:100%;margin-top:4px;padding:4px 10px;background:#53d769;color:#1a1a2e;border:none;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.8em;">▶ Listen Live</button>
-                </div>
-            </div>
-            <div class="status-item">
                 <div class="status-label">FM Radio Test (manual tune)</div>
                 <div class="status-value" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
                     <input id="tune-freq" type="number" step="0.025" min="24" max="1766" value="89.7" style="width:75px;background:#0f3460;border:1px solid #53d769;color:#e0e0e0;border-radius:3px;padding:3px;font-family:monospace;font-size:0.8em;"> MHz
@@ -139,15 +129,6 @@
                     <button onclick="tuneAuto()" style="padding:3px 8px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;">🛰 Auto</button>
                 </div>
                 <div style="font-size:0.6em;color:#888;margin-top:3px;">Parks the dongle on any frequency and pauses satellite tracking. Then use ▶ Listen Live to hear it (e.g. 89.7 = FM radio).</div>
-            </div>
-            <div class="status-item">
-                <div class="status-label">Signal Strength</div>
-                <div class="status-value" id="signal-value">—</div>
-                <div class="signal-bar"><div class="signal-fill" id="signal-fill" style="width:0%"></div></div>
-            </div>
-            <div class="status-item">
-                <div class="status-label">Signal Timeline (5 min)</div>
-                <canvas id="signal-canvas" width="240" height="60" style="width:100%;height:60px;background:#000;border:1px solid #0f3460;border-radius:4px;"></canvas>
             </div>
             <div class="status-item">
                 <div class="status-label">Recordings</div>
@@ -179,8 +160,6 @@
     <script>
         const startTime = Date.now();
         let tleInfo = null;
-        const signalHistory = [];
-        const MAX_SIGNAL_POINTS = 300; // 5 min at 1Hz
         const WF_WIDTH = 512, WF_HEIGHT = 120, SPEC_HEIGHT = 25;
         // One waterfall block per dongle, built dynamically from /dongles.json.
         // Blocks are keyed by dongle SERIAL (id) — USB indices shift on
@@ -379,14 +358,8 @@
             try {
                 const res = await fetch('/dongles.json');
                 const dongles = await res.json();
-                if (!dongles.length) {
-                    document.getElementById('waterfall-status').textContent = 'No dongle found';
-                    document.getElementById('waterfall-led').className = 'indicator red';
-                    return;
-                }
-                document.getElementById('waterfall-status').textContent = dongles.length > 1 ? `${dongles.length} dongles` : 'Active';
-                document.getElementById('waterfall-led').className = 'indicator green';
                 for (const d of dongles) {
+                    updateDongleCard(d);
                     const b = ensureWfBlock(d);
                     try {
                         // last=1: only the newest row — the waterfall scrolls
@@ -396,22 +369,118 @@
                         if (data.length > 0) drawWaterfall(b, data);
                     } catch(e) {}
                 }
-            } catch(e) {
-                document.getElementById('waterfall-status').textContent = 'Error';
-                document.getElementById('waterfall-led').className = 'indicator red';
+            } catch(e) { /* dongles.json unreachable — cards keep last state */ }
+        }
+
+        // ---------- Per-dongle status cards (right of the waterfalls) ----------
+        const dongleCards = {};      // serial -> card handles
+        const MAX_CARD_POINTS = 300; // ~5 min of signal history at 1 Hz
+
+        function ensureDongleCard(d) {
+            let c = dongleCards[d.id];
+            if (c) return c;
+            const col = document.getElementById('dongle-cards');
+            const card = document.createElement('div');
+            card.className = 'status-item';
+            card.style.marginBottom = '10px';
+            const head = document.createElement('div');
+            head.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.8em;color:#a8b8d8;';
+            const led = document.createElement('span');
+            led.className = 'indicator yellow';
+            const title = document.createElement('span');
+            title.style.cssText = 'font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+            head.appendChild(led); head.appendChild(title);
+            const sn = document.createElement('div');
+            sn.style.cssText = 'font-size:0.6em;color:#888;margin-top:2px;';
+            sn.textContent = 'SN ' + d.serial;
+            const sigRow = document.createElement('div');
+            sigRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px;font-size:0.75em;';
+            const sigVal = document.createElement('span');
+            sigVal.style.cssText = 'color:#e0e0e0;min-width:44px;';
+            const bar = document.createElement('div');
+            bar.className = 'signal-bar';
+            bar.style.flex = '1';
+            const sigFill = document.createElement('div');
+            sigFill.className = 'signal-fill';
+            sigFill.style.width = '0%';
+            bar.appendChild(sigFill);
+            sigRow.appendChild(sigVal); sigRow.appendChild(bar);
+            const tl = document.createElement('canvas');
+            tl.width = 250; tl.height = 46;
+            tl.style.cssText = 'width:100%;height:46px;background:#000;border:1px solid #0f3460;border-radius:4px;margin-top:5px;';
+            const recRow = document.createElement('div');
+            recRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px;font-size:0.7em;';
+            const recLed = document.createElement('span');
+            recLed.className = 'indicator red';
+            const recTxt = document.createElement('span');
+            recTxt.style.cssText = 'color:#a8b8d8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+            recTxt.textContent = 'Idle';
+            recRow.appendChild(recLed); recRow.appendChild(recTxt);
+            const listenBtn = document.createElement('button');
+            listenBtn.style.cssText = 'width:100%;margin-top:6px;padding:4px 10px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.75em;';
+            listenBtn.textContent = '🔊 Listen';
+            const sn_card = d.id;
+            listenBtn.onclick = () => toggleLiveAudio(sn_card);
+            card.appendChild(head); card.appendChild(sn); card.appendChild(sigRow);
+            card.appendChild(tl); card.appendChild(recRow); card.appendChild(listenBtn);
+            col.appendChild(card);
+            c = dongleCards[d.id] = {
+                led, title, sigVal, sigFill, tlCtx: tl.getContext('2d'),
+                hist: [], recLed, recTxt, listenBtn, lastHistTs: 0,
+            };
+            return c;
+        }
+
+        function drawCardTimeline(c) {
+            const ctx = c.tlCtx, w = 250, h = 46;
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, w, h);
+            if (c.hist.length < 2) return;
+            const maxVal = Math.max(...c.hist, 10);
+            const step = w / (MAX_CARD_POINTS - 1);
+            ctx.beginPath();
+            ctx.moveTo(0, h);
+            for (let i = 0; i < c.hist.length; i++) {
+                ctx.lineTo(i * step, h - (c.hist[i] / maxVal) * h);
             }
+            ctx.lineTo((c.hist.length - 1) * step, h);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(83, 215, 105, 0.2)';
+            ctx.fill();
+            ctx.beginPath();
+            for (let i = 0; i < c.hist.length; i++) {
+                const x = i * step, y = h - (c.hist[i] / maxVal) * h;
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = '#53d769';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        function updateDongleCard(d) {
+            const c = ensureDongleCard(d);
+            c.title.textContent = `Dongle ${d.index}${d.primary ? ' ★' : ''} — ${d.label} (${d.tuner})`;
+            c.led.className = 'indicator ' + (d.running ? 'green' : 'red');
+            c.sigVal.textContent = d.signal ? d.signal.toFixed(1) : '—';
+            c.sigFill.style.width = Math.min(100, (d.signal || 0) * 3) + '%';
+            const now = Date.now();
+            if (now - c.lastHistTs >= 1000) {
+                c.lastHistTs = now;
+                c.hist.push(d.signal || 0);
+                if (c.hist.length > MAX_CARD_POINTS) c.hist.shift();
+                drawCardTimeline(c);
+            }
+            c.recLed.className = 'indicator ' + (d.recording ? 'green' : 'red');
+            c.recTxt.textContent = d.recording ? (d.wav || 'Recording…') : 'Idle';
+            c.listenBtn.textContent = (liveAudioOn === d.id) ? '⏹ Stop Listening' : '🔊 Listen';
+            c.listenBtn.style.background = (liveAudioOn === d.id) ? '#53d769' : '#0f3460';
+            c.listenBtn.style.color = (liveAudioOn === d.id) ? '#1a1a2e' : '#53d769';
         }
 
         async function fetchStatus() {
             try {
                 const res = await fetch('/status.json');
                 const data = await res.json();
-                const nDongles = (data.dongles || []).length;
-                document.getElementById('dongle-status').textContent = data.rtl_sdr_running ? (nDongles > 1 ? `Running (${nDongles} dongles)` : 'Running') : 'Stopped';
-                document.getElementById('dongle-led').className = 'indicator ' + (data.rtl_sdr_running ? 'green' : 'red');
-                document.getElementById('signal-value').textContent = data.signal_strength ? data.signal_strength.toFixed(1) : '—';
-                const pct = Math.min(100, (data.signal_strength || 0) * 3);
-                document.getElementById('signal-fill').style.width = pct + '%';
                 document.getElementById('rec-count').textContent = data.recording_count || 0;
                 document.getElementById('rtl-log').textContent = data.rtl_log || '—';
                 document.getElementById('sat-current').textContent = data.satellite;
@@ -421,26 +490,27 @@
                 // Update frequency display
                 updateFreqLabels(data.frequency_mhz);
 
-                // Recording status + waterfall frequency highlight (block 0
-                // is built dynamically, so guard for it not existing yet)
+                // Waterfall recording-band highlight (the primary block is
+                // built dynamically, so guard for it not existing yet)
                 const hl = document.getElementById('wf-highlight');
                 if (data.recording) {
-                    document.getElementById('rec-led').className = 'indicator green';
-                    document.getElementById('rec-status').textContent = 'Recording';
                     if (hl) {
                         hl.style.display = 'block';
                         document.getElementById('wf-highlight-label').textContent = `${data.satellite} — ${data.frequency_mhz} MHz`;
                     }
                 } else {
-                    document.getElementById('rec-led').className = 'indicator red';
-                    document.getElementById('rec-status').textContent = 'Idle';
                     if (hl) hl.style.display = 'none';
                 }
 
-                // Live image renderer follows the active pass
+                // Live image renderer follows the active pass (can be
+                // disabled below with LIVE_IMAGE_ENABLED — the code stays)
                 const liMode = /iss/i.test(data.satellite || '') ? 'sstv' : 'apt';
-                if (data.pass_active) {
-                    if (!liveImg.active || liveImg.mode !== liMode) liveImgStart(liMode);
+                if (LIVE_IMAGE_ENABLED) {
+                    if (data.pass_active) {
+                        if (!liveImg.active || liveImg.mode !== liMode) liveImgStart(liMode);
+                    } else if (liveImg.active) {
+                        liveImgStop();
+                    }
                 } else if (liveImg.active) {
                     liveImgStop();
                 }
@@ -467,8 +537,7 @@
                     banner.textContent = 'No passes predicted in the next 24h';
                 }
             } catch(e) {
-                document.getElementById('dongle-status').textContent = 'Error';
-                document.getElementById('dongle-led').className = 'indicator red';
+                console.error('Status fetch failed:', e);
             }
         }
 
@@ -638,21 +707,18 @@
         }
         document.addEventListener('keydown', e => { if (e.key === 'Escape' && logoLightboxOn) toggleLogoLightbox(); });
 
-        let liveAudioOn = false;
-        function toggleLiveAudio() {
+        let liveAudioOn = null;   // serial of the dongle currently being listened to
+        function toggleLiveAudio(serial) {
             const audio = document.getElementById('live-audio');
-            const btn = document.getElementById('live-audio-btn');
-            if (!liveAudioOn) {
-                audio.src = '/live.wav';
-                audio.play().catch(e => { console.error('Live audio failed:', e); });
-                btn.textContent = '⏹ Stop Listening';
-                liveAudioOn = true;
-            } else {
+            if (liveAudioOn === serial) {
                 audio.pause();
                 audio.removeAttribute('src');
                 audio.load(); // drop the connection
-                btn.textContent = '▶ Listen Live';
-                liveAudioOn = false;
+                liveAudioOn = null;
+            } else {
+                audio.src = '/live.wav?d=' + encodeURIComponent(serial);
+                audio.play().catch(e => { console.error('Live audio failed:', e); });
+                liveAudioOn = serial;
             }
         }
 
@@ -669,57 +735,13 @@
             try { await fetch('/tune?f=auto'); } catch (e) {}
         }
 
-        async function fetchSignal() {
-            try {
-                const res = await fetch('/status.json');
-                const data = await res.json();
-                signalHistory.push(data.signal_strength || 0);
-                if (signalHistory.length > MAX_SIGNAL_POINTS) signalHistory.shift();
-                drawSignalGraph();
-            } catch(e) {}
-        }
-
-        function drawSignalGraph() {
-            const canvas = document.getElementById('signal-canvas');
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            const w = canvas.width, h = canvas.height;
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, w, h);
-
-            if (signalHistory.length < 2) return;
-
-            const maxVal = Math.max(...signalHistory, 50);
-            const step = w / (MAX_SIGNAL_POINTS - 1);
-
-            // Draw filled area
-            ctx.beginPath();
-            ctx.moveTo(0, h);
-            for (let i = 0; i < signalHistory.length; i++) {
-                const x = i * step;
-                const y = h - (signalHistory[i] / maxVal) * h;
-                ctx.lineTo(x, y);
-            }
-            ctx.lineTo((signalHistory.length - 1) * step, h);
-            ctx.closePath();
-            ctx.fillStyle = 'rgba(83, 215, 105, 0.2)';
-            ctx.fill();
-
-            // Draw line
-            ctx.beginPath();
-            for (let i = 0; i < signalHistory.length; i++) {
-                const x = i * step;
-                const y = h - (signalHistory[i] / maxVal) * h;
-                if (i === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
-            }
-            ctx.strokeStyle = '#53d769';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-
-            // Draw "now" marker
-            ctx.fillStyle = '#53d769';
-            ctx.fillRect((signalHistory.length - 1) * step - 1, 0, 2, h);
+        // Live image rendering is disabled (browser-side APT/SSTV decode
+        // of the /live.wav stream). Set to true to re-enable — all the
+        // renderer code below stays functional.
+        const LIVE_IMAGE_ENABLED = false;
+        if (!LIVE_IMAGE_ENABLED) {
+            const lip = document.getElementById('liveimg-panel');
+            if (lip) lip.style.display = 'none';
         }
 
         // ---------- Live image renderer (NOAA APT / ISS Robot 36) ----------
@@ -1150,10 +1172,9 @@
         setInterval(fetchPasses, 30000);
         setInterval(fetchTrack, 2000);
         setInterval(fetchCrabCount, 10000);
-        setInterval(fetchSignal, 1000);
         setInterval(updateUptime, 1000);
         setInterval(liveImgTick, 250);
-        fetchWaterfall(); fetchStatus(); fetchPasses(); fetchTrack(); fetchCrabCount(); fetchSignal(); updateUptime();
+        fetchWaterfall(); fetchStatus(); fetchPasses(); fetchTrack(); fetchCrabCount(); updateUptime();
     </script>
 </body>
 </html>
