@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from . import state
-from .config import PASS_MARGIN_SECS, PASS_MIN_ALT, PASS_PREDICT_HOURS, RECORD_DIR, TLE_REFRESH_HOURS, UTC_OFFSET
+from .config import PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, TLE_REFRESH_HOURS, UTC_OFFSET
 
 from .history import log_pass
 from .passes import predict_passes, refresh_tles

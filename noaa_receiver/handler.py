@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 from . import state
-from .config import AUDIO_RATE, LAT, LON, PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, WEBDIR
+from .config import AUDIO_RATE, LAT, LON, PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, UTC_OFFSET, WEBDIR
 
 from .history import get_recordings
 from .pages import CONSOLE_HTML, HISTORY_HTML
