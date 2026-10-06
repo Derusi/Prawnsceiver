@@ -65,35 +65,48 @@ def refresh_tles():
     ts = load.timescale()
     sats = {}
     tle_data = {}
-    for catnr, (name, freq) in TRACKED_SATS.items():
-        try:
-            lines = fetch_tle_lines(catnr)
-            if lines:
-                sats[catnr] = (_sat_from_lines(lines, ts), name, freq)
-                tle_data[str(catnr)] = lines
-                state.log_console(f"TLE loaded: {name} (cat #{catnr}), epoch={sats[catnr][0].epoch.utc_datetime()}")
-        except Exception as e:
-            state.log_console(f"TLE fetch failed for {name} (cat #{catnr}): {e}", "error")
-    if sats:
-        # Persist for future outages
-        try:
-            with open(TLE_CACHE_FILE, 'w') as f:
-                json.dump(tle_data, f)
-        except Exception as e:
-            state.log_console(f"TLE cache write failed: {e}", "warn")
-    elif os.path.exists(TLE_CACHE_FILE):
-        # Celestrak unreachable: reuse the last good TLEs
-        state.log_console("TLE fetch failed for all satellites, using cached TLEs", "warn")
-        try:
-            with open(TLE_CACHE_FILE, 'r') as f:
-                cached = json.load(f)
-            for catnr_str, lines in cached.items():
-                catnr = int(catnr_str)
-                name, freq = TRACKED_SATS[catnr]
-                sats[catnr] = (_sat_from_lines(lines, ts), name, freq)
-            state.log_console(f"Loaded {len(sats)} TLEs from cache")
-        except Exception as e:
-            state.log_console(f"TLE cache read failed: {e}", "error")
+    with state.status_lock:
+        state.tle_progress = {"active": True, "done": 0,
+                              "total": len(TRACKED_SATS), "current": None}
+    try:
+        for catnr, (name, freq) in TRACKED_SATS.items():
+            with state.status_lock:
+                state.tle_progress["current"] = name
+            try:
+                lines = fetch_tle_lines(catnr)
+                if lines:
+                    sats[catnr] = (_sat_from_lines(lines, ts), name, freq)
+                    tle_data[str(catnr)] = lines
+                    state.log_console(f"TLE loaded: {name} (cat #{catnr}), epoch={sats[catnr][0].epoch.utc_datetime()}")
+            except Exception as e:
+                state.log_console(f"TLE fetch failed for {name} (cat #{catnr}): {e}", "error")
+            finally:
+                with state.status_lock:
+                    state.tle_progress["done"] += 1
+        if sats:
+            # Persist for future outages
+            try:
+                with open(TLE_CACHE_FILE, 'w') as f:
+                    json.dump(tle_data, f)
+            except Exception as e:
+                state.log_console(f"TLE cache write failed: {e}", "warn")
+        elif os.path.exists(TLE_CACHE_FILE):
+            # Celestrak unreachable: reuse the last good TLEs
+            state.log_console("TLE fetch failed for all satellites, using cached TLEs", "warn")
+            try:
+                with open(TLE_CACHE_FILE, 'r') as f:
+                    cached = json.load(f)
+                for catnr_str, lines in cached.items():
+                    catnr = int(catnr_str)
+                    name, freq = TRACKED_SATS[catnr]
+                    sats[catnr] = (_sat_from_lines(lines, ts), name, freq)
+                state.log_console(f"Loaded {len(sats)} TLEs from cache")
+            except Exception as e:
+                state.log_console(f"TLE cache read failed: {e}", "error")
+    finally:
+        with state.status_lock:
+            state.tle_progress["active"] = False
+            state.tle_progress["current"] = None
     state.last_tle_refresh = time.time()
     return sats
 

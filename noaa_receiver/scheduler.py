@@ -46,18 +46,23 @@ def scheduler_thread():
                 
                 triggered = None
                 if candidates:
-                    # Stick with the ongoing pass while its window is open, so
-                    # overlapping passes don't flip the receiver back and forth
-                    with state.status_lock:
-                        cur = state.current_pass
-                    if cur is not None:
-                        for c in candidates:
-                            if c["sat_name"] == cur["sat_name"] and c["rise_utc"] == cur["rise_utc"]:
-                                triggered = c
-                                break
-                    # New pass window: take the highest-elevation candidate
-                    if triggered is None:
-                        triggered = max(candidates, key=lambda p: p["max_alt"])
+                    iss = [c for c in candidates if c["sat_name"].startswith("ISS")]
+                    if iss:
+                        # ISS always has priority over NOAA when passes overlap
+                        triggered = iss[0]
+                    else:
+                        # Stick with the ongoing pass while its window is open, so
+                        # overlapping passes don't flip the receiver back and forth
+                        with state.status_lock:
+                            cur = state.current_pass
+                        if cur is not None:
+                            for c in candidates:
+                                if c["sat_name"] == cur["sat_name"] and c["rise_utc"] == cur["rise_utc"]:
+                                    triggered = c
+                                    break
+                        # New pass window: take the highest-elevation candidate
+                        if triggered is None:
+                            triggered = max(candidates, key=lambda p: p["max_alt"])
                 
                 finished_pass = None
                 pass_peak = 0.0

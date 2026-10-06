@@ -65,4 +65,6 @@ current_wav_path = None
 upcoming_passes = []
 current_pass = None
 last_tle_refresh = 0
+# TLE fetch progress, exposed via status.json for the dashboard progress bar
+tle_progress = {"active": False, "done": 0, "total": 0, "current": None}
 status_lock = threading.Lock()

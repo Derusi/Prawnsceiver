@@ -20,6 +20,7 @@ def get_status():
         passing = state.is_pass_active
         passes = state.upcoming_passes
         cur_pass = state.current_pass
+        tle = dict(state.tle_progress)
     
     status = {
         "rtl_sdr_running": state.rtl_sdr_proc is not None and state.rtl_sdr_proc.poll() is None,
@@ -31,6 +32,7 @@ def get_status():
         "signal_strength": 0,
         "rtl_log": "",
         "next_pass": None,
+        "tle": tle,
     }
     with state.signal_lock:
         status["signal_strength"] = round(state.signal_strength, 2)

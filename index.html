@@ -64,6 +64,7 @@
             <div>
                 <h1>🛰️ NOAAh's CrabArk — Shell</h1>
                 <span style="font-size:0.7em;color:#888;margin-left:10px;">🦀 Crabs caught: <span id="crab-count">0</span></span>
+                <a href="/history" style="font-size:0.7em;color:#53d769;margin-left:14px;">📚 Pass History &amp; Recordings →</a>
                 <div class="info">Raspberry Pi 4 | RTL-SDR RTL2832U (R820T) | Regensburg 49.013°N 12.099°E | Auto Pass Tracking</div>
             </div>
         </div>
@@ -103,7 +104,6 @@
             </div>
             <div class="section-title">📅 Upcoming Passes (24h)</div>
             <div id="passes-list">Loading pass predictions...</div>
-            <div class="section-title">📚 <a href="/history" style="color:#53d769;">Pass History &amp; Recordings →</a></div>
         </div>
         <div id="status-panel">
             <div class="section-title">System Status</div>
@@ -164,6 +164,7 @@
     </div>
     <script>
         const startTime = Date.now();
+        let tleInfo = null;
         const signalHistory = [];
         const MAX_SIGNAL_POINTS = 300; // 5 min at 1Hz
         const WF_WIDTH = 512, WF_HEIGHT = 120, SPEC_HEIGHT = 25;
@@ -325,6 +326,8 @@
                 document.getElementById('rec-count').textContent = data.recording_count || 0;
                 document.getElementById('rtl-log').textContent = data.rtl_log || '—';
                 document.getElementById('sat-current').textContent = data.satellite;
+                tleInfo = data.tle || null;
+                renderTleBar();
 
                 // Update frequency display
                 updateFreqLabels(data.frequency_mhz);
@@ -366,8 +369,19 @@
             }
         }
 
+        function renderTleBar() {
+            const list = document.getElementById('passes-list');
+            if (!list || !tleInfo || !tleInfo.active) return;
+            const pct = tleInfo.total ? Math.round((tleInfo.done / tleInfo.total) * 100) : 0;
+            list.innerHTML = `<div style="padding:8px;font-size:0.8em;color:#888;">
+                📡 Updating TLE data — ${tleInfo.current || ''} (${tleInfo.done}/${tleInfo.total})
+                <div class="signal-bar" style="margin-top:4px;"><div class="signal-fill" style="width:${pct}%;"></div></div>
+            </div>`;
+        }
+
         async function fetchPasses() {
             try {
+                if (tleInfo && tleInfo.active) { renderTleBar(); return; }
                 const res = await fetch('/passes.json');
                 const passes = await res.json();
                 const list = document.getElementById('passes-list');
