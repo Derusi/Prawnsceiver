@@ -1143,9 +1143,6 @@
         }
 
         // Init
-        wfCtx.fillStyle = '#000'; wfCtx.fillRect(0, 0, WF_WIDTH, WF_HEIGHT);
-        specCtx.fillStyle = '#000'; specCtx.fillRect(0, 0, WF_WIDTH, SPEC_HEIGHT);
-
         setInterval(fetchWaterfall, 200);
         setInterval(fetchStatus, 3000);
         setInterval(fetchPasses, 30000);
