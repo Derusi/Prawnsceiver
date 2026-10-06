@@ -222,8 +222,25 @@ def sdr_capture_thread(serial):
                                     last_history_append = now_ts
                                     with state.signal_lock:
                                         state.signal_history.append(float(band))
-                            if magnitude.max() > 0:
-                                magnitude = magnitude / magnitude.max() * 255
+                            # Display normalization. The DC spike at
+                            # +SDR_OFFSET_HZ is a fixed tuner artifact, not
+                            # signal. On dongles with a strong spike (the
+                            # FC0013 saturates on it at 7x its strongest
+                            # signal) it would dominate every row's max and
+                            # crush the actual content to black. Normalize by
+                            # the strongest NON-spike bin and clamp the spike
+                            # to that level, so all dongles render comparably.
+                            bin_hz = SDR_RATE / FFT_SIZE
+                            spike = center + int(SDR_OFFSET_HZ / bin_hz)
+                            lo, hi = max(spike - 8, 0), min(spike + 9, len(magnitude))
+                            row_max = 0.0
+                            if lo > 0:
+                                row_max = max(row_max, float(magnitude[:lo].max()))
+                            if hi < len(magnitude):
+                                row_max = max(row_max, float(magnitude[hi:].max()))
+                            if row_max > 0:
+                                magnitude = magnitude / row_max * 255
+                                magnitude[lo:hi] = 255
                             row = magnitude.astype(int).tolist()
                             with entry['lock']:
                                 entry['waterfall'].append(row)
