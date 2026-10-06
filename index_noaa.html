@@ -60,7 +60,7 @@
 <body>
     <div id="header">
         <div style="display:flex;align-items:center;gap:12px;">
-            <img src="/prawnceiver.jpg" alt="Prawnsceiver" style="height:48px;width:auto;border-radius:6px;border:1px solid #0f3460;">
+            <img src="/prawnceiver.jpg" alt="Prawnsceiver" onclick="toggleLogoLightbox()" style="height:48px;width:auto;border-radius:6px;border:1px solid #0f3460;cursor:zoom-in;">
             <div>
                 <h1>🛰️ NOAAh's CrabArk — Shell</h1>
                 <span style="font-size:0.7em;color:#888;margin-left:10px;">🦀 Crabs caught: <span id="crab-count">0</span></span>
@@ -157,6 +157,9 @@
                 </div>
             </div>
         </div>
+    </div>
+    <div id="logo-lightbox" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:1000;align-items:center;justify-content:center;cursor:zoom-out;" onclick="toggleLogoLightbox()">
+        <img src="/prawnceiver_full.jpg" alt="Prawnsceiver (full size)" onerror="this.onerror=null;this.src='/prawnceiver.jpg';" style="max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 0 40px rgba(0,0,0,0.8);">
     </div>
     <script>
         const startTime = Date.now();
@@ -509,6 +512,13 @@
             const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
             document.getElementById('uptime').textContent = `${h}h ${m}m ${sec}s`;
         }
+
+        let logoLightboxOn = false;
+        function toggleLogoLightbox() {
+            logoLightboxOn = !logoLightboxOn;
+            document.getElementById('logo-lightbox').style.display = logoLightboxOn ? 'flex' : 'none';
+        }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape' && logoLightboxOn) toggleLogoLightbox(); });
 
         let liveAudioOn = false;
         function toggleLiveAudio() {
