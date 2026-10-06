@@ -284,7 +284,7 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                         break
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
-        elif self.path.startswith('/tune'):
+        elif self.path.split('?')[0] == '/tune':
             # Manual tune (dongle reception test, e.g. FM broadcast radio):
             # /tune?f=89.7 parks the dongle on a frequency and pauses the
             # satellite scheduler; /tune?f=auto hands control back to it.
