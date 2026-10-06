@@ -1,31 +1,96 @@
-Prawnsceiver is a lightweight APRS (Automatic Packet Reporting System) monitoring station that turns a Raspberry Pi and a cheap DVB-T dongle into a live radio dashboard. It decodes APRS packets on the 2-meter band (144.8 MHz Europe simplex) and displays them on a web dashboard with a real-time RF waterfall.
+# Prawnsceiver — NOAAh's CrabArk
 
-Features
-📡 Live FFT waterfall — real-time RF spectrum visualization from raw IQ samples
-📦 APRS packet decoding — direwolf-powered 1200 baud AFSK decoding
-🗺️ Web dashboard — packet list, system status, and live logs in your browser
-🦀 Single-process architecture — Python server manages SDR, FFT, FM demodulation, and direwolf in one process
-🍓 Raspberry Pi optimized — runs on Pi 4 with RTL2832U (R820T tuner), gain-optimized for 2m band
-🔄 Auto-restart — crash-resistant with automatic SDR/direwolf recovery
-🌐 APRS-IS IGate — relays received packets to the global APRS network
-Hardware
-Raspberry Pi 4 (or any Linux ARM device)
-RTL-SDR dongle (RTL2832U with R820T tuner recommended)
-Antenna for 144-146 MHz (stock whip works, dipole is better)
-Software Stack
-rtl_sdr — raw IQ capture from the dongle
-direwolf — APRS demodulator (1200 baud AFSK)
-Python 3 + NumPy — FFT computation and software FM demodulation
-nginx — reverse proxy for the web dashboard
-Quick Start
+A Raspberry Pi and a cheap RTL-SDR dongle turned into a fully automated NOAA
+weather-satellite ground station. It predicts passes, tunes the SDR to the
+right satellite at the right time, records the APT signal, decodes it into
+weather images, and serves everything on a live web dashboard.
+
+Live at: https://prawnceiver.derusi.de
+
+## Features
+
+- 🛰️ Auto pass tracking — skyfield-based pass prediction for NOAA 15/18/19,
+  with automatic frequency switching and recording during passes (above 10°)
+- 📡 Live FFT waterfall — real-time RF spectrum from raw IQ samples, with a
+  frequency-feature overlay (APT band, demod filter, DC spike)
+- 🔊 Live audio — software FM demodulation streams the downlink as a
+  browser-playable WAV
+- 🖼️ APT decoding — recordings are decoded to weather images with noaa-apt
+  (map overlay, auto-rotate), one click from the dashboard
+- 🧭 Polar pass tracker — live az/el ground-track view of the active pass
+- 📚 Pass history — every pass and recording is kept in a browsable history
+  with decoded images
+- 🦀 Crabs caught — every successfully decoded satellite image counts as a crab
+
+## Hardware
+
+- Raspberry Pi 4
+- RTL-SDR dongle (RTL2832U with R820T tuner)
+- Antenna for 137 MHz (VHF 137 MHz SATCOM or a crossed dipole works)
+
+## Software Stack
+
+- rtl_sdr — raw IQ capture from the dongle (offset-tuned +60 kHz to dodge the
+  center DC spike)
+- Python 3 + NumPy — FFT waterfall and software FM demodulation
+- Skyfield — TLE-based pass prediction (TLEs refreshed from Celestrak every
+  6 h, with a local cache fallback)
+- noaa-apt — APT image decoding
+- nginx — HTTPS reverse proxy (Let's Encrypt) in front of the Python server
+
+## Architecture
+
+Everything runs in a single Python process (`server_noaa.py` → the
+`noaa_receiver/` package) with three threads:
+
+- `scheduler_thread` — TLE refresh + pass prediction + frequency switching
+- `sdr_thread` — rtl_sdr IQ capture → FFT waterfall + FM demodulated audio
+- HTTP server — dashboard, JSON API, recordings, decode/delete endpoints
+
+```
+rtl_sdr ──IQ──▶ FFT ──▶ /waterfall.json ──▶ live waterfall
+   │
+   └──────────▶ FM demod ──▶ live audio + WAV recording ──▶ noaa-apt ──▶ weather PNG
+```
+
+The scheduler tunes the dongle to the next satellite 60 s before each pass
+rise and records until 60 s after set. Between passes it parks on NOAA 15.
+
+## Setup
+
+```bash
 # Install dependencies
-sudo apt install rtl-sdr direwolf nginx python3-numpy ffmpeg
+sudo apt install rtl-sdr python3-numpy nginx
+pip install skyfield
+
+# noaa-apt (APT image decoder) — grab a release binary from
+# https://github.com/martinber/noaa-apt/releases and put it on PATH
 
 # Clone and run
-git clone https://github.com/yourname/Prawnsceiver.git
+git clone https://github.com/Derusi/Prawnsceiver.git
 cd Prawnsceiver
-python3 server.py
-Then open http://your-pi-ip:8000 in your browser.
+python3 server_noaa.py
+```
 
-Why "Prawnsceiver"?
+Then open http://your-pi:8085 in your browser.
+
+For unattended operation, start it at boot (this is how the Pi is set up):
+
+```bash
+crontab -e
+# add:
+@reboot /home/eugene/noaa_receiver.sh
+```
+
+Put nginx with a proxy_pass to 127.0.0.1:8085 in front for HTTPS.
+
+## Configuration
+
+Station parameters live in `noaa_receiver/config.py`: coordinates
+(`LAT`, `LON`), timezone offset (`UTC_OFFSET`), pass selection
+(`PASS_MIN_ALT`, `PASS_PREDICT_HOURS`), SDR settings (`SDR_RATE`, `SDR_GAIN`,
+`SDR_OFFSET_HZ`), log/record directories and the web port.
+
+## Why "Prawnsceiver"?
+
 Because it's a prawn-ceiver — a transceiver with claws. Built with OpenClaw. 🦐
