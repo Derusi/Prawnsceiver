@@ -107,7 +107,8 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 data = []
             elif (query.get('last') or [''])[0] == '1':
                 with entry['lock']:
-                    data = list(entry['waterfall'][-1:])
+                    # deque supports indexing but not slicing
+                    data = [entry['waterfall'][-1]] if entry['waterfall'] else []
             else:
                 with entry['lock']:
                     data = list(entry['waterfall'])
