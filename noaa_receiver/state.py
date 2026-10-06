@@ -12,10 +12,14 @@ from .config import WATERFALL_ROWS
 # State
 waterfall_buffer = deque(maxlen=WATERFALL_ROWS)
 waterfall_lock = threading.Lock()
-# Per-dongle state (keyed by rtl_sdr device index, filled by radio.enumerate_dongles).
-# Dongle 0's entry aliases the legacy globals above; the others get their own
-# buffers. All dongles tune the same frequency; dongle 0 is the primary.
+# Per-dongle state, keyed by dongle SERIAL (USB indices are not stable across
+# replugs). Filled by radio.enumerate_dongles. The primary dongle's entry
+# aliases the legacy globals above; the others get their own buffers.
+# All dongles tune the same frequency.
 sdrs = {}
+# Serial of the primary dongle (live audio, WAV recording), decided once at
+# startup from config.PRIMARY_DONGLE_SN.
+primary_serial = None
 signal_strength = 0.0
 pass_signal_peak = 0.0
 signal_lock = threading.Lock()

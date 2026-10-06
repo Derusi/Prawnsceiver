@@ -1,9 +1,10 @@
 """SDR threads: per-dongle rtl_sdr capture, waterfall FFT, FM demod, WAV recording.
 
 All attached dongles run on the same frequency with the same settings (they
-re-tune together via state.current_frequency). Dongle 0 is the primary: it
-additionally feeds the live audio stream and records WAVs during passes.
-Every dongle gets its own waterfall and signal strength, so receive quality
+re-tune together via state.current_frequency). Dongles are pinned by SERIAL
+(USB indices shift when devices are (re)plugged), and the configured primary
+dongle feeds the live audio stream and records WAVs during passes. Every
+dongle gets its own waterfall buffer and signal strength, so receive quality
 can be compared on the dashboard.
 """
 import os
@@ -16,7 +17,9 @@ from collections import deque
 from datetime import datetime
 
 from . import state
-from .config import AUDIO_RATE, DECIMATION, FFT_SIZE, FM_BAND, IQ_BLOCK, LOGDIR, RECORD_DIR, RTL_LOG, SDR_GAIN, SDR_OFFSET_HZ, SDR_RATE, WATERFALL_ROWS, tuning_correction
+from .config import (AUDIO_RATE, DECIMATION, FFT_SIZE, FM_BAND, IQ_BLOCK, LOGDIR,
+                     PRIMARY_DONGLE_SN, RECORD_DIR, RTL_LOG, SDR_GAIN, SDR_OFFSET_HZ,
+                     SDR_RATE, WATERFALL_ROWS, tuning_correction)
 
 from .dsp import fm_demodulate, frequency_shift, iq_to_complex
 
@@ -40,14 +43,15 @@ def _rtl_pll_failed(proc):
     return False
 
 def enumerate_dongles():
-    """Detect attached RTL-SDR dongles and register them in state.sdrs.
+    """Detect attached RTL-SDR dongles and register them in state.sdrs,
+    keyed by serial.
 
-    rtl-sdr prints every attached device on stderr before opening one
+    rtl_sdr prints every attached device on stderr before opening one
     ("Found N device(s):" followed by "idx: label, tuner, SN: serial"), so a
     short probe run is enough — probing a nonexistent index (-d 99) fails
-    right after the listing without claiming any dongle. Dongle 0 shares the
-    legacy state.waterfall_buffer globals so the rest of the system (status,
-    live audio, recording) keeps working unchanged.
+    right after the listing without claiming any dongle. The primary
+    dongle's entry shares the legacy state.waterfall_buffer globals so the
+    rest of the system (status, live audio, recording) keeps working.
     """
     err = ''
     try:
@@ -61,48 +65,76 @@ def enumerate_dongles():
                        err, re.M)
     if not found:
         return  # probe failed (e.g. all dongles busy mid-restart) — keep the known set
+    serials = [serial.strip() for _, _, _, serial in found]
+    # Decide the primary dongle once, at the first successful enumeration
+    if state.primary_serial is None:
+        if PRIMARY_DONGLE_SN and PRIMARY_DONGLE_SN in serials:
+            state.primary_serial = PRIMARY_DONGLE_SN
+        else:
+            state.primary_serial = serials[0]
+            if PRIMARY_DONGLE_SN:
+                state.log_console(f"Configured primary dongle {PRIMARY_DONGLE_SN} not found — using {state.primary_serial}", "warn")
     for idx_s, label, tuner, serial in found:
-        idx = int(idx_s)
-        if idx in state.sdrs:
+        serial = serial.strip()
+        if not serial:
+            state.log_console("Dongle without a serial found — cannot pin it across replugs, skipping", "warn")
             continue
-        if idx == 0:
+        if serial in state.sdrs:
+            continue
+        primary = serial == state.primary_serial
+        if primary:
             waterfall, lock = state.waterfall_buffer, state.waterfall_lock
         else:
             waterfall = deque(maxlen=WATERFALL_ROWS)
             lock = threading.Lock()
-        state.sdrs[idx] = {
-            'label': label.strip(), 'tuner': tuner.strip(), 'serial': serial.strip(),
+        state.sdrs[serial] = {
+            'label': label.strip(), 'tuner': tuner.strip(), 'serial': serial,
+            'primary': primary,
             'waterfall': waterfall, 'lock': lock,
-            'signal': 0.0, 'proc': None,
+            'signal': 0.0, 'proc': None, 'last_data': 0.0,
         }
-        state.log_console(f"🔌 Dongle {idx}: {label.strip()} ({tuner.strip()}), SN {serial.strip()}")
+        state.log_console(f"🔌 Dongle {idx_s.strip()}: {label.strip()} ({tuner.strip()}), SN {serial}" + (" — primary" if primary else ""))
 
 def sdr_thread():
     """Enumerate attached dongles and keep one capture thread per dongle.
 
     Re-enumerates periodically so dongles plugged in later are picked up
     without a restart. A capture thread whose dongle is unplugged simply
-    retries until it comes back.
+    retries until it comes back. Also acts as a stall watchdog: a dongle
+    whose rtl_sdr process is alive but stops delivering IQ data (flaky USB
+    device) gets its process killed so the capture thread restarts it.
     """
     threads = {}
     while True:
         enumerate_dongles()
-        for idx in sorted(state.sdrs):
-            if idx in threads and threads[idx].is_alive():
+        for sn, entry in state.sdrs.items():
+            t = threads.get(sn)
+            if t is None or not t.is_alive():
+                t = threading.Thread(target=sdr_capture_thread, args=(sn,),
+                                     daemon=True, name=f'sdr-{sn}')
+                t.start()
+                threads[sn] = t
                 continue
-            t = threading.Thread(target=sdr_capture_thread, args=(idx,),
-                                 daemon=True, name=f'sdr{idx}')
-            t.start()
-            threads[idx] = t
+            proc = entry['proc']
+            if (proc is not None and proc.poll() is None
+                    and entry['last_data'] > 0
+                    and time.time() - entry['last_data'] > 30):
+                state.log_console(f"Dongle {sn} stalled (no IQ data for {int(time.time() - entry['last_data'])}s) — restarting rtl_sdr", "warn")
+                entry['last_data'] = time.time()
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         time.sleep(10)
 
-def sdr_capture_thread(dev_index):
-    """Capture loop for one dongle: rtl_sdr → FFT waterfall (+ FM demod,
-    WAV recording during passes on the primary dongle 0)."""
+def sdr_capture_thread(serial):
+    """Capture loop for one dongle (pinned by serial via rtl_sdr -d):
+    rtl_sdr → FFT waterfall (+ FM demod, WAV recording during passes on the
+    primary dongle)."""
     import numpy as np
-    entry = state.sdrs[dev_index]
-    primary = dev_index == 0
-    rtl_log_path = RTL_LOG if primary else os.path.join(LOGDIR, f'rtl_sdr_{dev_index}.log')
+    entry = state.sdrs[serial]
+    primary = entry['primary']
+    rtl_log_path = RTL_LOG if primary else os.path.join(LOGDIR, f'rtl_sdr_{serial}.log')
     os.makedirs(LOGDIR, exist_ok=True)
     os.makedirs(RECORD_DIR, exist_ok=True)
     rtl_log_f = open(rtl_log_path, 'w')
@@ -122,25 +154,27 @@ def sdr_capture_thread(dev_index):
             rtl_log_f.seek(0)
             rtl_log_f.truncate()
             proc = subprocess.Popen(
-                ['rtl_sdr', '-d', str(dev_index), '-f', freq_str, '-s', str(SDR_RATE), '-g', str(SDR_GAIN), '-'],
+                ['rtl_sdr', '-d', serial, '-f', freq_str, '-s', str(SDR_RATE), '-g', str(SDR_GAIN), '-'],
                 stdout=subprocess.PIPE, stderr=rtl_log_f
             )
             entry['proc'] = proc
+            entry['last_data'] = time.time()
             if primary:
                 state.rtl_sdr_proc = proc
-                state.log_console(f"rtl_sdr started (pid {proc.pid}, dongle {dev_index}), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ + correction}Hz, DC spike displaced), gain={SDR_GAIN}dB")
+                state.log_console(f"rtl_sdr started (pid {proc.pid}, primary dongle {serial}), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ + correction}Hz, DC spike displaced), gain={SDR_GAIN}dB")
                 if _rtl_pll_failed(proc) and not pll_warned:
                     pll_warned = True
                     state.log_console("R820T PLL lock not confirmed — continuing anyway (lock bit unreliable on this dongle, mistune handled via SDR_FREQ_CORRECTION_HZ)", "warn")
             else:
-                state.log_console(f"rtl_sdr started (pid {proc.pid}, dongle {dev_index}), tuned {freq_str}Hz")
+                state.log_console(f"rtl_sdr started (pid {proc.pid}, dongle {serial}), tuned {freq_str}Hz")
             last_history_append = 0.0
 
             while True:
                 raw = proc.stdout.read(IQ_BLOCK)
                 if not raw or len(raw) < IQ_BLOCK:
-                    state.log_console(f"rtl_sdr (dongle {dev_index}) stdout closed, restarting...", "warn")
+                    state.log_console(f"rtl_sdr (dongle {serial}) stdout closed, restarting...", "warn")
                     break
+                entry['last_data'] = time.time()
 
                 # Offset-shift the baseband once: satellite to 0 Hz, DC spike
                 # displaced to +SDR_OFFSET_HZ. Shared by waterfall FFT and demod.
@@ -244,7 +278,7 @@ def sdr_capture_thread(dev_index):
                             state.log_console(f"WAV write error: {e}", "error")
 
         except Exception as e:
-            state.log_console(f"SDR thread error (dongle {dev_index}): {e}", "error")
+            state.log_console(f"SDR thread error (dongle {serial}): {e}", "error")
         try: proc.kill()
         except: pass
         if primary:

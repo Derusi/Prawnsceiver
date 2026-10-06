@@ -30,6 +30,12 @@ SDR_FREQ_CORRECTION_HZ = {
     137100000: 21500,   # NOAA 19 (scaled by frequency within the band)
     437550000: -30000,  # ISS (Zarya) — measured from the 15:08 pass waterfall (-26..-28 kHz raw, minus Doppler)
 }
+# Primary dongle: the serial of the RTL-SDR that feeds live audio and WAV
+# recording. USB device indices shift when dongles are (re)plugged, so the
+# serial pins the physical dongle (rtl_sdr -d <serial>). If this dongle is
+# not attached at startup, the first detected dongle becomes primary.
+PRIMARY_DONGLE_SN = "77771111153705700"
+
 # FM broadcast band (VHF2): the dongle tunes ~8 kHz HIGH here — broadcast
 # carriers show up 6-11 kHz below their nominal frequency (measured on 89.7,
 # 93.0, 95.0, 99.6, 103.0, 105.0 MHz). Opposite sign of the VHF3 NOAA error,

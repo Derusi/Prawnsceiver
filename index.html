@@ -183,14 +183,16 @@
         const MAX_SIGNAL_POINTS = 300; // 5 min at 1Hz
         const WF_WIDTH = 512, WF_HEIGHT = 120, SPEC_HEIGHT = 25;
         // One waterfall block per dongle, built dynamically from /dongles.json.
-        // Block 0 (the primary dongle) additionally carries the recording
-        // band highlight (wf-highlight) used by fetchStatus.
-        const wfBlocks = {};   // dongle index -> {wfCtx, specCtx, overlay, title, led, sig}
+        // Blocks are keyed by dongle SERIAL (id) — USB indices shift on
+        // replug. The primary dongle (live audio, recording) carries the
+        // recording-band highlight (wf-highlight) and a ★ badge.
+        const wfBlocks = {};   // dongle serial -> {wfCtx, specCtx, overlay, title, led, sig}
 
-        function ensureWfBlock(idx, meta) {
+        function ensureWfBlock(meta) {
+            const idx = meta.id;
             let b = wfBlocks[idx];
             if (b) {
-                b.title.textContent = `Dongle ${idx} — ${meta.label} (SN ${meta.serial})`;
+                b.title.textContent = `Dongle ${meta.index}${meta.primary ? ' ★' : ''} — ${meta.label} (${meta.tuner}, SN ${meta.serial})`;
                 b.led.className = 'indicator ' + (meta.running ? 'green' : 'red');
                 b.sig.textContent = 'signal ' + (meta.signal ? meta.signal.toFixed(1) : '—');
                 return b;
@@ -215,7 +217,7 @@
             specCanvas.width = WF_WIDTH; specCanvas.height = SPEC_HEIGHT;
             specCanvas.className = 'wf-spec';
             wrap.appendChild(wfCanvas); wrap.appendChild(specCanvas);
-            if (idx === 0) {
+            if (meta.primary) {
                 const hl = document.createElement('div');
                 hl.id = 'wf-highlight';
                 hl.style.cssText = 'display:none;position:absolute;top:0;bottom:0;left:50%;width:20%;transform:translateX(-50%);pointer-events:none;background:rgba(83,215,105,0.10);border-left:1px solid rgba(83,215,105,0.7);border-right:1px solid rgba(83,215,105,0.7);';
@@ -385,11 +387,11 @@
                 document.getElementById('waterfall-status').textContent = dongles.length > 1 ? `${dongles.length} dongles` : 'Active';
                 document.getElementById('waterfall-led').className = 'indicator green';
                 for (const d of dongles) {
-                    const b = ensureWfBlock(d.index, d);
+                    const b = ensureWfBlock(d);
                     try {
                         // last=1: only the newest row — the waterfall scrolls
                         // client-side, the full buffer need not be transferred
-                        const r = await fetch('/waterfall.json?d=' + d.index + '&last=1');
+                        const r = await fetch('/waterfall.json?d=' + encodeURIComponent(d.id) + '&last=1');
                         const data = await r.json();
                         if (data.length > 0) drawWaterfall(b, data);
                     } catch(e) {}

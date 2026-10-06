@@ -15,6 +15,28 @@ from .pages import CONSOLE_HTML, HISTORY_HTML
 from .passes import HAS_SKYFIELD, load, passes_to_json, wgs84
 from .quality import estimate_quality
 
+def _dongle_list():
+    """Dongle descriptors for status/dongles.json: primary first, then stable
+    display indices (USB indices are not stable, so dongles are keyed by
+    serial everywhere else)."""
+    keys = list(state.sdrs)
+    keys.sort(key=lambda s: (s != state.primary_serial, s))
+    dongles = []
+    for i, sn in enumerate(keys):
+        e = state.sdrs[sn]
+        with e['lock']:
+            dongles.append({
+                "index": i,
+                "id": sn,
+                "label": e["label"],
+                "tuner": e["tuner"],
+                "serial": sn,
+                "primary": e["primary"],
+                "signal": round(e["signal"], 2),
+                "running": e["proc"] is not None and e["proc"].poll() is None,
+            })
+    return dongles
+
 def get_status():
     with state.status_lock:
         freq = state.current_frequency
@@ -25,17 +47,7 @@ def get_status():
         cur_pass = state.current_pass
         tle = dict(state.tle_progress)
     
-    dongles = []
-    for idx in sorted(state.sdrs):
-        e = state.sdrs[idx]
-        with e['lock']:
-            dongles.append({
-                "index": idx,
-                "label": e["label"],
-                "serial": e["serial"],
-                "signal": round(e["signal"], 2),
-                "running": e["proc"] is not None and e["proc"].poll() is None,
-            })
+    dongles = _dongle_list()
     status = {
         "rtl_sdr_running": state.rtl_sdr_proc is not None and state.rtl_sdr_proc.poll() is None,
         "frequency_mhz": round(freq / 1e6, 4),
@@ -95,13 +107,10 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(get_status()).encode())
         elif self.path.startswith('/waterfall.json'):
-            # Optional ?d=<dongle index> (default 0) and last=1 for the
-            # newest row only (the dashboard scrolls client-side)
+            # Optional ?d=<dongle serial> (default: primary) and last=1 for
+            # the newest row only (the dashboard scrolls client-side)
             query = parse_qs(urlparse(self.path).query)
-            try:
-                dev = int((query.get('d') or ['0'])[0])
-            except ValueError:
-                dev = 0
+            dev = (query.get('d') or [''])[0] or (state.primary_serial or '')
             entry = state.sdrs.get(dev)
             if entry is None:
                 data = []
@@ -118,23 +127,11 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(data).encode())
         elif self.path == '/dongles.json':
-            dongles = []
-            for idx in sorted(state.sdrs):
-                e = state.sdrs[idx]
-                with e['lock']:
-                    dongles.append({
-                        "index": idx,
-                        "label": e["label"],
-                        "tuner": e["tuner"],
-                        "serial": e["serial"],
-                        "signal": round(e["signal"], 2),
-                        "running": e["proc"] is not None and e["proc"].poll() is None,
-                    })
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps(dongles).encode())
+            self.wfile.write(json.dumps(_dongle_list()).encode())
         elif self.path == '/passes.json':
             with state.status_lock:
                 passes = passes_to_json(state.upcoming_passes)
