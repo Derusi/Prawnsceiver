@@ -9,7 +9,7 @@ def iq_to_complex(iq_bytes):
 
 # State shared by the (single-threaded) DSP chain: rotator sample counter
 # and FIR filter tail, both continuous across blocks
-demod_state = {"rot": 0, "fir_tail": None}
+demod_state = {"rot": 0, "fir_tail": None, "afir_tail": None, "last_c": None, "audio_pos": 0}
 
 def frequency_shift(c, offset_hz, fs):
     """Rotate baseband so a signal at -offset_hz moves to 0 Hz.
@@ -30,39 +30,92 @@ def frequency_shift(c, offset_hz, fs):
     w = 2.0 * np.pi * offset_hz / fs
     return (c * np.exp(1j * w * idx)).astype(np.complex64)
 
-_lowpass_taps = None
+_lowpass_taps = {}
 
-def get_lowpass_taps():
-    """Windowed-sinc low-pass FIR (~22 kHz) for the APT channel."""
-    global _lowpass_taps
-    if _lowpass_taps is None:
+def get_lowpass_taps(cutoff_hz=22000.0):
+    """Windowed-sinc low-pass FIR taps, cached per cutoff (~22 kHz for the
+    APT channel; ~95 kHz for broadcast FM test tunes)."""
+    key = int(cutoff_hz)
+    if key not in _lowpass_taps:
         import numpy as np
         numtaps = 25
-        cutoff_hz = 22000.0
         m = np.arange(numtaps) - (numtaps - 1) / 2.0
         h = np.sinc(2 * cutoff_hz / SDR_RATE * m) * np.hamming(numtaps)
-        _lowpass_taps = (h / h.sum()).astype(np.float32)
-    return _lowpass_taps
+        _lowpass_taps[key] = (h / h.sum()).astype(np.float32)
+    return _lowpass_taps[key]
 
-def lowpass(c):
+def lowpass(c, cutoff_hz=22000.0):
     """Low-pass filter with state carried across blocks (no boundary artifacts)."""
     import numpy as np
-    taps = get_lowpass_taps()
+    taps = get_lowpass_taps(cutoff_hz)
     tail = demod_state["fir_tail"]
-    if tail is None:
+    if tail is None or len(tail) != len(taps) - 1:
         tail = np.zeros(len(taps) - 1, dtype=np.complex64)
     x = np.concatenate([tail, c])
     out = np.convolve(x, taps.astype(np.complex64), mode='valid')
     demod_state["fir_tail"] = x[-(len(taps) - 1):].copy()
     return out.astype(np.complex64)
 
-def fm_demodulate(c, decimation=5):
-    """FM discriminate a baseband-centered complex signal, decimate to audio rate."""
+_real_taps = {}
+
+def get_real_taps(cutoff_hz):
+    """Real (audio) low-pass FIR taps, cached per cutoff."""
+    key = int(cutoff_hz)
+    if key not in _real_taps:
+        import numpy as np
+        numtaps = 25
+        m = np.arange(numtaps) - (numtaps - 1) / 2.0
+        h = np.sinc(2 * cutoff_hz / SDR_RATE * m) * np.hamming(numtaps)
+        _real_taps[key] = (h / h.sum()).astype(np.float32)
+    return _real_taps[key]
+
+def lowpass_audio(a, cutoff_hz):
+    """Low-pass the real discriminator output before decimation (anti-alias)."""
     import numpy as np
-    c = lowpass(c)
-    phase = np.arctan2(c.imag, c.real)
-    audio = np.diff(phase)
+    taps = get_real_taps(cutoff_hz)
+    tail = demod_state["afir_tail"]
+    if tail is None or len(tail) != len(taps) - 1:
+        tail = np.zeros(len(taps) - 1, dtype=np.float32)
+    x = np.concatenate([tail, a.astype(np.float32)])
+    out = np.convolve(x, taps, mode='valid')
+    demod_state["afir_tail"] = x[-(len(taps) - 1):].copy()
+    return out
+
+def fm_demodulate(c, decimation=5, iq_cutoff_hz=22000.0, audio_cutoff_hz=None):
+    """FM discriminate a baseband-centered complex signal, decimate to audio rate.
+
+    iq_cutoff_hz: IQ low-pass before discrimination (default 22 kHz APT
+    channel). None skips it — broadcast FM tunes use the whole ±120 kHz
+    capture band, because a short FIR cannot shape a clean ~95 kHz passband
+    and the ±75 kHz deviation must stay inside. audio_cutoff_hz: anti-alias
+    low-pass on the discriminator output before decimation to 48 kHz.
+    """
+    import numpy as np
+    if iq_cutoff_hz:
+        c = lowpass(c, iq_cutoff_hz)
+    # Discriminator: phase advance of c[n] relative to c[n-1]. The conjugate
+    # product + arctan2 yields the advance in (-pi, pi] directly — unlike
+    # diff(arctan2(phase)), which produces 2*pi spikes whenever the wrapped
+    # phase crosses the branch cut (any FM whose phase excursion exceeds pi,
+    # i.e. also the APT signal). The previous block's last sample is carried
+    # in demod_state so block processing matches whole-signal processing.
+    if len(c) == 0:
+        return b''
+    prev = demod_state["last_c"]
+    if prev is None:
+        prev = c[0]
+    dd = c * np.conj(np.concatenate([np.array([prev], dtype=c.dtype), c[:-1]]))
+    demod_state["last_c"] = c[-1].copy()
+    audio = np.arctan2(dd.imag, dd.real)
+    if audio_cutoff_hz:
+        audio = lowpass_audio(audio, audio_cutoff_hz)
     if decimation > 1:
-        audio = audio[::decimation]
+        # Decimate on a continuous phase across blocks — a per-block [::n]
+        # reset would drop samples at every block boundary (0.2% rate error
+        # at IQ_BLOCK size) and make block processing differ from a
+        # continuous stream.
+        keep = (np.arange(len(audio)) + demod_state["audio_pos"]) % decimation == 0
+        demod_state["audio_pos"] += len(audio)
+        audio = audio[keep]
     audio = (audio * 32767 / (np.pi + 1e-9)).astype(np.int16)
     return audio.tobytes()

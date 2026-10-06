@@ -30,6 +30,20 @@ SDR_FREQ_CORRECTION_HZ = {
     137100000: 21500,   # NOAA 19 (scaled by frequency within the band)
     437550000: -30000,  # ISS (Zarya) — measured from the 15:08 pass waterfall (-26..-28 kHz raw, minus Doppler)
 }
+# FM broadcast band (VHF2): the dongle tunes ~8 kHz HIGH here — broadcast
+# carriers show up 6-11 kHz below their nominal frequency (measured on 89.7,
+# 93.0, 95.0, 99.6, 103.0, 105.0 MHz). Opposite sign of the VHF3 NOAA error,
+# so manual FM radio test tunes need a negative correction.
+FM_BAND = (87_500_000, 108_000_000)
+FM_BAND_CORRECTION_HZ = -8200
+
+def tuning_correction(freq_hz):
+    """Static tuning correction for the mistuned R820T at any frequency."""
+    if freq_hz in SDR_FREQ_CORRECTION_HZ:
+        return SDR_FREQ_CORRECTION_HZ[freq_hz]
+    if FM_BAND[0] <= freq_hz <= FM_BAND[1]:
+        return FM_BAND_CORRECTION_HZ
+    return 0
 AUDIO_RATE = 48000
 IQ_BLOCK = FFT_SIZE * 2
 DECIMATION = SDR_RATE // AUDIO_RATE

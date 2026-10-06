@@ -56,6 +56,9 @@ def log_console(msg, level="info"):
         # Console can't render the message (e.g. emoji on a non-UTF-8 terminal)
         print(line_str.encode('ascii', 'backslashreplace').decode('ascii'))
 rtl_sdr_proc = None
+# Manual tune (FM radio test): while set, the scheduler must not retune or
+# record — the operator controls the frequency from the dashboard.
+manual_frequency = None
 current_frequency = 137620000
 current_sat_name = "NOAA 15 (idle)"
 is_recording = False

@@ -369,7 +369,10 @@
 
                 // Pass banner
                 const banner = document.getElementById('pass-banner');
-                if (data.pass_active && data.current_pass) {
+                if (data.manual_frequency_mhz) {
+                    banner.className = 'pass-soon';
+                    banner.textContent = `📻 Manual tune: ${data.manual_frequency_mhz} MHz — satellite tracking paused (click 🛰 Auto to resume)`;
+                } else if (data.pass_active && data.current_pass) {
                     banner.className = 'pass-active';
                     banner.textContent = `🔴 LIVE PASS: ${data.current_pass.sat_name} (${data.current_pass.frequency_mhz} MHz) — Max ${data.current_pass.max_alt}° — Sets at ${data.current_pass.set_local}`;
                 } else if (data.next_pass) {
@@ -573,6 +576,19 @@
                 btn.textContent = '▶ Listen Live';
                 liveAudioOn = false;
             }
+        }
+
+        async function tuneManual() {
+            const f = document.getElementById('tune-freq').value;
+            try {
+                const res = await fetch('/tune?f=' + encodeURIComponent(f));
+                const data = await res.json();
+                if (!data.success) alert('Tune failed: ' + (data.error || res.status));
+            } catch (e) { alert('Tune failed: ' + e); }
+        }
+
+        async function tuneAuto() {
+            try { await fetch('/tune?f=auto'); } catch (e) {}
         }
 
         async function fetchSignal() {

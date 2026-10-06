@@ -65,6 +65,14 @@ def scheduler_thread():
                         if triggered is None:
                             triggered = max(candidates, key=lambda p: p["max_alt"])
                 
+                # Manual tune mode (FM radio test): the operator controls the
+                # frequency — no satellite switching, no recording. An ongoing
+                # pass is finished cleanly by the branch below.
+                with state.status_lock:
+                    manual = state.manual_frequency
+                if manual is not None:
+                    triggered = None
+                
                 finished_pass = None
                 pass_peak = 0.0
                 with state.status_lock:
@@ -92,9 +100,14 @@ def scheduler_thread():
                         state.log_console(f"✅ PASS END: {finished_pass['sat_name']} finished at {local_set.strftime('%H:%M')}")
                         state.current_pass = None
                         state.is_pass_active = False
-                        # Return to NOAA 15 idle frequency
-                        state.current_frequency = 137620000
-                        state.current_sat_name = "NOAA 15 (idle)"
+                        # Return to the idle park frequency — or, in manual
+                        # tune mode, stay on the operator's frequency
+                        if manual is not None:
+                            state.current_frequency = manual
+                            state.current_sat_name = f"Manual {manual/1e6:.4f} MHz"
+                        else:
+                            state.current_frequency = 137620000
+                            state.current_sat_name = "NOAA 15 (idle)"
                         with state.signal_lock:
                             pass_peak = state.pass_signal_peak
                             state.pass_signal_peak = 0.0

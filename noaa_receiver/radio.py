@@ -6,7 +6,7 @@ import wave
 from datetime import datetime
 
 from . import state
-from .config import AUDIO_RATE, DECIMATION, FFT_SIZE, IQ_BLOCK, LOGDIR, RECORD_DIR, RTL_LOG, SDR_FREQ_CORRECTION_HZ, SDR_GAIN, SDR_OFFSET_HZ, SDR_RATE
+from .config import AUDIO_RATE, DECIMATION, FFT_SIZE, FM_BAND, IQ_BLOCK, LOGDIR, RECORD_DIR, RTL_LOG, SDR_GAIN, SDR_OFFSET_HZ, SDR_RATE, tuning_correction
 
 from .dsp import fm_demodulate, frequency_shift, iq_to_complex
 
@@ -39,7 +39,7 @@ def sdr_thread():
 
     while True:
         try:
-            correction = SDR_FREQ_CORRECTION_HZ.get(state.current_frequency, 0)
+            correction = tuning_correction(state.current_frequency)
             freq_str = f"{state.current_frequency + SDR_OFFSET_HZ + correction}"
             tuned_freq = state.current_frequency
             record_sat = None
@@ -137,9 +137,15 @@ def sdr_thread():
                     state.is_recording = False
 
                 # FM-demodulate every block: feeds the live audio stream,
-                # and is written to the WAV during passes
+                # and is written to the WAV during passes. Broadcast FM
+                # (manual radio test tunes) deviates ±75 kHz, so the whole
+                # ±120 kHz capture band is demodulated and only the audio
+                # is low-passed; satellite APT/SSTV keeps the narrow 22 kHz.
                 try:
-                    audio = fm_demodulate(c, DECIMATION)
+                    if FM_BAND[0] <= freq_now <= FM_BAND[1]:
+                        audio = fm_demodulate(c, DECIMATION, iq_cutoff_hz=None, audio_cutoff_hz=18000)
+                    else:
+                        audio = fm_demodulate(c, DECIMATION)
                 except Exception:
                     audio = b''
                 if audio:

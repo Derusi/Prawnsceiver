@@ -4,6 +4,7 @@ import json
 import os
 import struct
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
 
 from . import state
 from .config import AUDIO_RATE, LAT, LON, PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, UTC_OFFSET, WEBDIR
@@ -19,6 +20,7 @@ def get_status():
         freq = state.current_frequency
         sat = state.current_sat_name
         passing = state.is_pass_active
+        manual = state.manual_frequency
         passes = state.upcoming_passes
         cur_pass = state.current_pass
         tle = dict(state.tle_progress)
@@ -26,6 +28,7 @@ def get_status():
     status = {
         "rtl_sdr_running": state.rtl_sdr_proc is not None and state.rtl_sdr_proc.poll() is None,
         "frequency_mhz": round(freq / 1e6, 4),
+        "manual_frequency_mhz": round(manual / 1e6, 4) if manual else None,
         "satellite": sat,
         "pass_active": passing,
         "recording": state.is_recording,
@@ -234,6 +237,58 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                         break
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
+        elif self.path.startswith('/tune'):
+            # Manual tune (dongle reception test, e.g. FM broadcast radio):
+            # /tune?f=89.7 parks the dongle on a frequency and pauses the
+            # satellite scheduler; /tune?f=auto hands control back to it.
+            query = parse_qs(urlparse(self.path).query)
+            f = (query.get('f') or [''])[0].strip().lower()
+            with state.status_lock:
+                pass_active = state.is_pass_active
+            if f in ('', 'auto'):
+                with state.status_lock:
+                    state.manual_frequency = None
+                    state.current_frequency = 137620000
+                    state.current_sat_name = "NOAA 15 (idle)"
+                state.log_console("🛰 Manual tune off — satellite tracking resumed")
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "mode": "auto"}).encode())
+                return
+            try:
+                mhz = float(f)
+            except ValueError:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Invalid frequency"}).encode())
+                return
+            if not 24.0 <= mhz <= 1766.0:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Frequency out of R820T range (24-1766 MHz)"}).encode())
+                return
+            if pass_active:
+                state.log_console("Tune rejected: satellite pass in progress", "warn")
+                self.send_response(409)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Satellite pass in progress — try again after it ends"}).encode())
+                return
+            freq_hz = int(round(mhz * 1e6))
+            with state.status_lock:
+                state.manual_frequency = freq_hz
+                state.current_frequency = freq_hz
+                state.current_sat_name = f"Manual {mhz:.4f} MHz"
+            state.log_console(f"📻 Manual tune: {mhz:.4f} MHz — satellite tracking paused")
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "mode": "manual", "frequency_mhz": mhz}).encode())
         elif self.path == '/live.wav':
             state.log_console(f"🔊 Live audio listener connected ({self.client_address[0]})")
             # Endless WAV stream of the live FM-demodulated audio.
