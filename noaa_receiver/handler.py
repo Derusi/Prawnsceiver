@@ -25,10 +25,22 @@ def get_status():
         cur_pass = state.current_pass
         tle = dict(state.tle_progress)
     
+    dongles = []
+    for idx in sorted(state.sdrs):
+        e = state.sdrs[idx]
+        with e['lock']:
+            dongles.append({
+                "index": idx,
+                "label": e["label"],
+                "serial": e["serial"],
+                "signal": round(e["signal"], 2),
+                "running": e["proc"] is not None and e["proc"].poll() is None,
+            })
     status = {
         "rtl_sdr_running": state.rtl_sdr_proc is not None and state.rtl_sdr_proc.poll() is None,
         "frequency_mhz": round(freq / 1e6, 4),
         "manual_frequency_mhz": round(manual / 1e6, 4) if manual else None,
+        "dongles": dongles,
         "satellite": sat,
         "pass_active": passing,
         "recording": state.is_recording,
@@ -82,14 +94,46 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(get_status()).encode())
-        elif self.path == '/waterfall.json':
-            with state.waterfall_lock:
-                data = list(state.waterfall_buffer)
+        elif self.path.startswith('/waterfall.json'):
+            # Optional ?d=<dongle index> (default 0) and last=1 for the
+            # newest row only (the dashboard scrolls client-side)
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                dev = int((query.get('d') or ['0'])[0])
+            except ValueError:
+                dev = 0
+            entry = state.sdrs.get(dev)
+            if entry is None:
+                data = []
+            elif (query.get('last') or [''])[0] == '1':
+                with entry['lock']:
+                    data = list(entry['waterfall'][-1:])
+            else:
+                with entry['lock']:
+                    data = list(entry['waterfall'])
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(data).encode())
+        elif self.path == '/dongles.json':
+            dongles = []
+            for idx in sorted(state.sdrs):
+                e = state.sdrs[idx]
+                with e['lock']:
+                    dongles.append({
+                        "index": idx,
+                        "label": e["label"],
+                        "tuner": e["tuner"],
+                        "serial": e["serial"],
+                        "signal": round(e["signal"], 2),
+                        "running": e["proc"] is not None and e["proc"].poll() is None,
+                    })
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(dongles).encode())
         elif self.path == '/passes.json':
             with state.status_lock:
                 passes = passes_to_json(state.upcoming_passes)
