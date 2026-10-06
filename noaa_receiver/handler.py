@@ -252,12 +252,12 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                     sat_arg = 'noaa_18'
                 elif 'noaa_19' in fname_lower or 'noaa19' in fname_lower:
                     sat_arg = 'noaa_19'
-                cmd = ['noaa-apt', wav_path, '-o', output_png, '-q', '-m', 'yes', '-R', 'auto']
+                cmd = ['noaa-apt', wav_path, '-o', output_png, '-q', '-m', 'yes', '-R', 'auto',
+                        '-T', '/var/log/noaa/weather.txt']
                 if sat_arg:
                     cmd.extend(['-s', sat_arg])
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=120
-                )
+                    cmd, capture_output=True, text=True, timeout=120, cwd='/opt/noaa-apt')
                 if os.path.exists(output_png):
                     self.send_response(200)
                     self.send_header('Content-type', 'application/json')
