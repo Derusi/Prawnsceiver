@@ -45,7 +45,7 @@ def _rtl_pll_failed(proc):
     Note: on some R820T dongles this lock bit is unreliable — the tuner
     receives fine while never confirming lock. The receiver therefore only
     warns and keeps running; the per-frequency mistune that such dongles
-    show is handled by SDR_FREQ_CORRECTION_HZ.
+    show is handled per dongle by SDR_DONGLE_CORRECTIONS.
     """
     deadline = time.time() + 3.0
     while time.time() < deadline and proc.poll() is None:
@@ -161,7 +161,7 @@ def sdr_capture_thread(serial):
         try:
             with state.status_lock:
                 tune_target = state.current_frequency
-            correction = tuning_correction(tune_target)
+            correction = tuning_correction(tune_target, serial)
             freq_str = f"{tune_target + SDR_OFFSET_HZ + correction}"
             tuned_freq = tune_target
             record_sat = None
@@ -180,7 +180,7 @@ def sdr_capture_thread(serial):
                 state.log_console(f"rtl_sdr started (pid {proc.pid}, primary dongle {serial}), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ + correction}Hz, DC spike displaced), gain={SDR_GAIN}dB")
                 if _rtl_pll_failed(proc) and not pll_warned:
                     pll_warned = True
-                    state.log_console("R820T PLL lock not confirmed — continuing anyway (lock bit unreliable on this dongle, mistune handled via SDR_FREQ_CORRECTION_HZ)", "warn")
+                    state.log_console("R820T PLL lock not confirmed — continuing anyway (lock bit unreliable on this dongle, mistune handled per dongle via SDR_DONGLE_CORRECTIONS)", "warn")
             else:
                 state.log_console(f"rtl_sdr started (pid {proc.pid}, dongle {serial}), tuned {freq_str}Hz")
             last_history_append = 0.0
