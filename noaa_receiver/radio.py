@@ -134,4 +134,5 @@ def sdr_thread():
         except: pass
         state.is_recording = False
         state.current_wav = None
+        state.current_wav_path = None
         time.sleep(5)
