@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from . import state
 from .config import LAT, LON, PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, RECORD_ISS, SAT_DSB_FREQ, TLE_REFRESH_HOURS, UTC_OFFSET
 
-from .decode import decode_recording, read_decode_marker
+from .decode import decode_recording, read_decode_marker, sat_short_name
 from .history import log_pass
 from .passes import HAS_SKYFIELD, load, load_tles_from_cache, predict_passes, refresh_tles, wgs84
 from .satnogs import satellite_info
@@ -212,6 +212,10 @@ def scheduler_thread():
                     wav_name = None
                     quality = None
                     pass_start_ts = finished_pass["rise_utc"].timestamp() - PASS_MARGIN_SECS
+                    # History attribution matches by filename: overlapping
+                    # same-frequency passes interleave neighbor-satellite
+                    # WAVs in the same time window
+                    attrib_prefix = sat_short_name(finished_pass["sat_name"]) + "_"
                     recordings = sorted(glob.glob(os.path.join(RECORD_DIR, "*.wav")), key=os.path.getmtime, reverse=True)
                     # Never pick WAVs that are still being written
                     with state.status_lock:
@@ -247,10 +251,16 @@ def scheduler_thread():
                         # decoded but not part of the pass history
                         if wav_base.endswith(dongle_suffixes):
                             continue
-                        decoded = bool(rec_decoded)
-                        png_file = os.path.basename(png_path) if (png_path and os.path.exists(png_path)) else None
-                        wav_name = wav_base
-                        quality = rec_quality
+                        # Attribute only recordings of THIS pass's satellite,
+                        # and only the newest primary fragment (newest-first
+                        # order — the most complete after a mid-pass restart)
+                        if not wav_base.startswith(attrib_prefix):
+                            continue
+                        if wav_name is None:
+                            decoded = bool(rec_decoded)
+                            png_file = os.path.basename(png_path) if (png_path and os.path.exists(png_path)) else None
+                            wav_name = wav_base
+                            quality = rec_quality
                     # Snapshot the SatNOGS DB record with the pass: the
                     # history page shows what was tracked (names, launch,
                     # transmitters) even long after the satellite changes

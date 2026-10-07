@@ -14,6 +14,25 @@ def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, si
     status, transmitters) — stored with the pass so the history page shows
     what was received even long after the satellite decays."""
     history = _load_history()
+    # One entry per physical pass: tracking of a pass can END twice
+    # (overlapping same-frequency passes flipping the receiver back and
+    # forth, a manual-tune interruption that re-triggers the same window).
+    # The second log carries the later decode state — merge, don't append.
+    rise_ts = rise_time.timestamp()
+    for h in reversed(history):
+        if h.get("sat_name") == sat_name and abs((h.get("rise_ts") or 0) - rise_ts) <= 120:
+            h["signal_peak"] = round(max(h.get("signal_peak") or 0, signal_peak), 1)
+            if decoded and not h.get("decoded"):
+                h["decoded"] = True
+                h["png"] = png_file or h.get("png")
+            if wav_file and not h.get("wav"):
+                h["wav"] = wav_file
+            if quality is not None and h.get("quality") is None:
+                h["quality"] = quality
+            if satnogs is not None and h.get("satnogs") is None:
+                h["satnogs"] = satnogs
+            _save_history(history)
+            return
     history.append({
         "sat_name": sat_name,
         "frequency_mhz": round(frequency / 1e6, 4),

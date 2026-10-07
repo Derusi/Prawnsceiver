@@ -80,18 +80,18 @@ receiver was OOM-killed once at ~00:48 with 2.4 GB).
 
 ## Entries
 
-### 2026-10-08 02:20 CEST — watch starts, state: healthy
+### 2026-10-08 01:40 CEST — watch starts, state: healthy
 - Pi at origin/main 42891d5, receiver up (pid 203005), all endpoints
   < 10 ms. Pass list shows receive plans (mode chips) for all passes.
 - History page font fix (2a5d8bc) and receive-plan feature (e787b88,
   527d8e2, 42891d5) deployed. The API-freeze bug (SatNOGS fetch under
   status_lock) is fixed and verified.
-- SatNOGS/Celetrak block: diagnosed 01:50-02:15, left as-is per user.
+- SatNOGS/Celetrak block: diagnosed ~00:50-01:20 CEST, left as-is per user.
 - Upcoming: 02:51 Meteor-M 2-4 LRPT (12.7°) — pipeline shakedown pass.
 
-### 2026-10-08 03:45 CEST — unattended work: OOM root fix deployed
+### 2026-10-08 01:45 CEST — unattended work: OOM root fix deployed
 Changes made while the user is asleep (all pushed, Pi restarted at
-03:42 CEST, idle window before the 02:51->04:29 passes):
+01:42 CEST, idle window before the 02:51->04:29 passes):
 
 1. Decode-attempt markers (ef52533) — the OOM root cause fix.
    - decode.py: every decode attempt's outcome is persisted in

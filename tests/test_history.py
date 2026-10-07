@@ -1,0 +1,46 @@
+"""history.py: pass-history logging — one entry per physical pass.
+
+Run: python3 tests/test_history.py
+"""
+import os
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from noaa_receiver import history   # noqa: E402
+
+d = tempfile.mkdtemp()
+history.PASS_HISTORY_FILE = os.path.join(d, 'pass_history.json')
+
+def rise(offset_s=0.0):
+    return datetime(2026, 10, 7, 22, 54, tzinfo=timezone.utc) + timedelta(seconds=offset_s)
+
+# First log of a pass: appended
+history.log_pass("NOAA 18", 137912500, 64.5, 13.2, rise(), rise(792),
+                  585.6, decoded=False, png_file=None, wav_file="NOAA_18_20261007_225338.wav")
+h = history._load_history()
+assert len(h) == 1 and h[0]["signal_peak"] == 585.6 and not h[0]["decoded"], h
+
+# Same physical pass logged again (receiver flip-flop / re-trigger): merged,
+# not duplicated — the later decode result and the higher peak win
+history.log_pass("NOAA 18", 137912500, 64.5, 13.2, rise(9), rise(801),
+                  611.1, decoded=True, png_file="NOAA_18_20261007_225338.png",
+                  wav_file="NOAA_18_20261007_225338.wav", quality=23)
+h = history._load_history()
+assert len(h) == 1, h
+assert h[0]["decoded"] and h[0]["png"] == "NOAA_18_20261007_225338.png", h
+assert h[0]["signal_peak"] == 611.1 and h[0]["quality"] == 23, h
+
+# A genuinely different pass (next orbit, hours later): appended
+history.log_pass("NOAA 18", 137912500, 22.1, 8.0, rise(3600), rise(4080),
+                  1007.1, decoded=False, png_file=None, wav_file="NOAA_18_20261008_003553.wav")
+assert len(history._load_history()) == 2
+
+# A different satellite rising in the same window is NOT merged
+history.log_pass("Meteor-M 2-3", 137912500, 19.4, 7.0, rise(30), rise(450),
+                  294.2, decoded=False, png_file=None, wav_file=None)
+h = history._load_history()
+assert len(h) == 3 and h[-1]["sat_name"] == "Meteor-M 2-3", h
+
+print("pass-history merge OK")
