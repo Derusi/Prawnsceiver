@@ -393,11 +393,11 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                         self.end_headers()
                         self.wfile.write(json.dumps({"success": False, "error": "Invalid bandwidth"}).encode())
                         return
-                    if not 3.0 <= khz <= 120.0:
+                    if not 1.0 <= khz <= 120.0:
                         self.send_response(400)
                         self.send_header('Content-type', 'application/json')
                         self.end_headers()
-                        self.wfile.write(json.dumps({"success": False, "error": "Bandwidth out of range (3-120 kHz)"}).encode())
+                        self.wfile.write(json.dumps({"success": False, "error": "Bandwidth out of range (1-120 kHz)"}).encode())
                         return
                     bw_hz = int(khz * 1000)
                 with state.status_lock:

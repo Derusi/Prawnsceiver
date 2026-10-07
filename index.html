@@ -834,9 +834,13 @@
             bwLbl.style.cssText = 'color:#888;flex:1;';
             const bwSel = document.createElement('select');
             bwSel.style.cssText = 'flex:0 0 auto;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;padding:2px;font-family:monospace;font-size:0.85em;cursor:pointer;';
-            for (const [val, txt] of [['auto','auto'],['5','5'],['8','8'],['10','10'],['15','15'],['22','22'],['30','30'],['36','36'],['50','50'],['72','72'],['100','100'],['120','120']]) {
+            const autoOpt = document.createElement('option');
+            autoOpt.value = 'auto'; autoOpt.textContent = 'auto';
+            bwSel.appendChild(autoOpt);
+            // logarithmic steps (1-2-5 decades) from 1 kHz to the full band
+            for (const v of [1, 2, 5, 10, 20, 50, 100, 120]) {
                 const o = document.createElement('option');
-                o.value = val; o.textContent = txt + (val === 'auto' ? '' : ' kHz');
+                o.value = String(v); o.textContent = v + ' kHz';
                 bwSel.appendChild(o);
             }
             bwSel.value = 'auto';
@@ -846,6 +850,11 @@
                     .then(r => r.json())
                     .then(data => {
                         if (data.success) {
+                            // draw the new geometry immediately — the 200 ms
+                            // poll would confirm it a moment later anyway
+                            const c = dongleCards[sn_bw];
+                            if (c && c.lastD) c.lastD.manual_bw_khz = bwSel.value === 'auto' ? null : parseFloat(bwSel.value);
+                            if (wfOverlayOn) drawWfOverlay();
                             toast(bwSel.value === 'auto'
                                 ? `Demod bandwidth of dongle ${d.index}${d.primary ? ' ★' : ''} back to auto`
                                 : `Dongle ${d.index}${d.primary ? ' ★' : ''} now records ±${bwSel.value} kHz`);
