@@ -34,6 +34,10 @@ if [ "$FAKE_OK" = "1" ]; then printf 'PNG' > "$out"; exit 0; fi
 echo "Error: could not find sync frames" >&2; exit 1
 '''
 d = tempfile.mkdtemp()
+# Hermetic: never depend on (or touch) a real /var/log/noaa/weather.txt —
+# on the Pi that file exists and -T would legitimately be passed
+decode.NOAA_APT_TLE_FILE = os.path.join(d, 'no_such_weather.txt')
+decode.NOAA_APT_DIR = d
 fakebin = os.path.join(d, 'bin'); os.mkdir(fakebin)
 exe = os.path.join(fakebin, 'noaa-apt'); open(exe, 'w').write(FAKE); os.chmod(exe, 0o755)
 os.environ['PATH'] = fakebin + ':' + os.environ['PATH']
