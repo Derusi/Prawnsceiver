@@ -22,7 +22,15 @@
         #wf-col { flex: 1; min-width: 0; }
         .wf-canvas { width: 100%; height: 300px; background: #000; border: 1px solid #0f3460; border-radius: 4px; image-rendering: pixelated; }
         /* Time gutter left of each waterfall, scrolled in sync with the data */
+        /* Time gutter left of each waterfall, scrolled in sync with the data */
         .wf-time { width: 54px; flex-shrink: 0; background: #000; border: 1px solid #0f3460; border-radius: 4px; }
+        /* Per-dongle collapse: one toggle hides the dongle's waterfall AND
+           its sidebar card together */
+        .wf-block-row { display: flex; gap: 4px; align-items: flex-start; }
+        .wf-block-collapsed .wf-block-row { display: none; }
+        .wf-collapse-btn { background: none; border: 1px solid #0f3460; color: #a8b8d8; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.85em; padding: 0 7px; margin-left: 8px; transition: transform 0.2s; }
+        .wf-collapse-btn:hover { border-color: #53d769; color: #53d769; }
+        .wf-collapse-btn.collapsed { transform: rotate(-90deg); }
         .wf-spec { width: 100%; height: 50px; background: #000; border: 1px solid #0f3460; border-radius: 4px; margin-top: 4px; }
         #freq-labels { display: flex; justify-content: space-between; font-size:0.85em; color: #666; margin-top: 3px; }
         #dongle-status-col { width: var(--sidebar-width); flex-shrink: 0; display: flex; flex-direction: column; }
@@ -235,6 +243,7 @@
             }
             const list = document.getElementById('wf-list');
             const block = document.createElement('div');
+            block.className = 'wf-block';
             block.style.cssText = 'margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #0f3460;';
             const head = document.createElement('div');
             head.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.9em;color:#a8b8d8;margin-bottom:3px;';
@@ -243,13 +252,18 @@
             const title = document.createElement('span');
             const sig = document.createElement('span');
             sig.style.cssText = 'margin-left:auto;color:#888;';
-            head.appendChild(led); head.appendChild(title); head.appendChild(sig);
+            const collapseBtn = document.createElement('button');
+            collapseBtn.className = 'wf-collapse-btn';
+            collapseBtn.textContent = '▾';
+            collapseBtn.title = 'Collapse/expand this dongle (waterfall + card)';
+            collapseBtn.onclick = () => toggleDongleCollapse(meta.id);
+            head.appendChild(led); head.appendChild(title); head.appendChild(sig); head.appendChild(collapseBtn);
             // Row: time gutter | waterfall+spectrum column. The overlays
             // (features, hover, highlight) sit inside the column only, so
             // the hover/click frequency mapping stays relative to the
             // waterfall canvas.
             const row = document.createElement('div');
-            row.style.cssText = 'display:flex;gap:4px;align-items:flex-start;';
+            row.className = 'wf-block-row';
             const timeCanvas = document.createElement('canvas');
             timeCanvas.width = 54; timeCanvas.height = WF_HEIGHT;
             timeCanvas.className = 'wf-time';
@@ -289,11 +303,37 @@
                 wfCtx: wfCanvas.getContext('2d'),
                 specCtx: specCanvas.getContext('2d'),
                 timeCtx, overlay, hover, title, led, sig,
+                block, collapseBtn,
                 serial: meta.id, centerMHz: null,
             };
             wireWfInteractions(b, wrap, wfCanvas, meta);
+            applyDongleCollapse(meta.id);
             if (wfOverlayOn) { overlay.style.display = 'block'; drawWfOverlay(); }
             return b;
+        }
+
+        // ---------- Per-dongle collapse (waterfall + sidebar card) ----------
+        // One toggle on the waterfall head hides both the dongle's waterfall
+        // block and its control card; state persists per dongle serial.
+        function dongleCollapsed(serial) {
+            try { return localStorage.getItem('dongle-collapsed-' + serial) === '1'; }
+            catch (e) { return false; }
+        }
+        function applyDongleCollapse(serial) {
+            const collapsed = dongleCollapsed(serial);
+            const b = wfBlocks[serial];
+            if (b) {
+                b.block.classList.toggle('wf-block-collapsed', collapsed);
+                b.collapseBtn.classList.toggle('collapsed', collapsed);
+            }
+            const c = dongleCards[serial];
+            if (c && c.cardEl) c.cardEl.style.display = collapsed ? 'none' : '';
+        }
+        function toggleDongleCollapse(serial) {
+            try { localStorage.setItem('dongle-collapsed-' + serial, dongleCollapsed(serial) ? '0' : '1'); }
+            catch (e) {}
+            applyDongleCollapse(serial);
+            if (wfOverlayOn) drawWfOverlay();
         }
 
         // ---------- Waterfall hover cursor + click-to-tune ----------
@@ -640,9 +680,11 @@
             card.appendChild(info); card.appendChild(listenBtn);
             col.appendChild(card);
             c = dongleCards[d.id] = {
+                cardEl: card,
                 led, title, sigVal, sigFill, tlCtx: tl.getContext('2d'),
                 hist: [], recLed, recTxt, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
             };
+            applyDongleCollapse(d.id);
             return c;
         }
 
