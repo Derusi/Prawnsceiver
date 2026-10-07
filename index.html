@@ -342,8 +342,19 @@
                     toast('Tune failed: ' + (data.error || res.status), true);
                     sel.value = '';
                 } else {
+                    // Move ALL dongles along: clear per-dongle overrides so
+                    // every dongle rejoins the freshly selected shared
+                    // frequency (only after the tune succeeded — on failure,
+                    // parked dongles stay parked)
+                    try {
+                        const dres = await fetch('/dongles.json');
+                        const dongles = await dres.json();
+                        await Promise.all(dongles
+                            .filter(d => d.manual_frequency_mhz !== null && d.manual_frequency_mhz !== undefined)
+                            .map(d => fetch('/tune_dongle?d=' + encodeURIComponent(d.id) + '&f=auto')));
+                    } catch (e) { /* dongles.json unreachable — overrides survive */ }
                     const b = bandFor(mhz);
-                    toast(`Tuned to ${mhz.toFixed(4)} MHz — ${b ? b.name : 'unknown band'} · 🛰 Auto on this menu resumes tracking`);
+                    toast(`Tuned all dongles to ${mhz.toFixed(4)} MHz — ${b ? b.name : 'unknown band'} · 🛰 Auto on this menu resumes tracking`);
                 }
             } catch (e) {
                 toast('Tune failed: receiver unreachable', true);
