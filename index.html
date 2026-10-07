@@ -744,6 +744,9 @@
                         if (data.length > 0) drawWaterfall(b, data);
                     } catch(e) {}
                 }
+                // the overlay follows per-dongle geometry (recorded
+                // bandwidth, override frequencies) — redraw with the poll
+                if (wfOverlayOn) drawWfOverlay();
             } catch(e) { /* dongles.json unreachable — cards keep last state */ }
         }
 
