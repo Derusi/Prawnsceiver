@@ -6,6 +6,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from . import state
+from .plan import receive_plan, transmitter_status
 from .config import LAT, LON, NOAA_APT_TLE_FILE, TRACKED_SATS, PASS_MIN_ALT, SAT_DSB_FREQ, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
 
 try:
@@ -207,10 +208,12 @@ def passes_to_json(passes):
     """Convert pass list to JSON-serializable format for the API."""
     result = []
     for p in passes:
-        result.append({
+        tuned = SAT_DSB_FREQ.get(p["catnr"], p["frequency"])
+        mode, plan, demod_bw_khz, iq = receive_plan(p["catnr"], p["sat_name"])
+        entry = {
             "sat_name": p["sat_name"],
             "catnr": p["catnr"],
-            "frequency_mhz": round(SAT_DSB_FREQ.get(p["catnr"], p["frequency"]) / 1e6, 4),
+            "frequency_mhz": round(tuned / 1e6, 4),
             "rise_local": (p["rise_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%a %d.%m %H:%M"),
             "culm_local": (p["culm_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%H:%M"),
             "set_local": (p["set_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%H:%M"),
@@ -219,5 +222,20 @@ def passes_to_json(passes):
             "quality": "high" if p["max_alt"] >= 35 else ("medium" if p["max_alt"] >= 15 else "low"),
             "rise_timestamp": p["rise_utc"].timestamp(),
             "set_timestamp": p["set_utc"].timestamp(),
-        })
+            # What to listen to and how it will be decoded (receive plan)
+            "mode": mode,
+            "plan": plan,
+            "iq_recording": iq,
+        }
+        if demod_bw_khz:
+            entry["demod_bw_khz"] = demod_bw_khz
+        tx = transmitter_status(p["catnr"], tuned)
+        if tx:
+            entry["tx"] = {
+                "description": tx.get("description"),
+                "mode": tx.get("mode"),
+                "alive": tx.get("alive"),
+                "downlink_mhz": round(tx["downlink_hz"] / 1e6, 4),
+            }
+        result.append(entry)
     return result

@@ -71,6 +71,12 @@
         .pass-row.high { border-left-color: #53d769; }
         .pass-row.medium { border-left-color: #f39c12; }
         .pass-row.low { border-left-color: #e74c3c; }
+        .pass-mode { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid; border-radius: 3px; font-size: 0.8em; font-weight: bold; vertical-align: middle; }
+        .pass-mode.m-apt { color: #53d769; border-color: #53d769; }
+        .pass-mode.m-lrpt { color: #f39c12; border-color: #f39c12; }
+        .pass-mode.m-dsb { color: #4da6ff; border-color: #4da6ff; }
+        .pass-mode.m-sstv { color: #a8b8d8; border-color: #888; }
+        .pass-mode.tx-dead { color: #e74c3c; border-color: #e74c3c; }
         .pass-sat { font-weight: bold; font-size:1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .pass-time { font-size:1em; color: #a8b8d8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .pass-alt { font-size:1em; text-align: right; }
@@ -1434,8 +1440,15 @@
                     const countdown = isActive ? 'NOW' : (p.rise_timestamp - now > 0 ? 
                         `${Math.floor((p.rise_timestamp - now)/60)}min` : '');
                     const qIcon = p.quality === 'high' ? '🟢' : (p.quality === 'medium' ? '🟡' : '🔴');
-                    html += `<div class="pass-row ${cls}">
-                        <div class="pass-sat">${qIcon} ${p.sat_name}</div>
+                    // Receive plan: what this pass is listened to with and how
+                    // the recording will be decoded (hover for details)
+                    const txDead = p.tx && p.tx.alive === false;
+                    const modeCls = 'pass-mode m-' + (p.mode || 'apt').toLowerCase() + (txDead ? ' tx-dead' : '');
+                    let planTip = p.plan || '';
+                    if (p.tx) planTip += `\nSatNOGS: ${p.tx.description || '?'} [${p.tx.mode || '?'}] ${p.tx.alive === false ? 'inactive' : 'active'} · ${p.tx.downlink_mhz} MHz`;
+                    const modeChip = p.mode ? `<span class="${modeCls}">${p.mode}</span>` : '';
+                    html += `<div class="pass-row ${cls}" title="${escHtml(planTip)}">
+                        <div class="pass-sat">${qIcon} ${p.sat_name} ${modeChip}</div>
                         <div class="pass-time">${p.rise_local} → ${p.set_local}</div>
                         <div class="pass-alt">${p.max_alt}°</div>
                         <div class="pass-freq">${p.frequency_mhz} MHz</div>
