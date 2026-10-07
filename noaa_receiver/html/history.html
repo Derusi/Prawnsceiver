@@ -79,7 +79,7 @@ function render() {
                         + '<button class="danger" onclick="deleteRecording(\'' + esc(rec.filename) + '\')">🗑 Delete</button>'
                         + '<audio controls preload="none"><source src="/audio/' + esc(rec.filename) + '" type="audio/wav"></audio>'
                         + '<div class="result" id="' + rid + '"></div>'
-                        + (img ? '<img class="decoded-img" src="/images/' + esc(img) + '" alt="APT image" onclick="window.open(\'/images/' + esc(img) + '\')" style="cursor:pointer;">' : '');
+                        + (img ? '<img class="decoded-img" src="/thumbs/' + esc(img) + '" alt="APT image" loading="lazy" title="Click to open the full-size image" onclick="window.open(\'/images/' + esc(img) + '\')" style="cursor:pointer;">' : '');
                 }
             } else {
                 html += '<div class="muted" style="padding:4px 0;">' + (h.wav ? 'recording file deleted' : 'no recording on disk') + '</div>';
@@ -102,7 +102,7 @@ function render() {
                     + '<button class="danger" onclick="deleteRecording(\'' + esc(r.filename) + '\')">🗑 Delete</button>'
                     + '<audio controls preload="none"><source src="/audio/' + esc(r.filename) + '" type="audio/wav"></audio>'
                     + '<div class="result" id="' + rid + '"></div>')
-            + (r.png && !r.recording_in_progress ? '<img class="decoded-img" src="/images/' + esc(r.png) + '" alt="APT image">' : '')
+            + (r.png && !r.recording_in_progress ? '<img class="decoded-img" src="/thumbs/' + esc(r.png) + '" alt="APT image" loading="lazy" title="Click to open the full-size image" onclick="window.open(\'/images/' + esc(r.png) + '\')" style="cursor:pointer;">' : '')
             + '</div>';
     }
     utable.innerHTML = uhtml;
@@ -123,7 +123,7 @@ async function decodeRecording(filename) {
         const res = await fetch('/decode/' + filename);
         const data = await res.json();
         if (data.success && resultDiv) {
-            resultDiv.innerHTML = '<span style="color:#53d769;">✅ Decoded!</span>' + qualityBadge(data.quality) + '<img class="decoded-img" src="/images/' + esc(data.png) + '?t=' + Date.now() + '" alt="Decoded APT image">';
+            resultDiv.innerHTML = '<span style="color:#53d769;">✅ Decoded!</span>' + qualityBadge(data.quality) + '<img class="decoded-img" src="/thumbs/' + esc(data.png) + '?t=' + Date.now() + '" alt="Decoded APT image" loading="lazy" title="Click to open the full-size image" onclick="window.open(\'/images/' + esc(data.png) + '\')" style="cursor:pointer;">';
         } else if (resultDiv) {
             resultDiv.innerHTML = '<span style="color:#e74c3c;">❌ ' + esc(data.error || 'Decode failed') + '</span>';
         }

@@ -12,6 +12,7 @@ from .config import AUDIO_RATE, LAT, LON, PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG
 from .decode import decode_recording
 from .history import get_recordings, quality_map, set_recording_quality
 from .pages import CONSOLE_HTML, HISTORY_HTML
+from .thumbs import THUMB_SUFFIX, ensure_thumb
 from .passes import HAS_SKYFIELD, load, passes_to_json, wgs84
 from .quality import estimate_quality
 
@@ -506,6 +507,10 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 if os.path.exists(png_path):
                     os.remove(png_path)
                     deleted.append(os.path.basename(png_path))
+                thumb = png_path[:-4] + THUMB_SUFFIX
+                if os.path.exists(thumb):
+                    os.remove(thumb)
+                    deleted.append(os.path.basename(thumb))
                 state.log_console(f"🗑 Deleted: {', '.join(deleted)}")
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
@@ -535,6 +540,42 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(404)
                 self.end_headers()
                 self.wfile.write(b'Image not found')
+        elif self.path.startswith('/thumbs/'):
+            # Small JPEG preview of a decoded image, generated on first
+            # request and cached next to the PNG (see thumbs.py). The pass
+            # history page loads these instead of the ~10 MB originals.
+            filename = self.path[8:]
+            if '..' in filename or '/' in filename:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'Invalid filename')
+                return
+            if not filename.lower().endswith('.png'):
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b'Image not found')
+                return
+            img_path = os.path.join(RECORD_DIR, filename)
+            if not os.path.exists(img_path):
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b'Image not found')
+                return
+            tpath, err = ensure_thumb(img_path)
+            if tpath is None:
+                # Pillow missing or PNG unreadable — keep the page working
+                # by falling back to the full image
+                state.log_console(f"Thumbnail fallback for {filename}: {err}", "warn")
+                self.send_response(302)
+                self.send_header('Location', '/images/' + filename)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header('Content-type', 'image/jpeg')
+            self.send_header('Cache-Control', 'max-age=3600')
+            self.end_headers()
+            with open(tpath, 'rb') as f:
+                self.wfile.write(f.read())
         else:
             super().do_GET()
     def __init__(self, *args, **kwargs):
