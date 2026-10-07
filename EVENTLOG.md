@@ -126,3 +126,21 @@ Changes made while the user is asleep (all pushed, Pi restarted at
 - Full suite passes on the Pi (test_decode, test_dsp, test_radio,
   test_quality). Receiver restarted, both dongles running, RSS 47 MB,
   armed for the 02:51 pass (runs with these fixes).
+
+### 2026-10-08 01:55 CEST — unattended work: pass-history dedup deployed
+- Pass-end history attribution (a5a9bb2), the last open backlog bug:
+  - history.log_pass merges a second log of the same physical pass
+    (same satellite, rise within 120 s) instead of appending a
+    duplicate — receiver flip-flops between overlapping
+    same-frequency passes and manual-tune re-triggers used to log one
+    pass twice with split decode/peak state.
+  - scheduler attribution now matches recordings by the pass's
+    satellite name prefix and takes only the newest primary fragment
+    (previously a Meteor entry could carry NOAA 18's WAV — seen in the
+    23:01 Meteor-M 2-3 entry).
+  - tests/test_history.py covers merge/different-pass/different-sat.
+  - One-time cleanup on the Pi: existing pass_history.json deduped
+    48 -> 38 entries (backup at pass_history.json.bak2).
+- Receiver restarted again (idle), endpoints fast. Note: earlier
+  timestamps in this log were corrected — the Pi clock runs CEST and
+  the console log stamps are CEST as well.
