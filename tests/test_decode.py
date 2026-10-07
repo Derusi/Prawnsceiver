@@ -62,7 +62,9 @@ assert ok and '-s noaa_15' in args and '-m yes' in args and '-T' not in args, (o
 # stale PNG must not count as success when the decoder fails
 os.environ['FAKE_OK'] = '0'
 wav = touch("NOAA_15_20261007_215400.wav"); stale = wav[:-4] + '.png'; open(stale, 'wb').write(b'old')
-ok, png, err = decode.decode_recording(wav)
+# force: the success marker from the run above must not short-circuit this
+# deliberately-failing re-run of the same file
+ok, png, err = decode.decode_recording(wav, force=True)
 assert not ok and not os.path.exists(stale) and 'sync frames' in err, (ok, err, os.path.exists(stale))
 # Meteor refused without running noaa-apt
 os.remove(log)
