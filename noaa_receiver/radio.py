@@ -334,26 +334,33 @@ def sdr_capture_thread(serial):
                     except Exception:
                         pass
 
-                # Retune when the scheduler moves to another satellite's
-                # frequency (idle park -> pass band, e.g. 137 MHz -> 437 MHz
-                # ISS): one rtl_tcp command on the open stream — the tuner
-                # re-locks in milliseconds and the IQ keeps flowing, so there
-                # is no restart gap and the live audio does not cut out. A
-                # direct pass switch closes the running WAV first so one file
-                # never spans two bands.
                 with state.status_lock:
                     freq_now = state.current_frequency
                     sat_now = state.current_sat_name
                 if serial in state.manual_dongle_freq:
                     freq_now = state.manual_dongle_freq[serial]
-                if freq_now != tuned_freq and (not entry['is_recording'] or sat_now != record_sat):
+                # Retune when the scheduler moves to another satellite's
+                # frequency (idle park -> pass band, e.g. 137 MHz -> 437 MHz
+                # ISS): one rtl_tcp command on the open stream — the tuner
+                # re-locks in milliseconds and the IQ keeps flowing, so there
+                # is no restart gap and the live audio does not cut out.
+                # A pass switch between two satellites SHARING a frequency
+                # (NOAA 19 / Meteor-M 2-3 at 137.1, NOAA 18 / Meteor-M 2-4
+                # at 137.9125) needs no retune, but the running WAV is
+                # closed and reopened so one file never spans two passes.
+                switch_band = freq_now != tuned_freq and (not entry['is_recording'] or sat_now != record_sat)
+                switch_sat = entry['is_recording'] and record_sat is not None and sat_now != record_sat
+                if switch_band or switch_sat:
                     if entry['is_recording']:
                         close_wav()
-                    new_corr = tuning_correction(freq_now, serial)
-                    _rtl_tcp_set(sock, RTL_TCP_SET_FREQ, freq_now + SDR_OFFSET_HZ + new_corr)
-                    entry['correction'], entry['correction_src'] = correction_info(freq_now, serial)
-                    if primary:
-                        state.log_console(f"Retuning (live): {tuned_freq} Hz -> {freq_now} Hz ({sat_now})")
+                    if freq_now != tuned_freq:
+                        new_corr = tuning_correction(freq_now, serial)
+                        _rtl_tcp_set(sock, RTL_TCP_SET_FREQ, freq_now + SDR_OFFSET_HZ + new_corr)
+                        entry['correction'], entry['correction_src'] = correction_info(freq_now, serial)
+                        if primary:
+                            state.log_console(f"Retuning (live): {tuned_freq} Hz -> {freq_now} Hz ({sat_now})")
+                    elif primary:
+                        state.log_console(f"Pass switch on the same frequency: {record_sat} -> {sat_now}")
                     tuned_freq = freq_now
                     record_sat = None
 

@@ -140,6 +140,7 @@ def predict_passes(sats, hours=24):
                         topocentric = (sat - site).at(t[i + 1])
                         alt, az, dist = topocentric.altaz()
                         max_alt = alt.degrees
+                        culm_az = az.degrees
                         if i + 2 < len(events) and events[i + 2] == 2:
                             set_time = t[i + 2].utc_datetime()
                             duration_min = (set_time - rise_time).total_seconds() / 60
@@ -151,6 +152,7 @@ def predict_passes(sats, hours=24):
                         "culm_utc": culm_time,
                         "set_utc": set_time,
                         "max_alt": round(max_alt, 1),
+                        "culm_az": round(culm_az, 1),
                         "duration_min": round(duration_min, 1),
                     })
         except Exception as e:

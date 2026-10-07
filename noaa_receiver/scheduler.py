@@ -28,6 +28,24 @@ def _doppler_hz(sat, freq_hz):
     v_los = (r1 - r0) / 2.0
     return int(round(-v_los / 299792458.0 * freq_hz))
 
+def _reception_score(p):
+    """Heuristic reception quality of a pass at this station.
+
+    Elevation dominates (path loss, horizon obstructions on a balcony). Low
+    passes culminating in the V-dipole's null sectors (east/west — its
+    figure-0 pattern favors north-zenith-south, measured weak here) get a
+    penalty, so a decent meridian pass is preferred over the same-elevation
+    pass on the wrong side of the sky.
+    """
+    alt = p["max_alt"]
+    az = p.get("culm_az")
+    if alt < 35 and az is not None and (60 <= az <= 120 or 240 <= az <= 300):
+        return alt * 0.6
+    return float(alt)
+
+def _same_pass(p, q):
+    return p["sat_name"] == q["sat_name"] and p["rise_utc"] == q["rise_utc"]
+
 def scheduler_thread():
     """Background thread: refresh TLEs, predict passes, trigger frequency switches."""
     sats = {}
@@ -70,23 +88,25 @@ def scheduler_thread():
                 
                 triggered = None
                 if candidates:
-                    iss = [c for c in candidates if c["sat_name"].startswith("ISS")]
-                    if iss:
-                        # ISS always has priority over NOAA when passes overlap
-                        triggered = iss[0]
+                    # Prefer the pass with the best reception chances:
+                    # pick the highest-scoring candidate (elevation, with a
+                    # penalty for low passes in the antenna's null sectors).
+                    # While a pass is running, stick with it unless another
+                    # candidate is clearly better (hysteresis) — overlapping
+                    # passes must not flip the receiver back and forth.
+                    with state.status_lock:
+                        cur = state.current_pass
+                    best = max(candidates, key=_reception_score)
+                    ongoing = None
+                    if cur is not None:
+                        ongoing = next((c for c in candidates if _same_pass(c, cur)), None)
+                    if ongoing is not None:
+                        if _reception_score(best) > _reception_score(ongoing) + 20:
+                            triggered = best
+                        else:
+                            triggered = ongoing
                     else:
-                        # Stick with the ongoing pass while its window is open, so
-                        # overlapping passes don't flip the receiver back and forth
-                        with state.status_lock:
-                            cur = state.current_pass
-                        if cur is not None:
-                            for c in candidates:
-                                if c["sat_name"] == cur["sat_name"] and c["rise_utc"] == cur["rise_utc"]:
-                                    triggered = c
-                                    break
-                        # New pass window: take the highest-elevation candidate
-                        if triggered is None:
-                            triggered = max(candidates, key=lambda p: p["max_alt"])
+                        triggered = best
                 
                 # Manual tune mode (FM radio test): the operator controls the
                 # frequency — no satellite switching, no recording. An ongoing
