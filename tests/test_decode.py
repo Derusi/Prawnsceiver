@@ -77,7 +77,7 @@ ok, png, err = decode.decode_recording(touch("ISS_(Zarya)_20261007_215400.wav"))
 assert not ok and 'sstv' in err.lower(), err
 # missing binary: clean error
 os.environ['PATH'] = '/nonexistent'; decode.NOAA_APT_DIR = '/nonexistent'
-ok, png, err = decode.decode_recording(touch("NOAA_15_20261007_215400.wav"))
+ok, png, err = decode.decode_recording(touch("NOAA_15_20261007_215400.wav"), force=True)
 assert not ok and 'could not be run' in err, err
 print("decode_recording paths OK")
 
