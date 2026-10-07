@@ -68,7 +68,15 @@ receiver was OOM-killed once at ~00:48 with 2.4 GB).
   markers missing (OOM risk at pass-end decode loops of old ISS WAVs);
   estimate_quality always 0%; pass-end attribution may duplicate history
   entries.
-- Cron schedule for this watch: see bottom of this file.
+- Cron schedule for this watch (verify after each pass, append entries):
+  - 03:06 CEST — 02:51 Meteor-M 2-4 LRPT pass (id f5f22472)
+  - 04:45 CEST — 04:29 Meteor-M 2-4 LRPT 80.8° headline pass (id a7fca383)
+  - 06:25 CEST — 06:10 Meteor-M 2-4 LRPT pass (id ef3f8fa6)
+  - 07:35 CEST — 07:23 NOAA 15 APT pass, first image chance (id e6ffffae)
+  - 09:15 CEST — 09:02 NOAA 15 APT 54° pass, best image chance (id 5fa7237a)
+  - 10:40 CEST — morning wrap-up + block recheck (id e96e0bcc)
+  Crons fire only while the session is live and idle; if a slot was
+  missed, run that check manually on resume.
 
 ## Entries
 
