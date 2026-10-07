@@ -163,13 +163,16 @@ def scheduler_thread():
                     cur = state.current_pass
                 if cur is not None and HAS_SKYFIELD and cur.get("sat") is not None:
                     try:
-                        state.doppler_freq_hz = cur["frequency"]
-                        state.doppler_hz = _doppler_hz(cur["sat"], cur["frequency"])
+                        dop = _doppler_hz(cur["sat"], cur["frequency"])
+                        with state.status_lock:
+                            state.doppler_freq_hz = cur["frequency"]
+                            state.doppler_hz = dop
                     except Exception as e:
                         state.log_console(f"Doppler computation failed: {e}", "error")
                 elif state.doppler_hz:
-                    state.doppler_hz = 0
-                    state.doppler_freq_hz = 0
+                    with state.status_lock:
+                        state.doppler_hz = 0
+                        state.doppler_freq_hz = 0
 
                 if finished_pass is not None:
                     # Wait for the capture threads to finalize their WAVs, then
@@ -187,7 +190,7 @@ def scheduler_thread():
                         active_wav = state.current_wav_path
                     if active_wav:
                         recordings = [r for r in recordings if os.path.abspath(r) != os.path.abspath(active_wav)]
-                    dongle_suffixes = tuple(f"_{sn}.wav" for sn in state.sdrs)
+                    dongle_suffixes = tuple(f"_{sn}.wav" for sn in list(state.sdrs))
                     for latest in recordings:
                         if os.path.getmtime(latest) < pass_start_ts:
                             break  # sorted newest-first: older files belong to earlier passes

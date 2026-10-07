@@ -31,6 +31,7 @@ from .config import (AUDIO_RATE, DOPPLER_APPLY_RANGE_HZ, DECIMATION, FFT_SIZE,
                      IQ_BLOCK, LOGDIR, RECORD_DIR, RTL_LOG, SDR_GAIN,
                      SDR_OFFSET_HZ, SDR_RATE, WATERFALL_ROWS)
 
+from .decode import sat_short_name
 from .dsp import doppler_shift, fm_demodulate, frequency_shift, iq_to_complex, new_state
 
 # Waterfall/signal FFT cadence: compute the FFT only every Nth IQ block. The
@@ -38,6 +39,9 @@ from .dsp import doppler_shift, fm_demodulate, frequency_shift, iq_to_complex, n
 # oversampled. At full block rate the FFT + row conversion (~1 ms/block on
 # the Pi) starved the demod once two dongles were attached.
 FFT_EVERY = 8
+
+# Retry interval for a WAV that could not be opened/written (disk full etc.)
+WAV_RETRY_SECS = 10.0
 
 _fft_window = None
 
@@ -49,24 +53,24 @@ def _get_fft_window():
         _fft_window = np.hamming(FFT_SIZE)
     return _fft_window
 
-def _rtl_pll_failed(proc):
+def _rtl_pll_failed(log_path):
     """True if the tuner logged 'PLL not locked' since the log was truncated.
 
+    Checked once from the capture loop a few seconds after rtl_tcp started
+    (not by sleeping before the loop: every second spent waiting is a
+    second of IQ backlog in rtl_tcp's buffers, i.e. live-audio lag).
     Note: on some R820T dongles this lock bit is unreliable — the tuner
     receives fine while never confirming lock. The receiver therefore only
     warns and keeps running; the per-frequency mistune that such dongles
     show is handled per dongle by SDR_DONGLE_CORRECTIONS.
     """
-    deadline = time.time() + 3.0
-    while time.time() < deadline and proc.poll() is None:
-        time.sleep(0.5)
-        try:
-            with open(RTL_LOG, 'r', errors='replace') as f:
-                if 'PLL not locked' in f.read():
-                    return True
-        except OSError:
-            return False
-    return False
+    try:
+        with open(log_path, 'r', errors='replace') as f:
+            return 'PLL not locked' in f.read()
+    except OSError:
+        return False
+
+PLL_CHECK_AFTER_SECS = 3.0
 
 # ---------- rtl_tcp control protocol ----------
 # rtl_tcp exposes a dongle over TCP: a continuous IQ stream plus a tiny
@@ -76,8 +80,27 @@ def _rtl_pll_failed(proc):
 RTL_TCP_SET_FREQ = 0x01
 
 def _rtl_tcp_set(sock, cmd, value):
-    """Send one rtl_tcp control command."""
+    """Send one rtl_tcp control command: 1 byte command + uint32 big-endian
+    ('!BI' is network byte order, standard sizes, no padding: 5 bytes)."""
+    value = int(value)
+    if not 0 <= value <= 0xFFFFFFFF:
+        raise ValueError(f'rtl_tcp command value out of range: {value}')
     sock.sendall(struct.pack('!BI', cmd, value))
+
+def _port_in_use(port):
+    """True if something already accepts connections on 127.0.0.1:port.
+
+    Checked right before spawning rtl_tcp: a stale rtl_tcp (or anything
+    else) on the port would make our child fail to bind and exit while the
+    capture loop happily reads the FOREIGN stream — the post-handshake
+    liveness check cannot catch that reliably, because connect() succeeds
+    before our child has even tried to bind.
+    """
+    try:
+        with socket.create_connection(('127.0.0.1', port), timeout=0.5):
+            return True
+    except OSError:
+        return False
 
 def kill_stale_rtl_tcp():
     """Kill rtl_tcp processes left over from a previous server run.
@@ -91,8 +114,10 @@ def kill_stale_rtl_tcp():
     """
     try:
         # -9: rtl_tcp traps SIGTERM and only exits its poll loop later —
-        # a streaming rtl_tcp reliably ignores plain SIGTERM (verified live)
-        r = subprocess.run(['pkill', '-9', '-f', 'rtl_tcp'], capture_output=True)
+        # a streaming rtl_tcp reliably ignores plain SIGTERM (verified live).
+        # -x: match the process name exactly, not any command line that
+        # merely mentions rtl_tcp (an editor, a grep, this server's logs).
+        r = subprocess.run(['pkill', '-9', '-x', 'rtl_tcp'], capture_output=True)
         if r.returncode == 0:
             time.sleep(1.0)   # let the kernel release the devices and ports
             state.log_console("Killed stale rtl_tcp processes from a previous run", "warn")
@@ -100,7 +125,7 @@ def kill_stale_rtl_tcp():
         pass   # pkill not available (non-Linux) — capture threads will surface any conflict
 
 def _recv_exact(sock, n):
-    """Read exactly n bytes from the IQ stream; None when the stream ends."""
+    """Read exactly n bytes from the socket; None when the stream ends."""
     buf = b''
     while len(buf) < n:
         chunk = sock.recv(n - len(buf))
@@ -108,6 +133,34 @@ def _recv_exact(sock, n):
             return None
         buf += chunk
     return buf
+
+class _IQReader:
+    """Block reader for the rtl_tcp IQ stream.
+
+    One recv() takes whatever has arrived (up to `chunk` bytes — it does
+    not wait for the chunk to fill, so no latency is added) and the capture
+    loop slices IQ_BLOCK-sized blocks off it: ~16x fewer syscalls than one
+    recv() per 1 kB block. read_block() returns None when the stream ends.
+    """
+    def __init__(self, sock, block, chunk=65536):
+        self.sock, self.block, self.chunk = sock, block, chunk
+        self.buf, self.pos = b'', 0
+
+    def read_block(self):
+        buf, pos, block = self.buf, self.pos, self.block
+        if len(buf) - pos < block:
+            buf = buf[pos:]
+            while len(buf) < block:
+                data = self.sock.recv(self.chunk)
+                if not data:
+                    return None
+                buf += data
+            pos = 0
+            self.buf = buf
+        self.pos = pos + block
+        return buf[pos:pos + block]
+
+_dup_serial_warned = set()
 
 def enumerate_dongles():
     """Detect attached RTL-SDR dongles and register them in state.sdrs,
@@ -147,6 +200,9 @@ def enumerate_dongles():
             state.log_console("Dongle without a serial found — cannot pin it across replugs, skipping", "warn")
             continue
         if serial in state.sdrs:
+            if serials.count(serial) > 1 and serial not in _dup_serial_warned:
+                _dup_serial_warned.add(serial)
+                state.log_console(f"Several dongles report serial {serial} — only one can be driven (rtl_tcp -d picks the first); give each a unique serial with rtl_eeprom -s", "warn")
             continue
         primary = serial == state.primary_serial
         if primary:
@@ -202,8 +258,8 @@ def sdr_thread():
 
 def sdr_capture_thread(serial):
     """Capture loop for one dongle (pinned by serial via rtl_tcp -d):
-    rtl_tcp IQ stream → FFT waterfall (+ FM demod, WAV recording during
-    passes on the primary dongle)."""
+    rtl_tcp IQ stream → FFT waterfall + FM demod + live audio; WAV
+    recording during passes (every dongle records its own file)."""
     import numpy as np
     entry = state.sdrs[serial]
     primary = entry['primary']
@@ -212,25 +268,64 @@ def sdr_capture_thread(serial):
     os.makedirs(RECORD_DIR, exist_ok=True)
     rtl_log_f = open(rtl_log_path, 'w')
     pll_warned = False
-    # This dongle's own DSP chain state — demod filters must not share state
-    # across the concurrently demodulating capture threads
+    # This dongle's own DSP chain state — demod filters, rotator and NCO
+    # phases must not be shared across the concurrently demodulating threads
     dst = new_state()
     restart_backoff = 5.0
+    # Recording failures (disk full, permissions) must not take the receiver
+    # down: the WAV open is retried at most every WAV_RETRY_SECS
+    wav_retry_at = 0.0
+
+    def set_primary_recording(path):
+        if primary:
+            with state.status_lock:
+                state.current_wav = None
+                state.current_wav_path = path
+                state.is_recording = path is not None
 
     def close_wav():
-        """Finish this dongle's current WAV (pass end or band switch)."""
-        try:
-            entry['wav'].close()
-            state.log_console(f"🎬 Recording stopped (dongle {serial}): {entry['wav_path']}")
-        except Exception as e:
-            state.log_console(f"WAV close error (dongle {serial}): {e}", "error")
+        """Finish this dongle's current WAV (pass end, band or pass switch)."""
+        wav, path = entry['wav'], entry['wav_path']
         entry['wav'] = None
         entry['wav_path'] = None
         entry['is_recording'] = False
-        if primary:
-            state.current_wav = None
-            state.current_wav_path = None
-            state.is_recording = False
+        set_primary_recording(None)
+        if wav is None:
+            return
+        try:
+            wav.close()
+            state.log_console(f"🎬 Recording stopped (dongle {serial}): {path}")
+        except Exception as e:
+            state.log_console(f"WAV close error (dongle {serial}): {e}", "error")
+
+    def open_wav(sat_name):
+        """Start a WAV for sat_name; returns False (and arms the retry
+        timer) if the file cannot be opened."""
+        nonlocal wav_retry_at
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = "" if primary else f"_{serial}"
+        path = os.path.join(RECORD_DIR, f"{sat_short_name(sat_name)}_{timestamp}{suffix}.wav")
+        # Never overwrite: a WAV split and reopened within the same second
+        # (fast A -> B -> A pass switch) gets the same timestamp
+        n = 1
+        while os.path.exists(path):
+            n += 1
+            path = os.path.join(RECORD_DIR, f"{sat_short_name(sat_name)}_{timestamp}-{n}{suffix}.wav")
+        try:
+            wav = wave.open(path, 'wb')
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(AUDIO_RATE)
+        except Exception as e:
+            wav_retry_at = time.time() + WAV_RETRY_SECS
+            state.log_console(f"Cannot open recording {path} (dongle {serial}): {e} — retrying in {WAV_RETRY_SECS:.0f}s", "error")
+            return False
+        entry['wav'] = wav
+        entry['wav_path'] = path
+        entry['is_recording'] = True
+        set_primary_recording(path)
+        state.log_console(f"🎬 Recording started (dongle {serial}): {path}")
+        return True
 
     while True:
         run_started = time.time()
@@ -238,13 +333,14 @@ def sdr_capture_thread(serial):
         sock = None
         try:
             with state.status_lock:
-                tune_target = state.manual_dongle_freq.get(serial) or state.current_frequency
-            correction = tuning_correction(tune_target, serial)
+                tuned_freq = state.manual_dongle_freq.get(serial, state.current_frequency)
+            correction = tuning_correction(tuned_freq, serial)
             # shown in the dongle cards' tuning infobox
-            entry['correction'], entry['correction_src'] = correction_info(tune_target, serial)
-            freq_str = f"{tune_target + SDR_OFFSET_HZ + correction}"
-            tuned_freq = tune_target
+            entry['correction'], entry['correction_src'] = correction_info(tuned_freq, serial)
+            freq_str = f"{tuned_freq + SDR_OFFSET_HZ + correction}"
             record_sat = None
+            if _port_in_use(entry['port']):
+                raise RuntimeError(f'port {entry["port"]} is already in use (stale rtl_tcp? another server?) — not starting rtl_tcp for dongle {serial}')
             # Fresh log per rtl_tcp start so the PLL check below only sees
             # messages from the process it is validating
             rtl_log_f.seek(0)
@@ -274,6 +370,9 @@ def sdr_capture_thread(serial):
                     time.sleep(0.2)
             if sock is None:
                 raise RuntimeError(f'rtl_tcp did not open port {entry["port"]}')
+            # The IQ stream delivers a block every ~2 ms; 30 s of silence is
+            # a dead stream (same threshold as the stall watchdog in
+            # sdr_thread — whichever fires first, the result is a restart).
             sock.settimeout(30)
             header = _recv_exact(sock, 12)
             if header is None or header[:4] != b'RTL0':
@@ -284,23 +383,50 @@ def sdr_capture_thread(serial):
                 # serving that port — do NOT silently use the foreign
                 # stream; restart loudly instead.
                 raise RuntimeError('rtl_tcp exited immediately (port conflict? device busy?)')
+            tuner_type, gain_count = struct.unpack('!II', header[4:12])
             if primary:
                 state.rtl_sdr_proc = proc
-                state.log_console(f"rtl_tcp started (pid {proc.pid}, primary dongle {serial}), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ + correction}Hz, DC spike displaced), gain={SDR_GAIN}dB")
-                if _rtl_pll_failed(proc) and not pll_warned:
-                    pll_warned = True
-                    state.log_console("R820T PLL lock not confirmed — continuing anyway (lock bit unreliable on this dongle, mistune handled per dongle via SDR_DONGLE_CORRECTIONS)", "warn")
+                state.log_console(f"rtl_tcp started (pid {proc.pid}, primary dongle {serial}, tuner type {tuner_type}, {gain_count} gain steps), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ + correction}Hz, DC spike displaced), gain={SDR_GAIN}dB")
             else:
-                state.log_console(f"rtl_tcp started (pid {proc.pid}, dongle {serial}), tuned {freq_str}Hz")
+                state.log_console(f"rtl_tcp started (pid {proc.pid}, dongle {serial}, tuner type {tuner_type}), tuned {freq_str}Hz")
+            pll_check_at = None if pll_warned else time.time() + PLL_CHECK_AFTER_SECS
             last_history_append = 0.0
+            last_proc_check = time.time()
             block_count = 0
+            reader = _IQReader(sock, IQ_BLOCK)
 
             while True:
-                raw = _recv_exact(sock, IQ_BLOCK)
+                raw = reader.read_block()
                 if raw is None:
                     state.log_console(f"rtl_tcp stream ended (dongle {serial}), restarting...", "warn")
                     break
-                entry['last_data'] = time.time()
+                now_ts = time.time()
+                entry['last_data'] = now_ts
+                if now_ts - last_proc_check >= 1.0:
+                    last_proc_check = now_ts
+                    if proc.poll() is not None:
+                        # Data keeps flowing although OUR rtl_tcp is gone:
+                        # the socket is connected to a foreign listener on
+                        # this port (see _port_in_use) — never use it.
+                        raise RuntimeError(f'rtl_tcp (pid {proc.pid}) exited but port {entry["port"]} still streams — foreign rtl_tcp on this port')
+                    if pll_check_at is not None and now_ts >= pll_check_at:
+                        pll_check_at = None
+                        if _rtl_pll_failed(rtl_log_path):
+                            pll_warned = True
+                            state.log_console(f"Dongle {serial}: R820T PLL lock not confirmed — continuing anyway (lock bit unreliable on this dongle, mistune handled per dongle via SDR_DONGLE_CORRECTIONS)", "warn")
+
+                # One consistent snapshot of the scheduler's state per block.
+                # Reading the frequency, satellite name and pass flag in
+                # separate lock sections let a pass switch land between
+                # them — the WAV then got the NEW satellite's name while the
+                # dongle stayed on the OLD frequency, and the retune test
+                # below never fired again for that pass.
+                with state.status_lock:
+                    override = serial in state.manual_dongle_freq
+                    freq_now = state.manual_dongle_freq.get(serial, state.current_frequency)
+                    sat_now = state.current_sat_name
+                    pass_active = state.is_pass_active
+                    dop_hz, dop_freq = state.doppler_hz, state.doppler_freq_hz
 
                 # Offset-shift the baseband once: satellite to 0 Hz, DC spike
                 # displaced to +SDR_OFFSET_HZ. Shared by waterfall FFT and demod.
@@ -309,12 +435,13 @@ def sdr_capture_thread(serial):
 
                 # Live Doppler correction (scheduler-computed during passes):
                 # rotate the satellite's Doppler-drifted carrier into the demod
-                # center in software — retuning rtl_sdr would need a restart
-                # and gap the recording. Applied only when this dongle's
-                # target is near the tracked satellite frequency.
-                if (state.doppler_hz
-                        and abs(tune_target - state.doppler_freq_hz) < DOPPLER_APPLY_RANGE_HZ):
-                    c = doppler_shift(c, state.doppler_hz, SDR_RATE, dst)
+                # center in software. Applied only while THIS dongle's current
+                # tune (tuned_freq — not the frequency it started on) is near
+                # the tracked satellite's frequency; otherwise the NCO runs at
+                # 0 Hz, which keeps its phase instead of dropping it.
+                if abs(tuned_freq - dop_freq) >= DOPPLER_APPLY_RANGE_HZ:
+                    dop_hz = 0
+                c = doppler_shift(c, dop_hz, SDR_RATE, dst)
 
                 # FFT for waterfall + signal strength, every FFT_EVERY-th
                 # block (see FFT_EVERY — CPU budget, not display needs)
@@ -327,19 +454,17 @@ def sdr_capture_thread(serial):
                             fft_result = np.fft.fftshift(np.fft.fft(windowed))
                             magnitude = np.abs(fft_result)
                             center = len(magnitude) // 2
-                            band = magnitude[center-10:center+10].mean()
+                            band = float(magnitude[center-10:center+10].mean())
                             with entry['lock']:
-                                entry['signal'] = float(band)
+                                entry['signal'] = band
                             if primary:
                                 with state.signal_lock:
-                                    state.signal_strength = float(band)
-                                    if state.is_recording:
-                                        state.pass_signal_peak = max(state.pass_signal_peak, state.signal_strength)
-                                now_ts = time.time()
-                                if now_ts - last_history_append >= 1.0:
-                                    last_history_append = now_ts
-                                    with state.signal_lock:
-                                        state.signal_history.append(float(band))
+                                    state.signal_strength = band
+                                    if entry['is_recording']:
+                                        state.pass_signal_peak = max(state.pass_signal_peak, band)
+                                    if now_ts - last_history_append >= 1.0:
+                                        last_history_append = now_ts
+                                        state.signal_history.append(band)
                             # The DC spike at +SDR_OFFSET_HZ is a fixed tuner
                             # artifact (the FC0013's saturates at 7x its
                             # strongest signal). Blank it to the noise level
@@ -352,72 +477,52 @@ def sdr_capture_thread(serial):
                             spike = center + int(SDR_OFFSET_HZ / bin_hz)
                             lo, hi = max(spike - 8, 0), min(spike + 9, len(magnitude))
                             magnitude[lo:hi] = np.median(magnitude)
-                            if magnitude.max() > 0:
-                                magnitude = magnitude / magnitude.max() * 255
+                            peak = magnitude.max()
+                            if peak > 0:
+                                magnitude *= 255.0 / peak
                             row = magnitude.astype(int).tolist()
                             with entry['lock']:
                                 entry['waterfall'].append(row)
                     except Exception:
                         pass
 
-                with state.status_lock:
-                    freq_now = state.current_frequency
-                    sat_now = state.current_sat_name
-                if serial in state.manual_dongle_freq:
-                    freq_now = state.manual_dongle_freq[serial]
-                # Retune when the scheduler moves to another satellite's
-                # frequency (idle park -> pass band, e.g. 137 MHz -> 437 MHz
-                # ISS): one rtl_tcp command on the open stream — the tuner
-                # re-locks in milliseconds and the IQ keeps flowing, so there
-                # is no restart gap and the live audio does not cut out.
-                # A pass switch between two satellites SHARING a frequency
-                # (NOAA 19 / Meteor-M 2-3 at 137.1, NOAA 18 / Meteor-M 2-4
-                # at 137.9125) needs no retune, but the running WAV is
-                # closed and reopened so one file never spans two passes.
-                switch_band = freq_now != tuned_freq and (not entry['is_recording'] or sat_now != record_sat)
-                switch_sat = entry['is_recording'] and record_sat is not None and sat_now != record_sat
+                # Retune when this dongle's target frequency changes (idle
+                # park -> pass band, e.g. 137 MHz -> 437 MHz ISS; a manual
+                # override set or cleared): one rtl_tcp command on the open
+                # stream — the tuner re-locks in milliseconds and the IQ
+                # keeps flowing, so there is no restart gap and the live
+                # audio does not cut out. A running WAV is closed first so
+                # one file never spans two bands. A pass switch between two
+                # satellites SHARING a frequency (NOAA 19 / Meteor-M 2-3 at
+                # 137.1, NOAA 18 / Meteor-M 2-4 at 137.9125) needs no
+                # retune, but the WAV is closed and reopened all the same so
+                # one file never spans two passes.
+                switch_band = freq_now != tuned_freq
+                switch_sat = entry['is_recording'] and sat_now != record_sat
                 if switch_band or switch_sat:
                     if entry['is_recording']:
                         close_wav()
-                    if freq_now != tuned_freq:
+                    if switch_band:
                         new_corr = tuning_correction(freq_now, serial)
                         _rtl_tcp_set(sock, RTL_TCP_SET_FREQ, freq_now + SDR_OFFSET_HZ + new_corr)
                         entry['correction'], entry['correction_src'] = correction_info(freq_now, serial)
                         if primary:
                             state.log_console(f"Retuning (live): {tuned_freq} Hz -> {freq_now} Hz ({sat_now})")
+                        tuned_freq = freq_now
                     elif primary:
                         state.log_console(f"Pass switch on the same frequency: {record_sat} -> {sat_now}")
-                    tuned_freq = freq_now
                     record_sat = None
 
                 # Record to WAV during passes — every dongle records its own
                 # file (suffixed with its serial); the primary additionally
                 # mirrors its state into the legacy globals used by the
-                # status/handler/scheduler.
-                should_record = False
-                with state.status_lock:
-                    # A dongle with a manual frequency override is parked on
-                    # the operator's frequency — recording it would fill a
-                    # satellite-named WAV with the wrong band
-                    should_record = (state.is_pass_active
-                                      and serial not in state.manual_dongle_freq)
-
+                # status/handler/scheduler. A dongle with a manual frequency
+                # override is parked on the operator's frequency — recording
+                # it would fill a satellite-named WAV with the wrong band.
+                should_record = pass_active and not override
                 if should_record and not entry['is_recording']:
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    sat_short = state.current_sat_name.replace(" ", "_").replace("(idle)", "idle")
-                    record_sat = state.current_sat_name
-                    suffix = "" if primary else f"_{serial}"
-                    entry['wav_path'] = os.path.join(RECORD_DIR, f"{sat_short}_{timestamp}{suffix}.wav")
-                    entry['wav'] = wave.open(entry['wav_path'], 'wb')
-                    entry['wav'].setnchannels(1)
-                    entry['wav'].setsampwidth(2)
-                    entry['wav'].setframerate(AUDIO_RATE)
-                    entry['is_recording'] = True
-                    if primary:
-                        state.current_wav_path = entry['wav_path']
-                        state.is_recording = True
-                    state.log_console(f"🎬 Recording started (dongle {serial}): {entry['wav_path']}")
-
+                    if now_ts >= wav_retry_at and open_wav(sat_now):
+                        record_sat = sat_now
                 elif not should_record and entry['is_recording']:
                     close_wav()
 
@@ -435,28 +540,30 @@ def sdr_capture_thread(serial):
                     audio = b''
                 if audio:
                     state.push_live_audio(entry, audio)
-
-                if entry['is_recording'] and entry['wav']:
-                    try:
-                        if audio:
+                    if entry['wav'] is not None:
+                        try:
                             entry['wav'].writeframes(audio)
-                    except Exception as e:
-                        state.log_console(f"WAV write error (dongle {serial}): {e}", "error")
+                        except Exception as e:
+                            # Disk full etc.: stop this file instead of
+                            # logging 469 errors/s; the open is retried
+                            # after WAV_RETRY_SECS while the pass lasts
+                            state.log_console(f"WAV write error (dongle {serial}): {e} — closing {entry['wav_path']}", "error")
+                            close_wav()
+                            wav_retry_at = now_ts + WAV_RETRY_SECS
 
         except Exception as e:
             state.log_console(f"SDR thread error (dongle {serial}): {e}", "error")
-        try: proc.kill()
-        except: pass
+        if proc is not None:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)   # reap it, and be sure the dongle/port are released before the restart
+            except Exception:
+                pass
         if sock is not None:
             try: sock.close()
             except: pass
-        if entry['wav']:
-            close_wav()
-        if primary:
-            state.current_wav = None
-            state.current_wav_path = None
-            state.is_recording = False
-        # Backoff when rtl_sdr keeps dying immediately (dongle unplugged,
+        close_wav()
+        # Backoff when rtl_tcp keeps dying immediately (dongle unplugged,
         # flaky USB): 5 s doubling up to 60 s; reset after a stable run
         if time.time() - run_started >= 30:
             restart_backoff = 5.0

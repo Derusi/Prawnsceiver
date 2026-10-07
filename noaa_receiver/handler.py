@@ -299,8 +299,11 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             if f in ('', 'auto'):
                 with state.status_lock:
                     state.manual_frequency = None
-                    state.current_frequency = 137620000
-                    state.current_sat_name = "NOAA 15 (idle)"
+                    # During a pass the scheduler owns the frequency: parking
+                    # here would record the idle band under the pass's name
+                    if not state.is_pass_active:
+                        state.current_frequency = 137620000
+                        state.current_sat_name = "NOAA 15 (idle)"
                 state.log_console("🛰 Manual tune off — satellite tracking resumed")
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
@@ -356,7 +359,8 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "error": "Unknown dongle"}).encode())
                 return
             if f in ('', 'auto', 'sync'):
-                state.manual_dongle_freq.pop(dev, None)
+                with state.status_lock:
+                    state.manual_dongle_freq.pop(dev, None)
                 state.log_console(f"🎛 Dongle {dev} frequency override cleared — back to the shared frequency")
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
@@ -378,7 +382,8 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": "Frequency out of R820T range (24-1766 MHz)"}).encode())
                 return
-            state.manual_dongle_freq[dev] = int(round(mhz * 1e6))
+            with state.status_lock:
+                state.manual_dongle_freq[dev] = int(round(mhz * 1e6))
             state.log_console(f"🎛 Dongle {dev} frequency override: {mhz:.4f} MHz")
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
