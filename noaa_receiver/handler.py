@@ -81,6 +81,7 @@ def get_status():
         status["current_pass"] = {
             "sat_name": cur_pass["sat_name"],
             "catnr": cur_pass["catnr"],
+            "dsb": cur_pass.get("catnr") in SAT_DSB_FREQ,
             "frequency_mhz": round(cur_pass["frequency"] / 1e6, 4),
             "max_alt": cur_pass["max_alt"],
             "set_local": (cur_pass["set_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%H:%M"),
@@ -94,6 +95,7 @@ def get_status():
         if p["rise_utc"] > now:
             status["next_pass"] = {
                 "sat_name": p["sat_name"],
+                "dsb": p.get("catnr") in SAT_DSB_FREQ,
                 "frequency_mhz": round(SAT_DSB_FREQ.get(p.get("catnr"), p["frequency"]) / 1e6, 4),
                 "rise_local": (p["rise_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%a %d.%m %H:%M"),
                 "max_alt": p["max_alt"],

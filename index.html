@@ -852,15 +852,19 @@
                 bwKhz = dmeta.manual_bw_khz;
             } else {
                 const c = (block.centerMHz !== null && block.centerMHz !== undefined) ? block.centerMHz : lastSharedMHz;
-                bwKhz = (c !== null && c >= 87.5 && c <= 108) ? 120 : 22;
+                bwKhz = autoDemodKhz(c);
             }
 
-            // APT signal band: FM deviation ±17.5 kHz around the target center
+            // Expected signal band at the target center: ±17.5 kHz APT FM
+            // deviation on image satellites; the DSB stream is narrowband
+            // (~2-3 kHz) on DSB-received satellites
+            const sigHalf = (satTrackInfo && satTrackInfo.dsb) ? 2.5 : 17.5;
+            const sigName = (satTrackInfo && satTrackInfo.dsb) ? 'DSB stream ~\u00b12.5 kHz' : 'APT signal \u00b117.5 kHz';
             ctx.fillStyle = 'rgba(83, 215, 105, 0.08)';
-            ctx.fillRect(x(-17.5), 0, x(17.5) - x(-17.5), h);
+            ctx.fillRect(x(-sigHalf), 0, x(sigHalf) - x(-sigHalf), h);
             ctx.strokeStyle = 'rgba(83, 215, 105, 0.5)';
             ctx.setLineDash([]);
-            for (const k of [-17.5, 17.5]) {
+            for (const k of [-sigHalf, sigHalf]) {
                 ctx.beginPath(); ctx.moveTo(x(k), 0); ctx.lineTo(x(k), h); ctx.stroke();
             }
 
@@ -900,7 +904,7 @@
             }
 
             // Labels (only what is inside the visible window)
-            if (inView(0)) wfOverlayLabel(ctx, x(0), 44, 'APT signal ±17.5 kHz', '#53d769');
+            if (inView(0)) wfOverlayLabel(ctx, x(0), 44, sigName, '#53d769');
             if (bwKhz < 120) {
                 if (inView(-bwKhz)) wfOverlayLabel(ctx, x(-bwKhz) + 6, 16, '◄ recorded ±' + bwKhz + ' kHz', '#f39c12', 'left');
                 if (inView(bwKhz)) wfOverlayLabel(ctx, x(bwKhz) - 6, 16, 'recorded ±' + bwKhz + ' kHz ►', '#f39c12', 'right');
@@ -946,6 +950,15 @@
         // Satellite downlink marker target: the ACTIVE pass's frequency, or
         // the next upcoming one when idle (from status.json)
         let satTrackInfo = null;
+        // Auto demod width for a dongle WITHOUT a manual override:
+        // 120 kHz on broadcast FM tunes, 6 kHz on a DSB receive frequency
+        // (narrowband digital stream), else the 22 kHz satellite default
+        function autoDemodKhz(centerMHz) {
+            if (centerMHz !== null && centerMHz >= 87.5 && centerMHz <= 108) return 120;
+            if (satTrackInfo && satTrackInfo.dsb && centerMHz !== null
+                    && Math.abs(centerMHz - satTrackInfo.freqMHz) < 0.0005) return 6;
+            return 22;
+        }
         let satRecHighlight = false;  // recording-band label shown (dedupe)
 
         // Effective MHz of a dongle: its manual override, else the shared one
@@ -1199,8 +1212,7 @@
                 if (selActive) {
                     let selBwKhz = d.manual_bw_khz;
                     if (selBwKhz === null || selBwKhz === undefined) {
-                        const effC = curDongleMHz(d.id);
-                        selBwKhz = (effC !== null && effC >= 87.5 && effC <= 108) ? 120 : 22;
+                        selBwKhz = autoDemodKhz(curDongleMHz(d.id));
                     }
                     const p1 = Math.max(0, wfKhzToPct(wfB, -selBwKhz));
                     const p2 = Math.min(100, wfKhzToPct(wfB, selBwKhz));
@@ -1335,9 +1347,9 @@
                 // Satellite marker target: the active pass's downlink, or
                 // the next upcoming pass when idle
                 if (data.pass_active && data.current_pass) {
-                    satTrackInfo = { name: data.current_pass.sat_name, freqMHz: data.current_pass.frequency_mhz, active: true };
+                    satTrackInfo = { name: data.current_pass.sat_name, freqMHz: data.current_pass.frequency_mhz, active: true, dsb: !!data.current_pass.dsb };
                 } else if (data.next_pass) {
-                    satTrackInfo = { name: data.next_pass.sat_name, freqMHz: data.next_pass.frequency_mhz, active: false };
+                    satTrackInfo = { name: data.next_pass.sat_name, freqMHz: data.next_pass.frequency_mhz, active: false, dsb: !!data.next_pass.dsb };
                 } else {
                     satTrackInfo = null;
                 }

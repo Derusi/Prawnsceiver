@@ -28,7 +28,8 @@ from . import state
 from .calibration import (FM_BAND, PRIMARY_DONGLE_SN, correction_info,
                           tuning_correction)
 from .config import (AUDIO_RATE, DOPPLER_APPLY_RANGE_HZ, DECIMATION, FFT_SIZE,
-                     IQ_BLOCK, LOGDIR, RECORD_DIR, RTL_LOG, SDR_GAIN,
+                     IQ_BLOCK, LOGDIR, RECORD_DIR, RTL_LOG, SAT_DSB_DEMOD_BW_HZ,
+                     SAT_DSB_FREQ, SDR_GAIN,
                      SDR_OFFSET_HZ, SDR_RATE, WATERFALL_ROWS)
 
 from .decode import sat_short_name
@@ -541,7 +542,11 @@ def sdr_capture_thread(serial):
                     if FM_BAND[0] <= freq_now <= FM_BAND[1]:
                         audio = fm_demodulate(c, DECIMATION, iq_cutoff_hz=bw_hz, audio_cutoff_hz=18000, st=dst)
                     else:
-                        audio = fm_demodulate(c, DECIMATION, iq_cutoff_hz=bw_hz or 22000, st=dst)
+                        # Auto demod width: DSB receive frequencies carry a
+                        # narrowband digital stream — 6 kHz instead of the
+                        # 22 kHz APT default tightens the recording SNR
+                        auto_bw = SAT_DSB_DEMOD_BW_HZ if freq_now in SAT_DSB_FREQ.values() else 22000
+                        audio = fm_demodulate(c, DECIMATION, iq_cutoff_hz=bw_hz or auto_bw, st=dst)
                 except Exception:
                     audio = b''
                 if audio:

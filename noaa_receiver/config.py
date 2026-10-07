@@ -61,6 +61,10 @@ SAT_DSB_FREQ = {
     28654: 137350000,   # NOAA 18 DSB
     33591: 137770000,   # NOAA 19 DSB
 }
+# Auto demod width on DSB receive frequencies: the DSB stream is a narrow
+# (~2-3 kHz) digital signal, so auto records 6 kHz instead of the 22 kHz
+# APT default (manual per-dongle overrides still win)
+SAT_DSB_DEMOD_BW_HZ = 6000
 
 # ISS only transmits SSTV during ARISS events; outside events its passes would
 # be recorded as empty WAVs (~350 MB/day). Set False to track ISS in the pass
