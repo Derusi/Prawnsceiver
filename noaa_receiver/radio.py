@@ -28,8 +28,8 @@ from . import state
 from .calibration import (FM_BAND, PRIMARY_DONGLE_SN, correction_info,
                           tuning_correction)
 from .config import (AUDIO_RATE, DOPPLER_APPLY_RANGE_HZ, DECIMATION, FFT_SIZE,
-                     IQ_BLOCK, LOGDIR, RECORD_DIR, RTL_LOG, SAT_DSB_DEMOD_BW_HZ,
-                     SAT_DSB_FREQ, SDR_GAIN,
+                     IQ_BLOCK, IQ_RECORD_FREQS, LOGDIR, RECORD_DIR, RTL_LOG,
+                     SAT_DSB_DEMOD_BW_HZ, SAT_DSB_FREQ, SDR_GAIN,
                      SDR_OFFSET_HZ, SDR_RATE, WATERFALL_ROWS)
 
 from .decode import sat_short_name
@@ -221,7 +221,7 @@ def enumerate_dongles():
             # Live audio ring for this dongle's demodulated audio
             'la': {'data': [], 'base': 0, 'total': 0, 'cond': threading.Condition()},
             # WAV recording state (every dongle records its own file)
-            'is_recording': False, 'wav': None, 'wav_path': None,
+            'is_recording': False, 'wav': None, 'wav_path': None, 'iq': None,
         }
         state.log_console(f"🔌 Dongle {idx_s.strip()}: {label.strip()} ({tuner.strip()}), SN {serial}" + (" — primary" if primary else ""))
 
@@ -287,10 +287,17 @@ def sdr_capture_thread(serial):
     def close_wav():
         """Finish this dongle's current WAV (pass end, band or pass switch)."""
         wav, path = entry['wav'], entry['wav_path']
+        iq = entry['iq']
         entry['wav'] = None
         entry['wav_path'] = None
+        entry['iq'] = None
         entry['is_recording'] = False
         set_primary_recording(None)
+        if iq is not None:
+            try:
+                iq.close()
+            except Exception:
+                pass
         if wav is None:
             return
         try:
@@ -324,6 +331,16 @@ def sdr_capture_thread(serial):
         entry['wav'] = wav
         entry['wav_path'] = path
         entry['is_recording'] = True
+        # Digital modes (DSB, LRPT) on this frequency also capture the raw
+        # IQ baseband next to the audio — the demod audio cannot carry them
+        entry['iq'] = None
+        if tuned_freq in IQ_RECORD_FREQS:
+            iq_path = path[:-len('.wav')] + '.iq.u8'
+            try:
+                entry['iq'] = open(iq_path, 'wb', buffering=1 << 20)
+                state.log_console(f"📡 IQ recording started (dongle {serial}): {iq_path}")
+            except Exception as e:
+                state.log_console(f"IQ recording could not start (dongle {serial}): {e}", "warn")
         set_primary_recording(path)
         state.log_console(f"🎬 Recording started (dongle {serial}): {path}")
         return True
@@ -398,6 +415,14 @@ def sdr_capture_thread(serial):
 
             while True:
                 raw = reader.read_block()
+                if entry['iq'] is not None:
+                    try:
+                        entry['iq'].write(raw)
+                    except Exception as e:
+                        state.log_console(f"IQ write error (dongle {serial}): {e} — stopping the IQ capture", "error")
+                        try: entry['iq'].close()
+                        except Exception: pass
+                        entry['iq'] = None
                 if raw is None:
                     state.log_console(f"rtl_tcp stream ended (dongle {serial}), restarting...", "warn")
                     break

@@ -66,6 +66,17 @@ SAT_DSB_FREQ = {
 # APT default (manual per-dongle overrides still win)
 SAT_DSB_DEMOD_BW_HZ = 6000
 
+# Passes on these frequencies also record the RAW IQ stream (u8 complex,
+# 240 kHz -> ~480 kB/s per dongle) next to the demod audio WAV: DSB and
+# Meteor LRPT are digital modes the FM-demod audio cannot carry — decoding
+# (SatDump) needs the baseband. APT/SSTV passes stay audio-only.
+IQ_RECORD_FREQS = {
+    137350000,    # NOAA 18 DSB
+    137770000,    # NOAA 19 DSB
+    137100000,    # Meteor-M 2-3 LRPT
+    137912500,    # Meteor-M 2-4 LRPT
+}
+
 # ISS only transmits SSTV during ARISS events; outside events its passes would
 # be recorded as empty WAVs (~350 MB/day). Set False to track ISS in the pass
 # list without recording it.
