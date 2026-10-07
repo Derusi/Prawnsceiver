@@ -460,6 +460,14 @@
             zoomBadge.style.cssText = 'position:absolute;top:2px;right:4px;background:rgba(0,0,0,0.65);color:#a8b8d8;font-size:0.75em;padding:1px 7px;border-radius:3px;cursor:pointer;display:none;z-index:5;';
             zoomBadge.addEventListener('mousedown', e => e.stopPropagation());
             wrap.appendChild(zoomBadge);
+            // Satellite downlink marker: dashed line at the tracked
+            // satellite's frequency (active or next pass) inside this view
+            const satLine = document.createElement('div');
+            satLine.style.cssText = 'display:none;position:absolute;top:0;bottom:0;width:0;border-left:1px dashed rgba(52,152,219,0.85);pointer-events:none;z-index:4;';
+            const satLineLbl = document.createElement('div');
+            satLineLbl.style.cssText = 'position:absolute;top:2px;left:0;transform:translateX(-50%);background:rgba(52,152,219,0.9);color:#1a1a2e;font-size:0.75em;padding:1px 6px;border-radius:3px;white-space:nowrap;';
+            satLine.appendChild(satLineLbl);
+            wrap.appendChild(satLine);
             const overlay = document.createElement('canvas');
             overlay.style.cssText = 'display:none;position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
             wrap.appendChild(overlay);
@@ -504,7 +512,7 @@
                 timeCtx, overlay, hover, title, led, sig, selHl, selLbl,
                 block, collapseBtn, cardHolder, freqLabels,
                 serial: meta.id, centerMHz: null,
-                zoom: 1, zoomOffKHz: 0, recHl: hl, zoomBadge,
+                zoom: 1, zoomOffKHz: 0, recHl: hl, zoomBadge, satLine, satLineLbl,
             };
             wireWfInteractions(b, wrap, wfCanvas, meta);
             zoomBadge.onclick = ev => {
@@ -927,6 +935,10 @@
         const dongleCards = {};      // serial -> card handles
         const MAX_CARD_POINTS = 300; // ~5 min of signal history at 1 Hz
         let lastSharedMHz = null;    // shared tune frequency (from status.json)
+        // Satellite downlink marker target: the ACTIVE pass's frequency, or
+        // the next upcoming one when idle (from status.json)
+        let satTrackInfo = null;
+        let satRecHighlight = false;  // recording-band label shown (dedupe)
 
         // Effective MHz of a dongle: its manual override, else the shared one
         function curDongleMHz(serial) {
@@ -1198,6 +1210,26 @@
                     wfB.recHl.style.left = p1 + '%';
                     wfB.recHl.style.width = Math.max(0, p2 - p1) + '%';
                 }
+                // satellite downlink marker (dashed blue line): active pass
+                // if one is up, else the next upcoming — hidden when its
+                // frequency is outside this dongle's visible window
+                if (satTrackInfo && eff !== null && wfB.satLine) {
+                    const offKhz = (satTrackInfo.freqMHz - eff) * 1000;
+                    const spanHalf = wfSpanKhz(wfB) / 2, vOff = wfB.zoomOffKHz || 0;
+                    if (Math.abs(offKhz - vOff) <= spanHalf + 0.5) {
+                        wfB.satLine.style.display = 'block';
+                        wfB.satLine.style.left = wfKhzToPct(wfB, offKhz) + '%';
+                        // at center during a recording the green highlight
+                        // label already names the satellite — skip ours
+                        const showLbl = !(satRecHighlight && d.primary && Math.abs(offKhz) < 5);
+                        wfB.satLineLbl.style.display = showLbl ? 'block' : 'none';
+                        wfB.satLineLbl.textContent = (satTrackInfo.active ? '' : 'next: ') + satTrackInfo.name + ' \u00b7 ' + satTrackInfo.freqMHz + ' MHz';
+                    } else {
+                        wfB.satLine.style.display = 'none';
+                    }
+                } else if (wfB.satLine) {
+                    wfB.satLine.style.display = 'none';
+                }
             }
             // Tuning infobox: this dongle's correction (value + source), the
             // settings shared by all dongles, and any manual override
@@ -1288,6 +1320,17 @@
                 } else {
                     if (hl) hl.style.display = 'none';
                 }
+
+                // Satellite marker target: the active pass's downlink, or
+                // the next upcoming pass when idle
+                if (data.pass_active && data.current_pass) {
+                    satTrackInfo = { name: data.current_pass.sat_name, freqMHz: data.current_pass.frequency_mhz, active: true };
+                } else if (data.next_pass) {
+                    satTrackInfo = { name: data.next_pass.sat_name, freqMHz: data.next_pass.frequency_mhz, active: false };
+                } else {
+                    satTrackInfo = null;
+                }
+                satRecHighlight = !!data.recording;
 
                 // Live image renderer follows the active pass (can be
                 // disabled below with LIVE_IMAGE_ENABLED — the code stays)
