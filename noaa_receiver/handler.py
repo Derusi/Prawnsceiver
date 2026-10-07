@@ -42,6 +42,7 @@ def _dongle_list():
                 "correction_hz": e.get("correction", 0),
                 "correction_src": e.get("correction_src", "none"),
                 "manual_frequency_mhz": round(state.manual_dongle_freq[sn] / 1e6, 4) if sn in state.manual_dongle_freq else None,
+                "manual_bw_khz": round(state.manual_dongle_bw[sn] / 1000.0, 3) if sn in state.manual_dongle_bw else None,
             })
     return dongles
 
@@ -370,6 +371,7 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             dev = (query.get('d') or [''])[0]
             f = (query.get('f') or [''])[0].strip().lower()
+            bw = (query.get('bw') or [''])[0].strip().lower()
             entry = state.sdrs.get(dev)
             if entry is None:
                 self.send_response(404)
@@ -377,6 +379,39 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": "Unknown dongle"}).encode())
                 return
+            # Optional demod (recorded) bandwidth override in kHz — the IQ
+            # low-pass cutoff ahead of the FM discriminator. bw=auto clears.
+            # A bw-only request (no f) leaves the frequency untouched.
+            if bw:
+                bw_hz = None
+                if bw not in ('auto', 'sync'):
+                    try:
+                        khz = float(bw)
+                    except ValueError:
+                        self.send_response(400)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"success": False, "error": "Invalid bandwidth"}).encode())
+                        return
+                    if not 3.0 <= khz <= 120.0:
+                        self.send_response(400)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"success": False, "error": "Bandwidth out of range (3-120 kHz)"}).encode())
+                        return
+                    bw_hz = int(khz * 1000)
+                with state.status_lock:
+                    if bw_hz is None:
+                        state.manual_dongle_bw.pop(dev, None)
+                    else:
+                        state.manual_dongle_bw[dev] = bw_hz
+                state.log_console(f"🎚 Dongle {dev} demod bandwidth: {bw_hz / 1000:g} kHz" if bw_hz else f"🎚 Dongle {dev} demod bandwidth back to auto")
+                if not f:
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": True, "mode": "bw", "bandwidth_khz": bw_hz / 1000 if bw_hz else None}).encode())
+                    return
             if f in ('', 'auto', 'sync'):
                 with state.status_lock:
                     state.manual_dongle_freq.pop(dev, None)

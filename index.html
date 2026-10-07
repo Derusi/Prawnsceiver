@@ -799,6 +799,38 @@
             };
             const dMinus = mkNudge('−1 kHz'), dPlus = mkNudge('+1 kHz'), dSync = mkNudge('Sync');
             nudgeRow.appendChild(dMinus); nudgeRow.appendChild(dPlus); nudgeRow.appendChild(dSync);
+            // Recorded (demod) bandwidth: the IQ low-pass cutoff ahead of
+            // the FM demod — what ends up in the WAV and live audio. Auto =
+            // mode default (full band on FM broadcast, 22 kHz on satellites)
+            const bwRow = document.createElement('div');
+            bwRow.style.cssText = 'display:flex;gap:4px;align-items:center;margin-top:4px;font-size:0.8em;';
+            const bwLbl = document.createElement('span');
+            bwLbl.textContent = 'Recorded BW';
+            bwLbl.style.cssText = 'color:#888;flex:1;';
+            const bwSel = document.createElement('select');
+            bwSel.style.cssText = 'flex:0 0 auto;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;padding:2px;font-family:monospace;font-size:0.85em;cursor:pointer;';
+            for (const [val, txt] of [['auto','auto'],['5','5'],['8','8'],['10','10'],['15','15'],['22','22'],['30','30'],['36','36'],['50','50'],['72','72'],['100','100'],['120','120']]) {
+                const o = document.createElement('option');
+                o.value = val; o.textContent = txt + (val === 'auto' ? '' : ' kHz');
+                bwSel.appendChild(o);
+            }
+            bwSel.value = 'auto';
+            const sn_bw = d.id;
+            bwSel.onchange = () => {
+                fetch('/tune_dongle?d=' + encodeURIComponent(sn_bw) + '&bw=' + bwSel.value)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            toast(bwSel.value === 'auto'
+                                ? `Demod bandwidth of dongle ${d.index}${d.primary ? ' ★' : ''} back to auto`
+                                : `Dongle ${d.index}${d.primary ? ' ★' : ''} now records ±${bwSel.value} kHz`);
+                        } else {
+                            toast(`Bandwidth change failed: ${data.error || 'unknown error'}`, true);
+                        }
+                    })
+                    .catch(() => toast('Bandwidth change failed: receiver unreachable', true));
+            };
+            bwRow.appendChild(bwLbl); bwRow.appendChild(bwSel);
             const sn_t = d.id;
             const tuneD = (mhz) => fetch('/tune_dongle?d=' + encodeURIComponent(sn_t) + '&f=' + mhz);
             // Read the input IMMEDIATELY: clicking Tune blurs the field on
@@ -845,13 +877,14 @@
             card.appendChild(sigRow);
             card.appendChild(tl); card.appendChild(recRow);
             card.appendChild(tuneRow); card.appendChild(nudgeRow);
+            card.appendChild(bwRow);
             card.appendChild(info); card.appendChild(listenBtn);
             col.appendChild(card);
             c = dongleCards[d.id] = {
                 cardEl: card,
                 sigVal, sigFill, tlCtx: tl.getContext('2d'),
                 hist: [], recLed, recTxt, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
-                bandTxt,
+                bandTxt, bwSel,
             };
             return c;
         }
@@ -912,6 +945,13 @@
                 c.dinput.value = eff.toFixed(4);
             }
             c.dinput.style.border = '1px solid ' + (d.manual_frequency_mhz ? '#f39c12' : '#53d769');
+            if (document.activeElement !== c.bwSel) {
+                const want = d.manual_bw_khz !== null && d.manual_bw_khz !== undefined
+                    ? String(Math.round(d.manual_bw_khz)) : 'auto';
+                if (c.bwSel.value !== want && c.bwSel.querySelector('option[value="' + want + '"]')) {
+                    c.bwSel.value = want;
+                }
+            }
             // Tuning infobox: this dongle's correction (value + source), the
             // settings shared by all dongles, and any manual override
             const cor = (d.correction_hz || 0) / 1000;

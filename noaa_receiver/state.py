@@ -70,6 +70,11 @@ manual_frequency = None
 # entry tunes there instead of the shared current_frequency (e.g. to compare
 # receive quality at a slightly different center). Cleared per dongle.
 manual_dongle_freq = {}
+# Per-dongle manual demod bandwidth override (serial -> Hz, the IQ low-pass
+# cutoff ahead of the FM discriminator): defines what ends up in the WAV and
+# the live audio. None/auto = mode default (full band on broadcast FM,
+# 22 kHz on satellite modes). Cleared per dongle.
+manual_dongle_bw = {}
 # Live Doppler correction for the active pass's satellite: computed by the
 # scheduler (range-rate via skyfield), applied in software by the capture
 # threads. doppler_freq_hz is the satellite's nominal frequency the value

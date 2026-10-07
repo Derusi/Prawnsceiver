@@ -427,6 +427,7 @@ def sdr_capture_thread(serial):
                     sat_now = state.current_sat_name
                     pass_active = state.is_pass_active
                     dop_hz, dop_freq = state.doppler_hz, state.doppler_freq_hz
+                    bw_hz = state.manual_dongle_bw.get(serial)
 
                 # Offset-shift the baseband once: satellite to 0 Hz, DC spike
                 # displaced to +SDR_OFFSET_HZ. Shared by waterfall FFT and demod.
@@ -531,11 +532,16 @@ def sdr_capture_thread(serial):
                 # test tunes) deviates ±75 kHz, so the whole ±120 kHz capture
                 # band is demodulated and only the audio is low-passed;
                 # satellite APT/SSTV keeps the narrow 22 kHz.
+                # Demod channel width = what the WAV and live audio carry:
+                # the manual per-dongle override if set (bw_hz), else the
+                # mode default (full ±120 kHz on broadcast FM, 22 kHz on
+                # satellite modes). fm_demodulate skips the filter for a
+                # falsy cutoff (full band).
                 try:
                     if FM_BAND[0] <= freq_now <= FM_BAND[1]:
-                        audio = fm_demodulate(c, DECIMATION, iq_cutoff_hz=None, audio_cutoff_hz=18000, st=dst)
+                        audio = fm_demodulate(c, DECIMATION, iq_cutoff_hz=bw_hz, audio_cutoff_hz=18000, st=dst)
                     else:
-                        audio = fm_demodulate(c, DECIMATION, st=dst)
+                        audio = fm_demodulate(c, DECIMATION, iq_cutoff_hz=bw_hz or 22000, st=dst)
                 except Exception:
                     audio = b''
                 if audio:
