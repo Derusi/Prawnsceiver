@@ -7,6 +7,7 @@ The SatNOGS lookups happen ONLY in a background loader thread — the pass
 list itself must never touch the network (it is served under
 state.status_lock; a slow DB fetch there would freeze the whole API)."""
 import threading
+import time
 
 from . import satnogs
 from .config import (RECORD_ISS, SAT_DSB_DEMOD_BW_HZ, SAT_DSB_FREQ,
@@ -57,11 +58,20 @@ def _match_transmitter(info, freq_hz):
 def _loader():
     """Fetch SatNOGS metadata for every tracked satellite (serially —
     db.satnogs.org is rate-limited) and cache the transmitter matching
-    each satellite's tuned frequency."""
-    for catnr in TRACKED_SATS:
-        info, _err = satnogs.satellite_info(catnr)
-        freq = _tuned_freq(catnr)
-        _tx_cache[catnr] = _match_transmitter(info, freq) if info else None
+    each satellite's tuned frequency. Retries every 30 min until every
+    satellite is loaded (the DB is unreachable for hours at a time)."""
+    while True:
+        missing = [c for c in TRACKED_SATS if c not in _tx_cache]
+        if not missing:
+            return
+        for catnr in missing:
+            info, _err = satnogs.satellite_info(catnr)
+            if info:
+                freq = _tuned_freq(catnr)
+                _tx_cache[catnr] = _match_transmitter(info, freq)
+            time.sleep(2)   # be gentle with the rate-limited DB
+        if any(c not in _tx_cache for c in TRACKED_SATS):
+            time.sleep(1800)
 
 
 def prime_transmitters():
