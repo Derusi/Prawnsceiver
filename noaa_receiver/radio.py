@@ -90,7 +90,9 @@ def kill_stale_rtl_tcp():
     thread starts.
     """
     try:
-        r = subprocess.run(['pkill', '-f', 'rtl_tcp'], capture_output=True)
+        # -9: rtl_tcp traps SIGTERM and only exits its poll loop later —
+        # a streaming rtl_tcp reliably ignores plain SIGTERM (verified live)
+        r = subprocess.run(['pkill', '-9', '-f', 'rtl_tcp'], capture_output=True)
         if r.returncode == 0:
             time.sleep(1.0)   # let the kernel release the devices and ports
             state.log_console("Killed stale rtl_tcp processes from a previous run", "warn")
