@@ -37,7 +37,7 @@ Live at: https://prawnceiver.derusi.de
   center DC spike)
 - Python 3 + NumPy — FFT waterfall and software FM demodulation
 - Skyfield — TLE-based pass prediction (TLEs refreshed from Celestrak every
-  6 h, with a local cache fallback)
+  3 h, with a local cache fallback)
 - noaa-apt — APT image decoding
 - sstv — ISS Slow-Scan TV decoding (Robot 36)
 - nginx — HTTPS reverse proxy (Let's Encrypt) in front of the Python server
