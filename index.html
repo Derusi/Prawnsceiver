@@ -20,7 +20,7 @@
         #waterfall-section h2 { color: #53d769; font-size: 1em; margin-bottom: 6px; }
         #waterfall-row { display: flex; gap: 12px; align-items: stretch; }
         #wf-col { flex: 1; min-width: 0; }
-        .wf-canvas { width: 100%; height: 180px; background: #000; border: 1px solid #0f3460; border-radius: 4px; image-rendering: pixelated; }
+        .wf-canvas { width: 100%; height: 300px; background: #000; border: 1px solid #0f3460; border-radius: 4px; image-rendering: pixelated; }
         .wf-spec { width: 100%; height: 50px; background: #000; border: 1px solid #0f3460; border-radius: 4px; margin-top: 4px; }
         #freq-labels { display: flex; justify-content: space-between; font-size:0.85em; color: #666; margin-top: 3px; }
         #dongle-status-col { width: var(--sidebar-width); flex-shrink: 0; display: flex; flex-direction: column; }
@@ -213,7 +213,7 @@
     <script>
         const startTime = Date.now();
         let tleInfo = null;
-        const WF_WIDTH = 512, WF_HEIGHT = 120, SPEC_HEIGHT = 25;
+        const WF_WIDTH = 512, WF_HEIGHT = 300, SPEC_HEIGHT = 25;
         // One waterfall block per dongle, built dynamically from /dongles.json.
         // Blocks are keyed by dongle SERIAL (id) — USB indices shift on
         // replug. The primary dongle (live audio, recording) carries the
@@ -371,6 +371,18 @@
                 const [r, g, b2] = magnitudeToColor(row[x]);
                 b.wfCtx.fillStyle = `rgb(${r},${g},${b2})`;
                 b.wfCtx.fillRect(x, 0, 1, 1);
+            }
+            // Timestamp chip on the left edge every 50 rows (10 s at the
+            // 5 rows/s display rate); drawn onto the newest row, it scrolls
+            // down with the data — so the labels stay aligned to the pixels
+            b.tickCounter = (b.tickCounter || 0) + 1;
+            if (b.tickCounter % 50 === 1) {
+                b.wfCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                b.wfCtx.fillRect(0, 0, 56, 12);
+                b.wfCtx.fillStyle = '#a8b8d8';
+                b.wfCtx.font = '11px monospace';
+                b.wfCtx.textBaseline = 'top';
+                b.wfCtx.fillText(new Date().toTimeString().slice(0, 8), 3, 1);
             }
             b.specCtx.fillStyle = '#000';
             b.specCtx.fillRect(0, 0, WF_WIDTH, SPEC_HEIGHT);
