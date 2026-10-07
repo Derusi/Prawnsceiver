@@ -88,3 +88,41 @@ receiver was OOM-killed once at ~00:48 with 2.4 GB).
   status_lock) is fixed and verified.
 - SatNOGS/Celetrak block: diagnosed 01:50-02:15, left as-is per user.
 - Upcoming: 02:51 Meteor-M 2-4 LRPT (12.7°) — pipeline shakedown pass.
+
+### 2026-10-08 03:45 CEST — unattended work: OOM root fix deployed
+Changes made while the user is asleep (all pushed, Pi restarted at
+03:42 CEST, idle window before the 02:51->04:29 passes):
+
+1. Decode-attempt markers (ef52533) — the OOM root cause fix.
+   - decode.py: every decode attempt's outcome is persisted in
+     `<wav>.decode.json`; later attempts short-circuit on the marker.
+     `decode_recording(wav, force=True)` re-runs (Retry button).
+   - handler.py: `/decode` accepts `?force=1`; `/delete` also removes
+     the marker.
+   - history.py / history.html: recordings list exposes
+     `decode_attempted`/`decode_error`; the history page shows the
+     failure reason + a Retry button instead of re-decoding, and the
+     auto-decode loop skips attempted recordings. Previously every
+     page load re-ran in-process SSTV/noaa-apt decodes on permanently
+     undecodable WAVs (ISS without ARISS, dark transmitters) until the
+     receiver OOMed at 2.4 GB.
+   - scheduler.py: pass-end auto-decode skips previously-failed
+     recordings with a single console line instead of re-running.
+   - Seeded 28 skip markers ("skipped in bulk before decode markers
+     existed — Retry to decode") into existing un-decoded recordings
+     so the next history-page open does not spawn a decode storm.
+2. Quality scorer (ff3d5a0): routing now uses the exact satellite name
+     from decode.satellite_from_filename instead of `'iss' in filename`
+     (a "swiss_sat" recording would have been scored as SSTV). New
+     tests/test_quality.py synthesizes good APT / good Robot 36 /
+     desynced / noise WAVs: good=100, desynced=65, noise=0 — the
+     scorer itself was CORRECT; the "0% for everything" reports were
+     genuine noise (dark transmitters). NOAA 15 tonight will get real
+     quality values.
+3. Test fixes: test_radio fixture gained the 'iq' entry field (the IQ
+     recording commit 54eb116 had missed updating the test fixture);
+     test_decode re-runs now use force=True where a marker would
+     legitimately short-circuit.
+- Full suite passes on the Pi (test_decode, test_dsp, test_radio,
+  test_quality). Receiver restarted, both dongles running, RSS 47 MB,
+  armed for the 02:51 pass (runs with these fixes).
