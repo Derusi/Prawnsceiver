@@ -832,39 +832,50 @@
             const bwLbl = document.createElement('span');
             bwLbl.textContent = 'Recorded BW';
             bwLbl.style.cssText = 'color:#888;flex:1;';
-            const bwSel = document.createElement('select');
-            bwSel.style.cssText = 'flex:0 0 auto;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;padding:2px;font-family:monospace;font-size:0.85em;cursor:pointer;';
-            const autoOpt = document.createElement('option');
-            autoOpt.value = 'auto'; autoOpt.textContent = 'auto';
-            bwSel.appendChild(autoOpt);
-            // logarithmic steps (1-2-5 decades) from 1 kHz to the full band
+            // Free-entry field: any 1-120 kHz value (Enter or Set applies),
+            // empty = auto. Datalist offers the log-scale presets.
+            const bwInput = document.createElement('input');
+            bwInput.type = 'text'; bwInput.inputMode = 'decimal';
+            bwInput.placeholder = 'auto';
+            bwInput.style.cssText = 'flex:0 0 62px;min-width:0;background:#0f3460;border:1px solid #53d769;color:#e0e0e0;border-radius:3px;padding:2px 4px;font-family:monospace;font-size:0.9em;text-align:center;';
+            bwInput.setAttribute('list', 'bw-presets');
+            const bwList = document.createElement('datalist');
+            bwList.id = 'bw-presets';
             for (const v of [1, 2, 5, 10, 20, 50, 100, 120]) {
                 const o = document.createElement('option');
-                o.value = String(v); o.textContent = v + ' kHz';
-                bwSel.appendChild(o);
+                o.value = String(v); o.label = v + ' kHz';
+                bwList.appendChild(o);
             }
-            bwSel.value = 'auto';
+            const bwSet = document.createElement('button');
+            bwSet.textContent = 'Set';
+            bwSet.style.cssText = 'flex:0 0 auto;padding:2px 8px;background:#53d769;color:#1a1a2e;border:none;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.85em;';
             const sn_bw = d.id;
-            bwSel.onchange = () => {
-                fetch('/tune_dongle?d=' + encodeURIComponent(sn_bw) + '&bw=' + bwSel.value)
+            const doBwSet = () => {
+                const raw = bwInput.value.trim().toLowerCase();
+                const val = (raw === '' || raw === 'auto') ? 'auto' : raw;
+                fetch('/tune_dongle?d=' + encodeURIComponent(sn_bw) + '&bw=' + encodeURIComponent(val))
                     .then(r => r.json())
                     .then(data => {
                         if (data.success) {
+                            bwInput._typedAt = 0;
                             // draw the new geometry immediately — the 200 ms
                             // poll would confirm it a moment later anyway
                             const c = dongleCards[sn_bw];
-                            if (c && c.lastD) c.lastD.manual_bw_khz = bwSel.value === 'auto' ? null : parseFloat(bwSel.value);
+                            if (c && c.lastD) c.lastD.manual_bw_khz = val === 'auto' ? null : parseFloat(val);
                             if (wfOverlayOn) drawWfOverlay();
-                            toast(bwSel.value === 'auto'
+                            toast(val === 'auto'
                                 ? `Demod bandwidth of dongle ${d.index}${d.primary ? ' ★' : ''} back to auto`
-                                : `Dongle ${d.index}${d.primary ? ' ★' : ''} now records ±${bwSel.value} kHz`);
+                                : `Dongle ${d.index}${d.primary ? ' ★' : ''} now records ±${val} kHz`);
                         } else {
                             toast(`Bandwidth change failed: ${data.error || 'unknown error'}`, true);
                         }
                     })
                     .catch(() => toast('Bandwidth change failed: receiver unreachable', true));
             };
-            bwRow.appendChild(bwLbl); bwRow.appendChild(bwSel);
+            bwSet.onclick = doBwSet;
+            bwInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doBwSet(); } });
+            bwInput.addEventListener('input', () => { bwInput._typedAt = Date.now(); });
+            bwRow.appendChild(bwLbl); bwRow.appendChild(bwInput); bwRow.appendChild(bwSet); bwRow.appendChild(bwList);
             const sn_t = d.id;
             const tuneD = (mhz) => fetch('/tune_dongle?d=' + encodeURIComponent(sn_t) + '&f=' + mhz);
             // Read the input IMMEDIATELY: clicking Tune blurs the field on
@@ -918,7 +929,7 @@
                 cardEl: card,
                 sigVal, sigFill, tlCtx: tl.getContext('2d'),
                 hist: [], recLed, recTxt, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
-                bandTxt, bwSel,
+                bandTxt, bwInput,
             };
             return c;
         }
@@ -979,12 +990,11 @@
                 c.dinput.value = eff.toFixed(4);
             }
             c.dinput.style.border = '1px solid ' + (d.manual_frequency_mhz ? '#f39c12' : '#53d769');
-            if (document.activeElement !== c.bwSel) {
+            if (document.activeElement !== c.bwInput
+                    && Date.now() - (c.bwInput._typedAt || 0) > 3000) {
                 const want = d.manual_bw_khz !== null && d.manual_bw_khz !== undefined
-                    ? String(Math.round(d.manual_bw_khz)) : 'auto';
-                if (c.bwSel.value !== want && c.bwSel.querySelector('option[value="' + want + '"]')) {
-                    c.bwSel.value = want;
-                }
+                    ? String(Math.round(d.manual_bw_khz * 100) / 100) : '';
+                if (c.bwInput.value !== want) c.bwInput.value = want;
             }
             // Tuning infobox: this dongle's correction (value + source), the
             // settings shared by all dongles, and any manual override
