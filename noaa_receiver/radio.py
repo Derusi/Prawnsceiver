@@ -164,8 +164,10 @@ def sdr_capture_thread(serial):
     # This dongle's own DSP chain state — demod filters must not share state
     # across the concurrently demodulating capture threads
     dst = new_state()
+    restart_backoff = 5.0
 
     while True:
+        run_started = time.time()
         proc = None
         try:
             with state.status_lock:
@@ -284,7 +286,11 @@ def sdr_capture_thread(serial):
                 # status/handler/scheduler.
                 should_record = False
                 with state.status_lock:
-                    should_record = state.is_pass_active
+                    # A dongle with a manual frequency override is parked on
+                    # the operator's frequency — recording it would fill a
+                    # satellite-named WAV with the wrong band
+                    should_record = (state.is_pass_active
+                                      and serial not in state.manual_dongle_freq)
 
                 if should_record and not entry['is_recording']:
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -353,4 +359,10 @@ def sdr_capture_thread(serial):
             state.current_wav = None
             state.current_wav_path = None
             state.is_recording = False
-        time.sleep(5)
+        # Backoff when rtl_sdr keeps dying immediately (dongle unplugged,
+        # flaky USB): 5 s doubling up to 60 s; reset after a stable run
+        if time.time() - run_started >= 30:
+            restart_backoff = 5.0
+        else:
+            restart_backoff = min(restart_backoff * 2, 60.0)
+        time.sleep(restart_backoff)

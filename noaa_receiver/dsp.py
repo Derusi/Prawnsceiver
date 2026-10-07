@@ -12,7 +12,7 @@ def iq_to_complex(iq_bytes):
 # own state dict (dsp.new_state()) — a shared one would corrupt the
 # demodulation once several dongles demodulate concurrently.
 def new_state():
-    return {"rot": 0, "fir_tail": None, "afir_tail": None, "last_c": None, "audio_pos": 0, "nco_k": 0}
+    return {"rot": 0, "fir_tail": None, "afir_tail": None, "last_c": None, "audio_pos": 0, "nco_phase": 0.0}
 
 demod_state = new_state()  # default for single-stream callers
 
@@ -98,23 +98,43 @@ def lowpass_audio(a, cutoff_hz, st=None):
     st["afir_tail"] = x[-(len(taps) - 1):].copy()
     return out
 
+_doppler_lut = {"key": None, "lut": None}
+
 def doppler_shift(c, doppler_hz, fs, st):
-    """Rotate baseband by -doppler_hz with an NCO, phase-continuous across
-    blocks (st["nco_k"] counts samples).
+    """Rotate baseband by -doppler_hz with a phase-continuous NCO.
 
     Compensates a Doppler-shifted carrier into the demod center: a signal
     observed at +doppler_hz (approaching satellite) lands at 0 Hz. The
-    rotation runs at the capture block rate; the scheduler updates
-    doppler_hz every few seconds — the NCO phase carries the signal
-    continuously between updates.
+    scheduler steps doppler_hz every few seconds — a frequency change in an
+    NCO must not jump the phase, so the phase (st["nco_phase"]) accumulates
+    across blocks AND across doppler updates. (An absolute-sample-count
+    phase like -2*pi*d*k/fs jumps by an arbitrary angle at every update:
+    each jump is a full-scale click in the demodulated audio.)
+    The rotation phasor for integer Hz is periodic with fs/gcd(doppler_hz,
+    fs) samples, so it comes from a single-slot LUT that is only rebuilt
+    when doppler_hz changes — no per-sample exp() in the capture loop.
     """
     import numpy as np
     if doppler_hz == 0:
         return c
     n = len(c)
-    k = st["nco_k"] + np.arange(n, dtype=np.float64)
-    st["nco_k"] = int(k[-1]) + 1
-    rot = np.exp(-2j * np.pi * doppler_hz * k / fs)
+    dphase = -2.0 * np.pi * doppler_hz / fs
+    key = (int(doppler_hz), int(fs))
+    if _doppler_lut["key"] != key:
+        from math import gcd
+        period = int(fs // gcd(abs(int(doppler_hz)), int(fs)))
+        if period > (1 << 18):
+            _doppler_lut["key"], _doppler_lut["lut"] = key, None  # pathological gcd: direct exp
+        else:
+            _doppler_lut["key"] = key
+            _doppler_lut["lut"] = np.exp(1j * dphase * np.arange(period)).astype(np.complex64)
+    lut = _doppler_lut["lut"]
+    if lut is None:
+        rot = np.exp(1j * (st["nco_phase"] + dphase * np.arange(n)))
+    else:
+        # exp(i*(phase + dphase*j)) == exp(i*phase) * lut[j % period]
+        rot = lut[np.arange(n) % len(lut)] * np.exp(1j * st["nco_phase"])
+    st["nco_phase"] = (st["nco_phase"] + dphase * n) % (2.0 * np.pi)
     return (c * rot.astype(np.complex64)).astype(np.complex64)
 
 def fm_demodulate(c, decimation=5, iq_cutoff_hz=22000.0, audio_cutoff_hz=None, st=None):

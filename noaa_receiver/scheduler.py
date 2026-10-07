@@ -30,13 +30,20 @@ def _doppler_hz(sat, freq_hz):
 
 def scheduler_thread():
     """Background thread: refresh TLEs, predict passes, trigger frequency switches."""
+    sats = {}
     while True:
         try:
-            # Refresh TLEs if stale
-            if time.time() - state.last_tle_refresh > TLE_REFRESH_HOURS * 3600:
-                sats = refresh_tles()
-            else:
-                sats = refresh_tles()  # first run
+            # Refresh TLEs only when stale (or on the first run); between
+            # refreshes the pass prediction reuses the loaded satellites.
+            # A refresh that yields nothing (Celestrak down, no cache)
+            # clears last_tle_refresh so the next outer-loop pass (~30 min)
+            # retries instead of leaving the receiver blind for hours.
+            if state.last_tle_refresh == 0 or time.time() - state.last_tle_refresh > TLE_REFRESH_HOURS * 3600:
+                new_sats = refresh_tles()
+                if new_sats:
+                    sats = new_sats
+                else:
+                    state.last_tle_refresh = 0
             
             # Predict passes
             passes = predict_passes(sats, PASS_PREDICT_HOURS)
