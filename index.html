@@ -73,6 +73,14 @@
         .btn-outline { padding: 3px 10px; background: #0f3460; color: #53d769; border: 1px solid #53d769; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.9em; }
         .btn-outline:hover { background: #16294e; }
         .num-input { width: 75px; background: #0f3460; border: 1px solid #53d769; color: #e0e0e0; border-radius: 3px; padding: 3px; font-family: monospace; font-size: 0.95em; }
+        /* Hover cursor layer over each waterfall block: dotted line + the
+           frequency under the pointer (click tunes the dongle) */
+        .wf-hover { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        .wf-wrap { cursor: crosshair; }
+        #conn-banner { display: none; padding: 8px 20px; text-align: center; background: #4a1e1e; color: #e74c3c; font-weight: bold; flex-shrink: 0; }
+        #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%) translateY(20px); background: #16213e; color: #e0e0e0; border: 1px solid #53d769; border-radius: 4px; padding: 8px 14px; font-size: 0.9em; opacity: 0; transition: opacity 0.25s, transform 0.25s; pointer-events: none; z-index: 2000; max-width: 90vw; }
+        #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+        #toast.error { border-color: #e74c3c; }
         /* Mobile: stack the columns, let the page scroll naturally and keep
            the waterfall full-width (sidebars collapse via their toggles) */
         @media (max-width: 860px) {
@@ -110,6 +118,7 @@
         </div>
     </div>
     <div id="pass-banner" class="pass-idle">Checking pass schedule...</div>
+    <div id="conn-banner">Connection to the receiver lost — retrying…</div>
     <div id="waterfall-section">
         <div id="waterfall-row">
             <div id="wf-col">
@@ -215,7 +224,8 @@
             const idx = meta.id;
             let b = wfBlocks[idx];
             if (b) {
-                b.title.textContent = `Dongle ${meta.index}${meta.primary ? ' ★' : ''} — ${meta.label} (${meta.tuner}, SN ${meta.serial})`;
+                b.title.textContent = `Dongle ${meta.index}${meta.primary ? ' ★' : ''} — ${meta.label} (${meta.tuner}, SN ${meta.serial})`
+                    + (meta.manual_frequency_mhz ? ` — ${meta.manual_frequency_mhz.toFixed(4)} MHz` : '');
                 b.led.className = 'indicator ' + (meta.running ? 'green' : 'red');
                 b.sig.textContent = 'signal ' + (meta.signal ? meta.signal.toFixed(1) : '—');
                 return b;
@@ -232,6 +242,7 @@
             sig.style.cssText = 'margin-left:auto;color:#888;';
             head.appendChild(led); head.appendChild(title); head.appendChild(sig);
             const wrap = document.createElement('div');
+            wrap.className = 'wf-wrap';
             wrap.style.position = 'relative';
             const wfCanvas = document.createElement('canvas');
             wfCanvas.width = WF_WIDTH; wfCanvas.height = WF_HEIGHT;
@@ -253,15 +264,89 @@
             const overlay = document.createElement('canvas');
             overlay.style.cssText = 'display:none;position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
             wrap.appendChild(overlay);
+            const hover = document.createElement('canvas');
+            hover.className = 'wf-hover';
+            wrap.appendChild(hover);
             block.appendChild(head); block.appendChild(wrap);
             list.appendChild(block);
             b = wfBlocks[idx] = {
                 wfCtx: wfCanvas.getContext('2d'),
                 specCtx: specCanvas.getContext('2d'),
-                overlay, title, led, sig,
+                overlay, hover, title, led, sig,
+                serial: meta.id, centerMHz: null,
             };
+            wireWfInteractions(b, wrap, wfCanvas, meta);
             if (wfOverlayOn) { overlay.style.display = 'block'; drawWfOverlay(); }
             return b;
+        }
+
+        // ---------- Waterfall hover cursor + click-to-tune ----------
+        // The whole wrap (waterfall + spectrum) shares one frequency axis:
+        // the tuned target sits at the horizontal center, the display spans
+        // ±120 kHz (SDR_RATE). Hovering shows a dotted line with the exact
+        // frequency (and its offset from the center); a click tunes THIS
+        // dongle there via /tune_dongle (Sync on its card rejoins tracking).
+        function wireWfInteractions(b, wrap, wfCanvas, meta) {
+            const hover = b.hover;
+            const freqAt = (clientX) => {
+                const r = wfCanvas.getBoundingClientRect();
+                const frac = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+                return { frac, mhz: b.centerMHz + (frac - 0.5) * 0.240 };
+            };
+            const drawHover = (clientX) => {
+                const w = hover.clientWidth, h = hover.clientHeight;
+                if (!w || !h) return;
+                const dpr = window.devicePixelRatio || 1;
+                if (hover.width !== Math.round(w * dpr) || hover.height !== Math.round(h * dpr)) {
+                    hover.width = Math.round(w * dpr); hover.height = Math.round(h * dpr);
+                }
+                const ctx = hover.getContext('2d');
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                ctx.clearRect(0, 0, w, h);
+                const { frac, mhz } = freqAt(clientX);
+                const x = frac * w;
+                ctx.strokeStyle = 'rgba(224, 224, 224, 0.8)';
+                ctx.setLineDash([3, 4]);
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+                ctx.setLineDash([]);
+                const delta = (mhz - b.centerMHz) * 1000;
+                const label = `${mhz.toFixed(4)} MHz (${delta >= 0 ? '+' : ''}${delta.toFixed(1)} kHz)`;
+                ctx.font = '12px monospace';
+                const tw = ctx.measureText(label).width;
+                let lx = x + 8;
+                if (lx + tw + 6 > w) lx = x - tw - 12;
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(lx - 3, 4, tw + 6, 17);
+                ctx.fillStyle = '#e0e0e0';
+                ctx.fillText(label, lx, 17);
+            };
+            wrap.addEventListener('mousemove', e => { if (b.centerMHz !== null) drawHover(e.clientX); });
+            wrap.addEventListener('mouseleave', () => {
+                hover.getContext('2d').clearRect(0, 0, hover.width, hover.height);
+            });
+            wrap.title = 'Click to tune this dongle to the clicked frequency';
+            wrap.addEventListener('click', e => {
+                if (b.centerMHz === null) return;
+                const { mhz } = freqAt(e.clientX);
+                fetch('/tune_dongle?d=' + encodeURIComponent(b.serial) + '&f=' + mhz.toFixed(4))
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            toast(`Tuned dongle ${meta.index}${meta.primary ? ' ★' : ''} to ${mhz.toFixed(4)} MHz — Sync on its card to rejoin`);
+                        } else {
+                            toast(`Tune failed: ${data.error || 'unknown error'}`, true);
+                        }
+                    })
+                    .catch(() => toast('Tune failed: receiver unreachable', true));
+            });
+        }
+
+        function toast(msg, isError) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = 'show' + (isError ? ' error' : '');
+            clearTimeout(toast._timer);
+            toast._timer = setTimeout(() => { t.className = ''; }, 4000);
         }
 
         function magnitudeToColor(m) {
@@ -404,6 +489,10 @@
                 for (const d of dongles) {
                     updateDongleCard(d);
                     const b = ensureWfBlock(d);
+                    // Frequency axis center for hover/click: the dongle's
+                    // manual override if set, else the shared tune frequency
+                    b.centerMHz = (d.manual_frequency_mhz !== null && d.manual_frequency_mhz !== undefined)
+                        ? d.manual_frequency_mhz : lastSharedMHz;
                     try {
                         // last=1: only the newest row — the waterfall scrolls
                         // client-side, the full buffer need not be transferred
@@ -559,7 +648,11 @@
             c.title.textContent = `Dongle ${d.index}${d.primary ? ' ★' : ''} — ${d.label} (${d.tuner})`;
             c.led.className = 'indicator ' + (d.running ? 'green' : 'red');
             c.sigVal.textContent = d.signal ? d.signal.toFixed(1) : '—';
-            c.sigFill.style.width = Math.min(100, (d.signal || 0) * 3) + '%';
+            // Signal metric: ~150 = silence floor, 800+ = strong APT carrier
+            // with auto-gain — map that range onto the bar so idle noise
+            // doesn't peg it at 100%
+            const pct = Math.max(0, Math.min(100, ((d.signal || 0) - 150) / 7));
+            c.sigFill.style.width = pct + '%';
             const now = Date.now();
             if (now - c.lastHistTs >= 1000) {
                 c.lastHistTs = now;
@@ -588,10 +681,13 @@
             c.listenBtn.style.color = (liveAudioOn === d.id) ? '#1a1a2e' : '#53d769';
         }
 
+        let statusFails = 0;
         async function fetchStatus() {
             try {
                 const res = await fetch('/status.json');
                 const data = await res.json();
+                if (statusFails >= 2) document.getElementById('conn-banner').style.display = 'none';
+                statusFails = 0;
                 document.getElementById('rec-count').textContent = data.recording_count || 0;
                 document.getElementById('rtl-log').textContent = data.rtl_log || '—';
                 document.getElementById('sat-current').textContent = data.satellite;
@@ -650,6 +746,7 @@
                     banner.textContent = 'No passes predicted in the next 24h';
                 }
             } catch(e) {
+                if (++statusFails >= 2) document.getElementById('conn-banner').style.display = 'block';
                 console.error('Status fetch failed:', e);
             }
         }
