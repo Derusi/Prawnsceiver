@@ -96,6 +96,10 @@
         .wf-hover { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
         .wf-wrap { cursor: crosshair; }
         #conn-banner { display: none; padding: 8px 20px; text-align: center; background: #4a1e1e; color: #e74c3c; font-weight: bold; flex-shrink: 0; }
+        /* Header band allocation readout + the band jump dropdown */
+        #band-current { color: #a8b8d8; font-size: 0.8em; margin-top: 2px; max-width: 300px; }
+        #band-current .band-range { color: #666; }
+        .band-select { background: #0f3460; color: #53d769; border: 1px solid #53d769; border-radius: 3px; padding: 3px; font-family: monospace; font-size: 0.85em; margin-top: 5px; max-width: 300px; cursor: pointer; }
         #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%) translateY(20px); background: #16213e; color: #e0e0e0; border: 1px solid #53d769; border-radius: 4px; padding: 8px 14px; font-size: 0.9em; opacity: 0; transition: opacity 0.25s, transform 0.25s; pointer-events: none; z-index: 2000; max-width: 90vw; }
         #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
         #toast.error { border-color: #e74c3c; }
@@ -133,6 +137,8 @@
         <div id="freq-display" style="text-align:right;font-size:1em;">
             <div style="color:#53d769;font-weight:bold;" id="freq-current">137.620 MHz</div>
             <div style="color:#888;" id="sat-current">NOAA 15 (idle)</div>
+            <div id="band-current"></div>
+            <select id="band-jump" class="band-select" aria-label="Jump to a band / typical use case"></select>
         </div>
     </div>
     <div id="pass-banner" class="pass-idle">Checking pass schedule...</div>
@@ -220,6 +226,130 @@
         // replug. The primary dongle (live audio, recording) carries the
         // recording-band highlight (wf-highlight) and a ★ badge.
         const wfBlocks = {};   // dongle serial -> {wfCtx, specCtx, overlay, title, led, sig}
+
+        // ---------- Frequency allocation lookup (Germany / ITU Region 1) ----------
+        // Coarse receive-side overview of what each part of the R820T range
+        // (24–1766 MHz) is normally used or reserved for — orientation for
+        // waterfall reading, not an authoritative band plan. When entries
+        // overlap, the narrowest match wins (e.g. ADS-B inside the aviation
+        // navigation band, 70 cm inside 433 ISM).
+        const BANDS = [
+            { lo: 24,      hi: 26.965,  name: 'Short-range devices', desc: 'below CB, sparse use' },
+            { lo: 26.965,  hi: 27.405,  name: 'CB radio (citizens band)', desc: 'AM/FM, 40 channels, truckers & hobby' },
+            { lo: 27.405,  hi: 28,      name: 'Short-range devices', desc: 'ISM fringe' },
+            { lo: 28,      hi: 29.7,    name: '10 m amateur band', desc: 'ham shortwave, SSB/CW' },
+            { lo: 29.7,    hi: 47,      name: 'Military / PMR low band', desc: 'analog FM land mobile, sparse' },
+            { lo: 47,      hi: 68,      name: 'PMR / paging (former VHF TV)', desc: 'land mobile after TV moved out' },
+            { lo: 68,      hi: 74.875,  name: 'PMR / rail', desc: 'analog land mobile' },
+            { lo: 74.875,  hi: 87.5,    name: 'BOS 4 m band (German fire/police/rescue)', desc: 'analog FM dispatch, the scanner classic' },
+            { lo: 87.5,    hi: 108,     name: 'FM broadcast radio', desc: 'public FM radio, RDS, always busy' },
+            { lo: 108,     hi: 117.975, name: 'Aviation navigation', desc: 'VOR/ILS beacons, Morse IDs' },
+            { lo: 117.975, hi: 137,     name: 'Airband (aviation voice AM)', desc: 'towers & aircraft' },
+            { lo: 137,     hi: 138,     name: 'Weather satellites (APT/LRPT)', desc: 'NOAA/Meteor imagery — this station\'s home band' },
+            { lo: 138,     hi: 144,     name: 'Space research / satellite downlinks', desc: 'telemetry & data' },
+            { lo: 144,     hi: 146,     name: '2 m amateur band', desc: 'APRS DL at 144.8, FM calling 145.5' },
+            { lo: 146,     hi: 149.9,   name: 'Commercial PMR', desc: 'taxi, utilities, mostly digital now' },
+            { lo: 149.9,   hi: 156.2425,name: 'Rail & commercial PMR', desc: 'shunting & yard radio' },
+            { lo: 156.2425,hi: 162.025, name: 'Marine VHF', desc: 'Ch 16 = 156.8 distress & calling' },
+            { lo: 162.025, hi: 174,     name: 'Commercial / government PMR', desc: 'mostly digital (DMR/TETRA)' },
+            { lo: 174,     hi: 230,     name: 'DAB+ digital radio (band III)', desc: 'former VHF TV, now audio broadcast' },
+            { lo: 230,     hi: 400,     name: 'Military aeronautical (NATO UHF)', desc: 'air-ground, mostly encrypted' },
+            { lo: 400,     hi: 406,     name: 'Satellite data collection', desc: 'meteorological & Argos' },
+            { lo: 406,     hi: 410,     name: 'Radio astronomy / satellite EPIRB', desc: 'passive science; 406.1 distress beacons' },
+            { lo: 410,     hi: 430,     name: 'Government / PMR', desc: 'TETRA, digital' },
+            { lo: 430,     hi: 440,     name: '70 cm amateur + ISM 433', desc: 'ham + remotes, sensors, weather stations' },
+            { lo: 440,     hi: 446,     name: 'Amateur / ISM fringe', desc: 'ATV & experiments' },
+            { lo: 446.0,   hi: 446.2,   name: 'PMR446', desc: 'license-free handhelds, analog & digital' },
+            { lo: 446.2,   hi: 470,     name: 'Commercial PMR (UHF)', desc: 'analog + digital land mobile' },
+            { lo: 470,     hi: 694,     name: 'DVB-T2 digital TV (UHF)', desc: 'channels 21–48, high power' },
+            { lo: 694,     hi: 790,     name: 'Mobile networks (700 MHz / 5G)', desc: '5G/LTE downlink' },
+            { lo: 790,     hi: 960,     name: 'Mobile networks (GSM/LTE/5G)', desc: 'downlink receive, noise-like signals' },
+            { lo: 960,     hi: 1215,    name: 'Aviation navigation (DME/TACAN)', desc: 'distance measuring, pulse pairs' },
+            { lo: 1087.5,  hi: 1092.5,  name: 'ADS-B aircraft beacons', desc: 'position squitters at 1090 MHz' },
+            { lo: 1215,    hi: 1240,    name: 'GNSS L2 / military', desc: 'GPS L2 1227.6, spread spectrum' },
+            { lo: 1240,    hi: 1300,    name: '23 cm amateur band', desc: 'ham, ATV & data' },
+            { lo: 1300,    hi: 1400,    name: 'Military radar / ATC (S-band)', desc: 'air surveillance radar, pulse trains' },
+            { lo: 1400,    hi: 1427,    name: 'Radio astronomy (passive)', desc: 'Earth exploration, protected' },
+            { lo: 1427,    hi: 1525,    name: 'Mobile / space operations', desc: 'mixed government & space' },
+            { lo: 1525,    hi: 1559,    name: 'Inmarsat satellite downlink', desc: 'L-band satcom, narrowband channels' },
+            { lo: 1559,    hi: 1610,    name: 'GNSS (GPS/Galileo L1)', desc: 'navigation, spread spectrum' },
+            { lo: 1610,    hi: 1626.5,  name: 'Iridium satellite downlink', desc: '66-sat constellation, bursty data' },
+            { lo: 1626.5,  hi: 1766,    name: 'MSS uplink / aeronautical satcom', desc: 'uplinks — weak on the ground' },
+        ];
+        // Narrowest containing entry wins (handles nested bands)
+        function bandFor(mhz) {
+            let best = null;
+            for (const b of BANDS) {
+                if (mhz >= b.lo && mhz < b.hi && (!best || b.hi - b.lo < best.hi - best.lo)) best = b;
+            }
+            return best;
+        }
+        function bandLabel(b) {
+            if (!b) return '<span style="color:#666;">no allocation data</span>';
+            const fmt = (v) => (+v.toFixed(3)) + ' MHz';
+            return `${b.name} <span class="band-range">(${fmt(b.lo)}–${fmt(b.hi)})</span>`;
+        }
+
+        // Band jump dropdown: typical use cases, one entry per region of the
+        // spectrum. Selecting one manual-tunes the whole station there
+        // (pauses satellite tracking, rejected during an active pass);
+        // "Auto" hands control back to the scheduler.
+        const BAND_PRESETS = [
+            { label: '🛰 Auto — satellite tracking', f: 'auto' },
+            { label: '📻 FM broadcast radio → 98.0 MHz', f: 98.0 },
+            { label: '🚒 BOS 4 m fire/police (analog) → 85.5 MHz', f: 85.5 },
+            { label: '✈ Airband voice AM (guard) → 121.5 MHz', f: 121.5 },
+            { label: '🛰 Weather satellites APT → 137.62 MHz', f: 137.62 },
+            { label: '📡 APRS packet radio (DL) → 144.8 MHz', f: 144.8 },
+            { label: '📻 2 m amateur FM calling → 145.5 MHz', f: 145.5 },
+            { label: '🚢 Marine VHF Ch 16 → 156.8 MHz', f: 156.8 },
+            { label: '🎧 DAB+ digital radio → 211.6 MHz', f: 211.6 },
+            { label: '🔧 ISM 433 remotes & sensors → 433.92 MHz', f: 433.92 },
+            { label: '🛰 ISS / 70 cm amateur → 437.55 MHz', f: 437.55 },
+            { label: '📟 PMR446 handhelds → 446.1 MHz', f: 446.1 },
+            { label: '📺 DVB-T2 digital TV → 546 MHz', f: 546.0 },
+            { label: '📡 ADS-B aircraft beacons → 1090 MHz', f: 1090.0 },
+            { label: '🛰 Iridium satellite downlink → 1622.5 MHz', f: 1622.5 },
+        ];
+        function buildBandJump() {
+            const sel = document.getElementById('band-jump');
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '📶 Jump to a band…';
+            sel.appendChild(opt);
+            for (const p of BAND_PRESETS) {
+                const o = document.createElement('option');
+                o.value = String(p.f);
+                o.textContent = p.label;
+                sel.appendChild(o);
+            }
+            sel.onchange = bandJump;
+        }
+        async function bandJump() {
+            const sel = document.getElementById('band-jump');
+            const val = sel.value;
+            if (val === '') return;
+            if (val === 'auto') {
+                try { await fetch('/tune?f=auto'); toast('🛰 Satellite tracking resumed'); } catch (e) {}
+                sel.value = '';
+                return;
+            }
+            const mhz = parseFloat(val);
+            try {
+                const res = await fetch('/tune?f=' + encodeURIComponent(mhz));
+                const data = await res.json();
+                if (!data.success) {
+                    toast('Tune failed: ' + (data.error || res.status), true);
+                    sel.value = '';
+                } else {
+                    const b = bandFor(mhz);
+                    toast(`Tuned to ${mhz.toFixed(4)} MHz — ${b ? b.name : 'unknown band'} · 🛰 Auto on this menu resumes tracking`);
+                }
+            } catch (e) {
+                toast('Tune failed: receiver unreachable', true);
+                sel.value = '';
+            }
+        }
 
         function ensureWfBlock(meta) {
             const idx = meta.id;
@@ -609,6 +739,11 @@
             // flex:1 stretches the card to line up with its waterfall block;
             // the border visually separates the dongles
             card.style.cssText = 'flex:1;display:flex;flex-direction:column;border-bottom:1px solid #0f3460;margin-bottom:8px;';
+            // Band allocation of this dongle's effective frequency (its
+            // manual override if set, else the shared tune) — orientation
+            // for what the waterfall is currently looking at
+            const bandTxt = document.createElement('div');
+            bandTxt.style.cssText = 'font-size:0.75em;color:#a8b8d8;background:rgba(15,52,96,0.5);border:1px solid #0f3460;border-radius:3px;padding:3px 5px;line-height:1.5;';
             const sigRow = document.createElement('div');
             sigRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px;font-size:0.9em;';
             const sigVal = document.createElement('span');
@@ -677,6 +812,7 @@
             listenBtn.textContent = '🔊 Listen';
             const sn_card = d.id;
             listenBtn.onclick = () => toggleLiveAudio(sn_card);
+            card.appendChild(bandTxt);
             card.appendChild(sigRow);
             card.appendChild(tl); card.appendChild(recRow);
             card.appendChild(tuneRow); card.appendChild(nudgeRow);
@@ -686,6 +822,7 @@
                 cardEl: card,
                 sigVal, sigFill, tlCtx: tl.getContext('2d'),
                 hist: [], recLed, recTxt, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
+                bandTxt,
             };
             return c;
         }
@@ -737,6 +874,10 @@
             // the input while this dongle overrides the shared frequency
             c.lastD = d;
             const eff = curDongleMHz(d.id);
+            // What this frequency is normally used for (band allocation)
+            c.bandTxt.innerHTML = eff !== null
+                ? '📶 ' + bandLabel(bandFor(eff))
+                : '📶 <span style="color:#666;">—</span>';
             if (document.activeElement !== c.dinput && eff !== null) {
                 c.dinput.value = eff.toFixed(4);
             }
@@ -816,6 +957,8 @@
                 // Update frequency display
                 updateFreqLabels(data.frequency_mhz);
                 lastSharedMHz = data.frequency_mhz;
+                // Band allocation of the shared tune frequency
+                document.getElementById('band-current').innerHTML = '📶 ' + bandLabel(bandFor(data.frequency_mhz));
 
                 // Waterfall recording-band highlight (the primary block is
                 // built dynamically, so guard for it not existing yet)
@@ -1533,7 +1676,7 @@
         setInterval(fetchCrabCount, 10000);
         setInterval(updateUptime, 1000);
         setInterval(liveImgTick, 250);
-        fetchWaterfall(); fetchStatus(); fetchPasses(); fetchTrack(); fetchCrabCount(); updateUptime(); initPanels();
+        fetchWaterfall(); fetchStatus(); fetchPasses(); fetchTrack(); fetchCrabCount(); updateUptime(); initPanels(); buildBandJump();
     </script>
 </body>
 </html>
