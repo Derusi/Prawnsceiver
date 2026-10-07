@@ -11,6 +11,8 @@ independent of whether the offline decoder produced a usable image:
 import os
 import wave
 
+from .decode import satellite_from_filename
+
 # APT timing (source: sigidwiki APT structure, same as noaa-apt)
 APT_RATE = 4160          # pixels per second
 APT_CARRIER = 2400.0     # AM subcarrier
@@ -37,7 +39,11 @@ def estimate_quality(wav_path):
         # recording (and would need too much memory to analyze)
         return None
     x = np.frombuffer(raw, dtype='<i2').astype('float32') / 32768.0
-    if 'iss' in os.path.basename(wav_path).lower():
+    # Route by the tracked satellite parsed from the recording name (exact
+    # match, as in decode.py) — a substring test ('iss' in name) would score
+    # e.g. a 'swiss_sat' recording with the SSTV scorer
+    sat = satellite_from_filename(wav_path)
+    if sat is not None and sat.lower().startswith('iss'):
         return _sstv_quality(np, x, rate)
     return _apt_quality(np, x, rate)
 
