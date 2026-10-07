@@ -105,6 +105,7 @@ ok2, png2, err2 = decode.decode_recording(wav3)
 assert ok2 and png2 == png, (ok2, err2)
 assert open(log).read() == first_invocations   # marker short-circuit: decoder NOT re-run
 # force=True re-runs the decoder and overwrites the marker
+os.remove(log)   # the fake overwrites the log with identical args: absence proves re-invocation
 ok3, png3, err3 = decode.decode_recording(wav3, force=True)
-assert ok3 and open(log).read() != first_invocations, (ok3, err3)
+assert ok3 and os.path.exists(log), (ok3, err3)
 print("decode markers OK")
