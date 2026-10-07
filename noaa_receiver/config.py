@@ -72,4 +72,5 @@ TLE_USER_AGENT = "NOAAh-CrabArk/1.0 (amateur NOAA APT ground station; https://gi
 # gap the recording). Applied only when a dongle's target is within
 # DOPPLER_APPLY_RANGE_HZ of the tracked satellite frequency.
 DOPPLER_APPLY_RANGE_HZ = 500_000
+MANUAL_TUNE_LOCKOUT_MINS = 5  # /tune rejected this close to a predicted pass
 DOPPLER_UPDATE_SECS = 10  # scheduler tick cadence; steps stay < ~1 kHz on ISS

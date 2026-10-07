@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 from . import state
-from .config import AUDIO_RATE, LAT, LON, PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, UTC_OFFSET, WEBDIR
+from .config import (AUDIO_RATE, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS,
+                   PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, UTC_OFFSET, WEBDIR)
 
 from .decode import decode_recording
 from .history import get_recordings, quality_map, set_recording_quality
@@ -332,6 +333,24 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": "Satellite pass in progress — try again after it ends"}).encode())
                 return
+            # Auto-reject near a predicted pass too: a manual tune pauses the
+            # scheduler, so a tune that sticks right before a rise silently
+            # skips that pass (f=auto above is never blocked)
+            now = datetime.utcnow().replace(tzinfo=timezone.utc)
+            lockout = MANUAL_TUNE_LOCKOUT_MINS * 60
+            for p in state.upcoming_passes:
+                rise = p.get("rise_utc")
+                if rise is None or rise <= now:
+                    continue
+                if (rise - now).total_seconds() <= lockout:
+                    mins = max(1, round((rise - now).total_seconds() / 60))
+                    state.log_console(f"Tune rejected: next pass {p.get('sat_name')} rises in {mins} min", "warn")
+                    self.send_response(409)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"success": False, "error": f"Next pass {p.get('sat_name')} rises in {mins} min — tune again after it ends (Auto is still available)"}).encode())
+                    return
+                break  # passes are sorted: the first future one decides
             freq_hz = int(round(mhz * 1e6))
             with state.status_lock:
                 state.manual_frequency = freq_hz
