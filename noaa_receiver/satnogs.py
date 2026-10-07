@@ -35,7 +35,9 @@ def satellite_info(catnr):
         if not sats:
             return None, f"satellite {catnr} not in the SatNOGS DB"
         sat = sats[0]
-        transmitters = _get_json(f"/transmitters/?satellite={sat['sat_id']}")
+        # NB: the transmitter filter is by NORAD id — ?satellite=<uuid>
+        # silently returns the whole unfiltered list (5000+ entries)
+        transmitters = _get_json(f"/transmitters/?satellite__norad_cat_id={catnr}")
     except Exception as e:
         if c:
             return c['info'], None     # serve stale data during outages
