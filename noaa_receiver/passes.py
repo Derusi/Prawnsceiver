@@ -38,9 +38,9 @@ def _fetch_tle_satnogs(catnr):
 
 
 def fetch_tle_lines(catnr):
-    """Fetch raw TLE lines; Celestrak first, SatNOGS DB as fallback."""
+    """Fetch raw TLE lines; SatNOGS DB first (primary), Celestrak as fallback."""
     last_err = None
-    for source in (_fetch_tle_celestrak, _fetch_tle_satnogs):
+    for source in (_fetch_tle_satnogs, _fetch_tle_celestrak):
         try:
             lines = source(catnr)
             if lines:
@@ -58,7 +58,8 @@ def _sat_from_lines(lines, ts):
 
 
 def refresh_tles():
-    """Refresh TLE data from Celestrak, with an on-disk cache fallback."""
+    """Refresh TLE data from SatNOGS (Celestrak fallback), with an on-disk
+    cache as last resort."""
     if not HAS_SKYFIELD:
         state.log_console("Skyfield not available, cannot predict passes", "warn")
         return {}

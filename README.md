@@ -9,8 +9,9 @@ Live at: https://prawnceiver.derusi.de
 
 ## Features
 
-- 🛰️ Auto pass tracking — skyfield-based pass prediction for NOAA 15/18/19,
-  with automatic frequency switching and recording during passes (above 10°)
+- 🛰️ Auto pass tracking — skyfield-based pass prediction for NOAA 15/18/19
+  and the Russian Meteor-M 2-3/2-4 weather satellites, with automatic
+  frequency switching and recording during passes (above 10°)
 - 📡 Live FFT waterfall — real-time RF spectrum from raw IQ samples, with a
   frequency-feature overlay (APT band, demod filter, DC spike)
 - 🔊 Live audio — software FM demodulation streams the downlink as a
@@ -36,8 +37,8 @@ Live at: https://prawnceiver.derusi.de
 - rtl_sdr — raw IQ capture from the dongle (offset-tuned +60 kHz to dodge the
   center DC spike)
 - Python 3 + NumPy — FFT waterfall and software FM demodulation
-- Skyfield — TLE-based pass prediction (TLEs refreshed from Celestrak every
-  3 h, with a local cache fallback)
+- Skyfield — TLE-based pass prediction (TLEs refreshed from SatNOGS with a
+  Celestrak fallback every 3 h, plus a local cache)
 - noaa-apt — APT image decoding
 - sstv — ISS Slow-Scan TV decoding (Robot 36)
 - nginx — HTTPS reverse proxy (Let's Encrypt) in front of the Python server

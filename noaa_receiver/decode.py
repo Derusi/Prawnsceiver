@@ -15,6 +15,11 @@ def decode_recording(wav_path):
 
     if 'iss' in name_lower:
         return _decode_sstv(wav_path, output_png)
+    if 'meteor' in name_lower:
+        # LRPT is a ~72 kHz wide digital mode — noaa-apt would burn CPU for
+        # minutes on it and always fail. Recordings are kept for the pass
+        # history and waterfall analysis until an LRPT decoder is added.
+        return False, None, 'LRPT (Meteor-M) is digital — not decodable by the APT pipeline'
     return _decode_apt(wav_path, output_png)
 
 def _decode_sstv(wav_path, output_png):
