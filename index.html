@@ -639,10 +639,12 @@
         }
 
         function drawWfOverlay() {
-            // Same feature overlay on every dongle's waterfall — the geometry
-            // is frequency-based and all dongles share one frequency
+            // Per-dongle feature overlay: dongles can differ in tune
+            // frequency (manual overrides) AND in demod (recorded)
+            // bandwidth, so each block draws its own actual geometry
             for (const idx in wfBlocks) {
-            const canvas = wfBlocks[idx].overlay;
+            const block = wfBlocks[idx];
+            const canvas = block.overlay;
             const w = canvas.clientWidth, h = canvas.clientHeight;
             if (w === 0 || h === 0) continue;
             const dpr = window.devicePixelRatio || 1;
@@ -652,10 +654,23 @@
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             ctx.clearRect(0, 0, w, h);
 
-            // x position of a frequency offset in kHz relative to the satellite (display spans ±60 kHz)
-            const x = khz => w / 2 + (khz / 60) * (w / 2);
+            // x position of a frequency offset in kHz relative to the
+            // target center — the waterfall spans ±120 kHz (SDR_RATE/2)
+            const x = khz => w / 2 + (khz / 120) * (w / 2);
 
-            // APT signal band: FM deviation ±17.5 kHz around the satellite center
+            // Actually recorded (demod) bandwidth of THIS dongle: the
+            // manual override if set, else the mode default (full ±120 kHz
+            // on broadcast-FM tunes, 22 kHz on satellite bands)
+            const dmeta = (dongleCards[idx] && dongleCards[idx].lastD) || null;
+            let bwKhz;
+            if (dmeta && dmeta.manual_bw_khz !== null && dmeta.manual_bw_khz !== undefined) {
+                bwKhz = dmeta.manual_bw_khz;
+            } else {
+                const c = (block.centerMHz !== null && block.centerMHz !== undefined) ? block.centerMHz : lastSharedMHz;
+                bwKhz = (c !== null && c >= 87.5 && c <= 108) ? 120 : 22;
+            }
+
+            // APT signal band: FM deviation ±17.5 kHz around the target center
             ctx.fillStyle = 'rgba(83, 215, 105, 0.08)';
             ctx.fillRect(x(-17.5), 0, x(17.5) - x(-17.5), h);
             ctx.strokeStyle = 'rgba(83, 215, 105, 0.5)';
@@ -664,13 +679,15 @@
                 ctx.beginPath(); ctx.moveTo(x(k), 0); ctx.lineTo(x(k), h); ctx.stroke();
             }
 
-            // Demod low-pass passband edges: ±22 kHz (audio band kept)
+            // Recorded (demod) passband edges at the ACTUAL bandwidth
             ctx.strokeStyle = 'rgba(243, 156, 18, 0.8)';
-            ctx.setLineDash([5, 4]);
-            for (const k of [-22, 22]) {
-                ctx.beginPath(); ctx.moveTo(x(k), 0); ctx.lineTo(x(k), h); ctx.stroke();
+            if (bwKhz < 120) {
+                ctx.setLineDash([5, 4]);
+                for (const k of [-bwKhz, bwKhz]) {
+                    ctx.beginPath(); ctx.moveTo(x(k), 0); ctx.lineTo(x(k), h); ctx.stroke();
+                }
+                ctx.setLineDash([]);
             }
-            ctx.setLineDash([]);
 
             // Signal-strength measurement band: center 20 FFT bins ≈ ±4.7 kHz
             ctx.strokeStyle = 'rgba(46, 204, 113, 0.9)';
@@ -678,26 +695,31 @@
                 ctx.beginPath(); ctx.moveTo(x(k), h - 46); ctx.lineTo(x(k), h - 26); ctx.stroke();
             }
 
-            // DC spike: dongle is tuned +60 kHz off, spike lands at the right edge
+            // DC spike: dongle is tuned +60 kHz off, so the spike sits at
+            // +60 kHz — the middle of the right half of the display
             ctx.strokeStyle = 'rgba(231, 76, 60, 0.9)';
             ctx.setLineDash([2, 3]);
             ctx.beginPath(); ctx.moveTo(x(60), 0); ctx.lineTo(x(60), h); ctx.stroke();
             ctx.setLineDash([]);
 
-            // kHz axis relative to the satellite, along the bottom
+            // kHz axis relative to the target center, along the bottom
             ctx.font = '12px monospace';
             ctx.textAlign = 'center';
             ctx.fillStyle = '#888';
-            for (const k of [-60, -30, 0, 30, 60]) {
+            for (const k of [-120, -60, 0, 60, 120]) {
                 ctx.fillText((k > 0 ? '+' : '') + k, x(k), h - 4);
             }
 
             // Labels
             wfOverlayLabel(ctx, x(0), 44, 'APT signal ±17.5 kHz', '#53d769');
-            wfOverlayLabel(ctx, x(-22), 16, '◄ demod filter ±22 kHz', '#f39c12');
-            wfOverlayLabel(ctx, x(22), 16, 'demod filter ±22 kHz ►', '#f39c12');
+            if (bwKhz < 120) {
+                wfOverlayLabel(ctx, x(-bwKhz) + 6, 16, '◄ recorded ±' + bwKhz + ' kHz', '#f39c12', 'left');
+                wfOverlayLabel(ctx, x(bwKhz) - 6, 16, 'recorded ±' + bwKhz + ' kHz ►', '#f39c12', 'right');
+            } else {
+                wfOverlayLabel(ctx, x(0), 16, 'recorded: full ±120 kHz band', '#f39c12');
+            }
             wfOverlayLabel(ctx, x(0), h - 30, 'signal meter ±5 kHz', '#2ecc71');
-            wfOverlayLabel(ctx, w - 6, 16, 'DC spike / RTL tuned +60 kHz off', '#e74c3c', 'right');
+            wfOverlayLabel(ctx, x(60), h - 12, 'DC spike +60 kHz', '#e74c3c');
             }
         }
 
