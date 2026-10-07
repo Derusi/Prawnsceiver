@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from . import state
-from .config import LAT, LON, PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, RECORD_ISS, TLE_REFRESH_HOURS, UTC_OFFSET
+from .config import LAT, LON, PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, RECORD_ISS, SAT_DSB_FREQ, TLE_REFRESH_HOURS, UTC_OFFSET
 
 from .decode import decode_recording
 from .history import log_pass
@@ -46,6 +46,12 @@ def _reception_score(p):
 
 def _same_pass(p, q):
     return p["sat_name"] == q["sat_name"] and p["rise_utc"] == q["rise_utc"]
+
+def _tune_freq(p):
+    """Frequency the receiver actually tunes for a pass: the satellite's
+    DSB downlink when we receive DSB for it (APT transmitter off, see
+    SAT_DSB_FREQ), else its tracked band."""
+    return SAT_DSB_FREQ.get(p.get("catnr"), p["frequency"])
 
 def scheduler_thread():
     """Background thread: refresh TLEs, predict passes, trigger frequency switches."""
@@ -130,14 +136,21 @@ def scheduler_thread():
                             with state.signal_lock:
                                 pass_peak = state.pass_signal_peak
                                 state.pass_signal_peak = 0.0
+                        tune = _tune_freq(triggered)
+                        # Reflect the actually-tuned frequency in the pass
+                        # dict so banner, Doppler block and history logging
+                        # all agree (Doppler at the DSB frequency follows
+                        # automatically: the block below reads this field)
+                        triggered["frequency"] = tune
                         state.current_pass = triggered
-                        state.current_frequency = triggered["frequency"]
+                        state.current_frequency = tune
                         state.current_sat_name = triggered["sat_name"]
                         state.is_pass_active = True
                         with state.signal_lock:
                             state.pass_signal_peak = 0.0
                         local_rise = triggered["rise_utc"] + timedelta(hours=UTC_OFFSET)
-                        state.log_console(f"🔴 PASS START: {triggered['sat_name']} {round(triggered['frequency']/1e6,4)} MHz, max {triggered['max_alt']:.0f}° at {local_rise.strftime('%H:%M')}")
+                        mode = " DSB" if SAT_DSB_FREQ.get(triggered.get("catnr")) else ""
+                        state.log_console(f"🔴 PASS START: {triggered['sat_name']} {round(tune/1e6,4)} MHz{mode}, max {triggered['max_alt']:.0f}° at {local_rise.strftime('%H:%M')}")
                     elif not triggered and state.current_pass is not None:
                         finished_pass = state.current_pass
                         local_set = finished_pass["set_utc"] + timedelta(hours=UTC_OFFSET)

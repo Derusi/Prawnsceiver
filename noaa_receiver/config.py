@@ -51,6 +51,17 @@ TRACKED_SATS = {
     59051: ("Meteor-M 2-4", 137912500),
 }
 
+# Satellites whose APT transmitter is off (NOAA 18 and NOAA 19 confirmed dark
+# Oct 2026; SatNOGS flags their APT 'inactive') are received via their DSB
+# (Direct Sounder Broadcast) instead: a public narrowband digital instrument
+# data downlink in the same VHF band. Passes of these satellites tune and
+# record at the DSB frequency; decode refuses (not an image signal). Remove
+# an entry to return a satellite to its APT frequency.
+SAT_DSB_FREQ = {
+    28654: 137350000,   # NOAA 18 DSB
+    33591: 137770000,   # NOAA 19 DSB
+}
+
 # ISS only transmits SSTV during ARISS events; outside events its passes would
 # be recorded as empty WAVs (~350 MB/day). Set False to track ISS in the pass
 # list without recording it.

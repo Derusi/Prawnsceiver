@@ -5,7 +5,7 @@ import shutil
 import subprocess
 
 from . import state
-from .config import NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE, TRACKED_SATS
+from .config import NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE, SAT_DSB_FREQ, TRACKED_SATS
 
 # Recording names are '<sat>_<YYYYMMDD>_<HHMMSS>[-<n>][_<serial>].wav', written by
 # radio.sdr_capture_thread via sat_short_name(). The satellite part is
@@ -14,6 +14,11 @@ _RECORDING_RE = re.compile(r'^(?P<sat>.+?)_(?P<ts>\d{8}_\d{6})(?:-\d+)?(?:_(?P<s
 
 # noaa-apt satellite ids (map overlay / false color need the right orbit)
 _NOAA_APT_SATS = {"NOAA 15": "noaa_15", "NOAA 18": "noaa_18", "NOAA 19": "noaa_19"}
+
+# Satellites received via DSB (APT transmitter off): their recordings hold
+# the DSB instrument-data stream, which noaa-apt cannot decode
+_DSB_RECEIVE_SATS = {name for catnr, (name, _f) in TRACKED_SATS.items()
+                     if catnr in SAT_DSB_FREQ}
 
 
 def sat_short_name(sat_name):
@@ -70,6 +75,10 @@ def decode_recording(wav_path):
         # minutes on it and always fail. Recordings are kept for the pass
         # history and waterfall analysis until an LRPT decoder is added.
         return False, None, 'LRPT (Meteor-M) is digital — not decodable by the APT pipeline'
+    elif sat in _DSB_RECEIVE_SATS:
+        # APT transmitter off: this satellite's passes are recorded on its
+        # DSB downlink (instrument telemetry), not on the APT image band
+        return False, None, 'DSB (instrument telemetry) recording — not decodable by the APT pipeline'
     return _decode_apt(wav_path, output_png, sat)
 
 

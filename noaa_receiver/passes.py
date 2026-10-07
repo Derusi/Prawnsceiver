@@ -6,7 +6,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from . import state
-from .config import LAT, LON, NOAA_APT_TLE_FILE, TRACKED_SATS, PASS_MIN_ALT, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
+from .config import LAT, LON, NOAA_APT_TLE_FILE, TRACKED_SATS, PASS_MIN_ALT, SAT_DSB_FREQ, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
 
 try:
     from skyfield.api import load, wgs84, EarthSatellite
@@ -181,7 +181,7 @@ def passes_to_json(passes):
         result.append({
             "sat_name": p["sat_name"],
             "catnr": p["catnr"],
-            "frequency_mhz": round(p["frequency"] / 1e6, 4),
+            "frequency_mhz": round(SAT_DSB_FREQ.get(p["catnr"], p["frequency"]) / 1e6, 4),
             "rise_local": (p["rise_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%a %d.%m %H:%M"),
             "culm_local": (p["culm_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%H:%M"),
             "set_local": (p["set_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%H:%M"),

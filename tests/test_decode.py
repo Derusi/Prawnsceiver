@@ -23,6 +23,11 @@ for name, want in cases.items():
     got = decode.satellite_from_filename(name)
     assert got == want, (name, got, want)
 assert radio_name is decode.sat_short_name
+# DSB-receive satellites (APT off): refused without running noaa-apt
+ok, png, err = decode.decode_recording("NOAA_18_20261007_215400.wav")
+assert not ok and 'DSB' in err, (ok, err)
+ok, png, err = decode.decode_recording("NOAA_19_20261007_215400_00000991.wav")
+assert not ok and 'DSB' in err, (ok, err)
 print("filename dispatch OK")
 
 FAKE = r'''#!/bin/sh
@@ -50,10 +55,10 @@ os.environ['FAKE_OK'] = '1'
 ok, png, err = decode.decode_recording(touch("Mission_X_20261007_215400.wav"))
 args = open(log).read()
 assert ok and png.endswith('.png') and '-m no' in args and '-s' not in args, (ok, err, args)
-# known NOAA: map overlay + -s; no -T since the TLE file does not exist here
-ok, png, err = decode.decode_recording(touch("NOAA_19_20261007_215400.wav"))
+# known NOAA (APT healthy): map overlay + -s; no -T since the TLE file does not exist here
+ok, png, err = decode.decode_recording(touch("NOAA_15_20261007_215400.wav"))
 args = open(log).read()
-assert ok and '-s noaa_19' in args and '-m yes' in args and '-T' not in args, args
+assert ok and '-s noaa_15' in args and '-m yes' in args and '-T' not in args, (ok, err, args)
 # stale PNG must not count as success when the decoder fails
 os.environ['FAKE_OK'] = '0'
 wav = touch("NOAA_15_20261007_215400.wav"); stale = wav[:-4] + '.png'; open(stale, 'wb').write(b'old')
@@ -70,6 +75,6 @@ ok, png, err = decode.decode_recording(touch("ISS_(Zarya)_20261007_215400.wav"))
 assert not ok and 'sstv' in err.lower(), err
 # missing binary: clean error
 os.environ['PATH'] = '/nonexistent'; decode.NOAA_APT_DIR = '/nonexistent'
-ok, png, err = decode.decode_recording(touch("NOAA_18_20261007_215400.wav"))
+ok, png, err = decode.decode_recording(touch("NOAA_15_20261007_215400.wav"))
 assert not ok and 'could not be run' in err, err
 print("decode_recording paths OK")
