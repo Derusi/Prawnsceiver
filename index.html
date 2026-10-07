@@ -602,7 +602,11 @@
                 drag = { x0: e.clientX, x1: e.clientX };
                 e.preventDefault();
             });
-            wrap.addEventListener('mousemove', e => { if (b.centerMHz !== null) drawHover(e.clientX); });
+            wrap.addEventListener('mousemove', e => {
+                if (b.centerMHz === null) return;
+                if (drag) drag.x1 = e.clientX;   // band follows the pointer
+                drawHover(e.clientX);
+            });
             wrap.addEventListener('mouseleave', () => {
                 drag = null;
                 hover.getContext('2d').clearRect(0, 0, hover.width, hover.height);
