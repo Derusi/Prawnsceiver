@@ -783,7 +783,7 @@
             const tuneRow = document.createElement('div');
             tuneRow.style.cssText = 'display:flex;gap:4px;align-items:center;margin-top:6px;';
             const dinput = document.createElement('input');
-            dinput.type = 'number'; dinput.step = '0.001'; dinput.min = '24'; dinput.max = '1766';
+            dinput.type = 'number'; dinput.step = 'any'; dinput.min = '24'; dinput.max = '1766';
             dinput.style.cssText = 'flex:1;min-width:0;background:#0f3460;border:1px solid #53d769;color:#e0e0e0;border-radius:3px;padding:2px 4px;font-family:monospace;font-size:0.9em;';
             const dTune = document.createElement('button');
             dTune.textContent = 'Tune';
@@ -801,10 +801,28 @@
             nudgeRow.appendChild(dMinus); nudgeRow.appendChild(dPlus); nudgeRow.appendChild(dSync);
             const sn_t = d.id;
             const tuneD = (mhz) => fetch('/tune_dongle?d=' + encodeURIComponent(sn_t) + '&f=' + mhz);
-            dTune.onclick = () => {
+            // Read the input IMMEDIATELY: clicking Tune blurs the field on
+            // mousedown, and the 200 ms status poll may overwrite the typed
+            // value with the current frequency before the click handler runs
+            // (the tune then went nowhere and looked dead)
+            const doTune = () => {
                 const v = parseFloat(dinput.value);
-                if (!isNaN(v)) tuneD(v);
+                if (isNaN(v)) { toast('Enter a frequency in MHz (24-1766)', true); return; }
+                tuneD(v.toFixed(4))
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            dinput._typedAt = 0;
+                            toast(`Tuned dongle ${d.index}${d.primary ? ' ★' : ''} to ${v.toFixed(4)} MHz — Sync on its card to rejoin`);
+                        } else {
+                            toast(`Tune failed: ${data.error || 'unknown error'}`, true);
+                        }
+                    })
+                    .catch(() => toast('Tune failed: receiver unreachable', true));
             };
+            dTune.onclick = doTune;
+            dinput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doTune(); } });
+            dinput.addEventListener('input', () => { dinput._typedAt = Date.now(); });
             const nudge = (delta) => {
                 const cur = curDongleMHz(sn_t);
                 if (cur !== null) tuneD((cur + delta).toFixed(4));
@@ -889,7 +907,8 @@
             c.bandTxt.innerHTML = eff !== null
                 ? '📶 ' + bandLabel(bandFor(eff))
                 : '📶 <span style="color:#666;">—</span>';
-            if (document.activeElement !== c.dinput && eff !== null) {
+            if (document.activeElement !== c.dinput && eff !== null
+                    && Date.now() - (c.dinput._typedAt || 0) > 3000) {
                 c.dinput.value = eff.toFixed(4);
             }
             c.dinput.style.border = '1px solid ' + (d.manual_frequency_mhz ? '#f39c12' : '#53d769');
@@ -1687,6 +1706,7 @@
         setInterval(fetchCrabCount, 10000);
         setInterval(updateUptime, 1000);
         setInterval(liveImgTick, 250);
+        document.getElementById('tune-freq').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); tuneManual(); } });
         fetchWaterfall(); fetchStatus(); fetchPasses(); fetchTrack(); fetchCrabCount(); updateUptime(); initPanels(); buildBandJump();
     </script>
 </body>
