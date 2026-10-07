@@ -424,6 +424,15 @@
             const overlay = document.createElement('canvas');
             overlay.style.cssText = 'display:none;position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
             wrap.appendChild(overlay);
+            // Selected (recorded) range band: shown while this dongle has a
+            // manual frequency or bandwidth selection — the drag result, the
+            // card controls, everything lands here
+            const selHl = document.createElement('div');
+            selHl.style.cssText = 'display:none;position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);pointer-events:none;background:rgba(243,156,18,0.10);border-left:1px solid rgba(243,156,18,0.75);border-right:1px solid rgba(243,156,18,0.75);';
+            const selLbl = document.createElement('div');
+            selLbl.style.cssText = 'position:absolute;bottom:2px;left:50%;transform:translateX(-50%);background:#f39c12;color:#1a1a2e;font-size:0.75em;padding:1px 6px;border-radius:3px;white-space:nowrap;';
+            selHl.appendChild(selLbl);
+            wrap.appendChild(selHl);
             const hover = document.createElement('canvas');
             hover.className = 'wf-hover';
             wrap.appendChild(hover);
@@ -453,7 +462,7 @@
             b = wfBlocks[idx] = {
                 wfCtx: wfCanvas.getContext('2d'),
                 specCtx: specCanvas.getContext('2d'),
-                timeCtx, overlay, hover, title, led, sig,
+                timeCtx, overlay, hover, title, led, sig, selHl, selLbl,
                 block, collapseBtn, cardHolder, freqLabels,
                 serial: meta.id, centerMHz: null,
             };
@@ -572,6 +581,10 @@
                             if (c && c.lastD) {
                                 c.lastD.manual_frequency_mhz = center;
                                 if (bw) c.lastD.manual_bw_khz = bw;
+                            }
+                            if (c && c.bwInput && bw) {
+                                c.bwInput.value = String(Math.round(bw * 10) / 10);
+                                c.bwInput._typedAt = 0;
                             }
                             b.centerMHz = center;
                             if (wfOverlayOn) drawWfOverlay();
@@ -1057,6 +1070,26 @@
                 const want = d.manual_bw_khz !== null && d.manual_bw_khz !== undefined
                     ? String(Math.round(d.manual_bw_khz * 100) / 100) : '';
                 if (c.bwInput.value !== want) c.bwInput.value = want;
+            }
+            // Selected-range band on the waterfall: visible while a manual
+            // frequency or bandwidth selection is active; width = the
+            // recorded bandwidth (manual value, else the mode default)
+            const selActive = !!d.manual_frequency_mhz
+                || (d.manual_bw_khz !== null && d.manual_bw_khz !== undefined);
+            const wfB = wfBlocks[d.id];
+            if (wfB) {
+                if (selActive) {
+                    let selBwKhz = d.manual_bw_khz;
+                    if (selBwKhz === null || selBwKhz === undefined) {
+                        const effC = curDongleMHz(d.id);
+                        selBwKhz = (effC !== null && effC >= 87.5 && effC <= 108) ? 120 : 22;
+                    }
+                    wfB.selHl.style.display = 'block';
+                    wfB.selHl.style.width = Math.min(100, (selBwKhz / 120) * 100) + '%';
+                    wfB.selLbl.textContent = '\u00b1' + (Math.round(selBwKhz * 10) / 10) + ' kHz';
+                } else {
+                    wfB.selHl.style.display = 'none';
+                }
             }
             // Tuning infobox: this dongle's correction (value + source), the
             // settings shared by all dongles, and any manual override
