@@ -3,9 +3,10 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 
 from . import state
-from .config import NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE, SAT_DSB_FREQ, TRACKED_SATS
+from .config import NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE, SAT_DSB_FREQ, SDR_RATE, TRACKED_SATS
 
 # Recording names are '<sat>_<YYYYMMDD>_<HHMMSS>[-<n>][_<serial>].wav', written by
 # radio.sdr_capture_thread via sat_short_name(). The satellite part is
@@ -49,6 +50,46 @@ def _png_path(wav_path):
     base, _ = os.path.splitext(wav_path)
     return base + '.png'
 
+def _satdump_decode(pipeline, iq_path, out_dir, label):
+    """Decode a raw IQ recording with SatDump (runs minutes on the Pi — the
+    caller spawns this detached so the scheduler never blocks on it). The
+    out_dir doubles as the run marker: existing = already decoded/decoding."""
+    exe = shutil.which('satdump')
+    if not exe:
+        state.log_console(f"SatDump is not installed - cannot decode {label}", "warn")
+        return
+    os.makedirs(out_dir, exist_ok=True)
+    cmd = [exe, pipeline, 'baseband', iq_path, out_dir,
+           '--samplerate', str(SDR_RATE), '--baseband_format', 'cu8']
+    state.log_console(f"🛰 SatDump decode started ({label}): {pipeline}")
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+    except subprocess.TimeoutExpired:
+        state.log_console(f"SatDump decode timed out ({label})", "warn")
+        return
+    except Exception as e:
+        state.log_console(f"SatDump decode error ({label}): {e}", "error")
+        return
+    products = [f for f in os.listdir(out_dir) if os.path.isfile(os.path.join(out_dir, f))]
+    if products:
+        state.log_console(f"🛰 SatDump decode done ({label}): {len(products)} product file(s) in {os.path.basename(out_dir)}/")
+    else:
+        state.log_console(f"SatDump produced no products ({label}) - signal too weak or transmitter off", "warn")
+
+def _decode_iq(wav_path, pipeline, suffix):
+    """SatDump decode of the raw IQ sibling of a recording. Returns
+    (started, message); spawns the actual work detached."""
+    base, _ = os.path.splitext(wav_path)
+    iq_path, out_dir = base + '.iq.u8', base + suffix
+    label = os.path.basename(wav_path)
+    if not os.path.exists(iq_path):
+        return False, f'No raw IQ capture for {label} - cannot decode'
+    if os.path.exists(out_dir):
+        return True, 'already decoded'
+    threading.Thread(target=_satdump_decode, args=(pipeline, iq_path, out_dir, label),
+                     daemon=True, name='satdump').start()
+    return True, 'decode started in the background (SatDump)'
+
 
 def _remove_quietly(path):
     try:
@@ -71,14 +112,15 @@ def decode_recording(wav_path):
     elif sat.startswith('ISS'):
         return _decode_sstv(wav_path, output_png)
     elif sat.startswith('Meteor'):
-        # LRPT is a ~72 kHz wide digital mode — noaa-apt would burn CPU for
-        # minutes on it and always fail. Recordings are kept for the pass
-        # history and waterfall analysis until an LRPT decoder is added.
-        return False, None, 'LRPT (Meteor-M) is digital — not decodable by the APT pipeline'
+        # LRPT is a ~72 kHz wide QPSK digital mode — noaa-apt cannot decode
+        # it, but the raw IQ capture can (SatDump meteor_m2-x_lrpt)
+        started, msg = _decode_iq(wav_path, 'meteor_m2-x_lrpt', '_lrpt')
+        return (True, None, f'LRPT recording - {msg}') if started else (False, None, f'LRPT recording - {msg}')
     elif sat in _DSB_RECEIVE_SATS:
-        # APT transmitter off: this satellite's passes are recorded on its
-        # DSB downlink (instrument telemetry), not on the APT image band
-        return False, None, 'DSB (instrument telemetry) recording — not decodable by the APT pipeline'
+        # APT transmitter off: this satellite is received via its DSB
+        # downlink (instrument telemetry) - decodable from the raw IQ
+        started, msg = _decode_iq(wav_path, 'noaa_dsb', '_dsb')
+        return (True, None, f'DSB recording - {msg}') if started else (False, None, f'DSB recording - {msg}')
     return _decode_apt(wav_path, output_png, sat)
 
 

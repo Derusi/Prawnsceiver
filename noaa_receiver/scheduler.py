@@ -224,6 +224,7 @@ def scheduler_thread():
                             break  # sorted newest-first: older files belong to earlier passes
                         wav_base = os.path.basename(latest)
                         latest_png = latest.replace('.wav', '.png')
+                        png_path = latest_png if os.path.exists(latest_png) else None
                         rec_decoded = os.path.exists(latest_png)
                         if not rec_decoded:
                             state.log_console(f"Auto-decoding: {wav_base}")
@@ -240,7 +241,7 @@ def scheduler_thread():
                         if wav_base.endswith(dongle_suffixes):
                             continue
                         decoded = bool(rec_decoded)
-                        png_file = os.path.basename(latest_png) if rec_decoded else None
+                        png_file = os.path.basename(png_path) if (png_path and os.path.exists(png_path)) else None
                         wav_name = wav_base
                         quality = rec_quality
                     # Snapshot the SatNOGS DB record with the pass: the
