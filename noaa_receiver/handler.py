@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 from . import state
-from .config import (AUDIO_RATE, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS,
+from .config import (AUDIO_RATE, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS, SAT_DSB_FREQ,
                    PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, UTC_OFFSET, WEBDIR)
 
 from .decode import decode_recording
@@ -92,7 +92,7 @@ def get_status():
         if p["rise_utc"] > now:
             status["next_pass"] = {
                 "sat_name": p["sat_name"],
-                "frequency_mhz": round(p["frequency"] / 1e6, 4),
+                "frequency_mhz": round(SAT_DSB_FREQ.get(p.get("catnr"), p["frequency"]) / 1e6, 4),
                 "rise_local": (p["rise_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%a %d.%m %H:%M"),
                 "max_alt": p["max_alt"],
                 "duration_min": p["duration_min"],
