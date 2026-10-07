@@ -29,9 +29,17 @@
         #dongle-status-col.collapsed #dongle-cards { display: none; }
         #container { display: flex; flex: 1; min-height: 300px; }
         #main-panel { flex: 1; overflow-y: auto; padding: 12px 15px; }
-        #status-panel { width: var(--sidebar-width); background: #16213e; padding: 12px 15px; border-left: 2px solid #0f3460; overflow-y: auto; flex-shrink: 0; }
+        /* The panel's 15px+15px padding and 2px border sit inside its box, so
+           they are added on top of --sidebar-width: the .status-item boxes end
+           up the same 280px wide as the dongle cards, not 32px narrower */
+        #status-panel { width: calc(var(--sidebar-width) + 32px); background: #16213e; padding: 12px 15px; border-left: 2px solid #0f3460; overflow-y: auto; flex-shrink: 0; }
         #status-panel.collapsed { width: auto; }
         #status-panel.collapsed #status-items { display: none; }
+        /* Dark slim scrollbars that belong visually to the panel they sit in */
+        * { scrollbar-width: thin; scrollbar-color: #0f3460 transparent; }
+        *::-webkit-scrollbar { width: 8px; height: 8px; }
+        *::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 4px; }
+        *::-webkit-scrollbar-track { background: transparent; }
         .section-title { color: #53d769; font-size: 1em; margin-bottom: 8px; margin-top: 12px; }
         .section-title:first-child { margin-top: 0; }
         .panel-head { display: flex; align-items: center; justify-content: space-between; }
