@@ -65,7 +65,9 @@ ok, png, err = decode.decode_recording(touch("Meteor-M_2-4_20261007_215400.wav")
 assert not ok and 'LRPT' in err and not os.path.exists(log)
 # ISS without the sstv package: clear error, no crash
 ok, png, err = decode.decode_recording(touch("ISS_(Zarya)_20261007_215400.wav"))
-assert not ok and 'sstv' in err, err
+# no sstv package -> 'not installed'; package present -> clean decode
+# error on the malformed fixture. Both are valid no-crash failures.
+assert not ok and 'sstv' in err.lower(), err
 # missing binary: clean error
 os.environ['PATH'] = '/nonexistent'; decode.NOAA_APT_DIR = '/nonexistent'
 ok, png, err = decode.decode_recording(touch("NOAA_18_20261007_215400.wav"))
