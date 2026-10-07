@@ -79,6 +79,24 @@ def _rtl_tcp_set(sock, cmd, value):
     """Send one rtl_tcp control command."""
     sock.sendall(struct.pack('!BI', cmd, value))
 
+def kill_stale_rtl_tcp():
+    """Kill rtl_tcp processes left over from a previous server run.
+
+    Killing the server does not kill its rtl_tcp children (they exit only
+    with their parent's pipe, and their stdout is DEVNULL) — they survive,
+    keep the dongles claimed AND keep their ports bound, so a fresh server's
+    own rtl_tcp would silently fail to bind and the capture threads would
+    talk to the stale processes. Called once at startup, before any capture
+    thread starts.
+    """
+    try:
+        r = subprocess.run(['pkill', '-f', 'rtl_tcp'], capture_output=True)
+        if r.returncode == 0:
+            time.sleep(1.0)   # let the kernel release the devices and ports
+            state.log_console("Killed stale rtl_tcp processes from a previous run", "warn")
+    except FileNotFoundError:
+        pass   # pkill not available (non-Linux) — capture threads will surface any conflict
+
 def _recv_exact(sock, n):
     """Read exactly n bytes from the IQ stream; None when the stream ends."""
     buf = b''
@@ -258,6 +276,12 @@ def sdr_capture_thread(serial):
             header = _recv_exact(sock, 12)
             if header is None or header[:4] != b'RTL0':
                 raise RuntimeError('bad rtl_tcp handshake')
+            if proc.poll() is not None:
+                # Our child died (e.g. it could not bind its port because a
+                # stale rtl_tcp still holds it) and something else is
+                # serving that port — do NOT silently use the foreign
+                # stream; restart loudly instead.
+                raise RuntimeError('rtl_tcp exited immediately (port conflict? device busy?)')
             if primary:
                 state.rtl_sdr_proc = proc
                 state.log_console(f"rtl_tcp started (pid {proc.pid}, primary dongle {serial}), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ + correction}Hz, DC spike displaced), gain={SDR_GAIN}dB")

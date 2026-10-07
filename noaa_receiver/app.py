@@ -8,13 +8,17 @@ from .config import LAT, LON, LOGDIR, PASS_MIN_ALT, PORT, RECORD_DIR
 
 from .handler import NOAAHandler
 from .history import migrate_pass_history
-from .radio import sdr_thread
+from .radio import kill_stale_rtl_tcp, sdr_thread
 from .scheduler import scheduler_thread
 
 
 def main():
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     socketserver.ThreadingTCPServer.daemon_threads = True
+
+    # rtl_tcp children survive a server kill and keep the dongles claimed —
+    # clear them before the capture threads start their own
+    kill_stale_rtl_tcp()
 
     # Link pre-migration history entries to their recordings
     os.makedirs(LOGDIR, exist_ok=True)
