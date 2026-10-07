@@ -493,10 +493,16 @@
         // dongle there via /tune_dongle (Sync on its card rejoins tracking).
         function wireWfInteractions(b, wrap, wfCanvas, meta) {
             const hover = b.hover;
+            let drag = null;   // {x0, x1} while the left button is held
             const freqAt = (clientX) => {
                 const r = wfCanvas.getBoundingClientRect();
                 const frac = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
                 return { frac, mhz: b.centerMHz + (frac - 0.5) * 0.240 };
+            };
+            const spanOf = (x0, x1) => {
+                const a = freqAt(Math.min(x0, x1)), c = freqAt(Math.max(x0, x1));
+                const fLo = Math.min(a.mhz, c.mhz), fHi = Math.max(a.mhz, c.mhz);
+                return { fLo, fHi, center: (fLo + fHi) / 2, bwKhz: (fHi - fLo) * 1000 };
             };
             const drawHover = (clientX) => {
                 const w = hover.clientWidth, h = hover.clientHeight;
@@ -508,6 +514,32 @@
                 const ctx = hover.getContext('2d');
                 ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
                 ctx.clearRect(0, 0, w, h);
+                if (drag && Math.abs(drag.x1 - drag.x0) >= 1) {
+                    // drag in progress: translucent band between the edges,
+                    // solid edge lines, live center/bandwidth label on top
+                    const xa = Math.min(drag.x0, drag.x1), xb = Math.max(drag.x0, drag.x1);
+                    const { frac: fa } = freqAt(xa), { frac: fb } = freqAt(xb);
+                    const pa = fa * w, pb = fb * w;
+                    ctx.fillStyle = 'rgba(83, 215, 105, 0.12)';
+                    ctx.fillRect(pa, 0, pb - pa, h);
+                    ctx.strokeStyle = 'rgba(83, 215, 105, 0.9)';
+                    ctx.setLineDash([]);
+                    for (const px of [pa, pb]) {
+                        ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+                    }
+                    const s = spanOf(drag.x0, drag.x1);
+                    const bw = Math.max(1, Math.min(120, s.bwKhz));
+                    const label = `→ ${s.center.toFixed(4)} MHz ± ${bw.toFixed(1)} kHz`;
+                    ctx.font = '12px monospace';
+                    const tw = ctx.measureText(label).width;
+                    let lx = (pa + pb) / 2 - tw / 2;
+                    lx = Math.min(w - tw - 6, Math.max(6, lx));
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    ctx.fillRect(lx - 3, 4, tw + 6, 17);
+                    ctx.fillStyle = '#53d769';
+                    ctx.fillText(label, lx, 17);
+                    return;
+                }
                 const { frac, mhz } = freqAt(clientX);
                 const x = frac * w;
                 ctx.strokeStyle = 'rgba(224, 224, 224, 0.8)';
@@ -525,25 +557,55 @@
                 ctx.fillStyle = '#e0e0e0';
                 ctx.fillText(label, lx, 17);
             };
-            wrap.addEventListener('mousemove', e => { if (b.centerMHz !== null) drawHover(e.clientX); });
-            wrap.addEventListener('mouseleave', () => {
-                hover.getContext('2d').clearRect(0, 0, hover.width, hover.height);
-            });
-            wrap.title = 'Click to tune this dongle to the clicked frequency';
-            wrap.addEventListener('click', e => {
-                if (b.centerMHz === null) return;
-                const { mhz } = freqAt(e.clientX);
-                fetch('/tune_dongle?d=' + encodeURIComponent(b.serial) + '&f=' + mhz.toFixed(4))
+            // Click tunes this dongle to the clicked frequency; drag spans
+            // a band whose CENTER becomes the tune frequency and whose WIDTH
+            // becomes the recorded (demod) bandwidth — one request, f + bw.
+            const applyTune = (center, bwKhz) => {
+                const bw = bwKhz ? Math.max(1, Math.min(120, bwKhz)) : 0;
+                fetch('/tune_dongle?d=' + encodeURIComponent(b.serial)
+                        + '&f=' + center.toFixed(4) + (bw ? '&bw=' + bw.toFixed(1) : ''))
                     .then(r => r.json())
                     .then(data => {
                         if (data.success) {
-                            toast(`Tuned dongle ${meta.index}${meta.primary ? ' ★' : ''} to ${mhz.toFixed(4)} MHz — Sync on its card to rejoin`);
+                            // optimistic: the band geometry shows immediately
+                            const c = dongleCards[b.serial];
+                            if (c && c.lastD) {
+                                c.lastD.manual_frequency_mhz = center;
+                                if (bw) c.lastD.manual_bw_khz = bw;
+                            }
+                            b.centerMHz = center;
+                            if (wfOverlayOn) drawWfOverlay();
+                            toast(bw
+                                ? `Dongle ${meta.index}${meta.primary ? ' ★' : ''} → ${center.toFixed(4)} MHz, records ±${bw.toFixed(1)} kHz — Sync on its card to rejoin`
+                                : `Tuned dongle ${meta.index}${meta.primary ? ' ★' : ''} to ${center.toFixed(4)} MHz — Sync on its card to rejoin`);
                         } else {
                             toast(`Tune failed: ${data.error || 'unknown error'}`, true);
                         }
                     })
                     .catch(() => toast('Tune failed: receiver unreachable', true));
+            };
+            wrap.addEventListener('mousedown', e => {
+                if (b.centerMHz === null || e.button !== 0) return;
+                drag = { x0: e.clientX, x1: e.clientX };
+                e.preventDefault();
             });
+            wrap.addEventListener('mousemove', e => { if (b.centerMHz !== null) drawHover(e.clientX); });
+            wrap.addEventListener('mouseleave', () => {
+                drag = null;
+                hover.getContext('2d').clearRect(0, 0, hover.width, hover.height);
+            });
+            wrap.addEventListener('mouseup', e => {
+                if (b.centerMHz === null || !drag) return;
+                const x0 = drag.x0, x1 = drag.x1;
+                drag = null;
+                if (Math.abs(x1 - x0) < 5) {
+                    applyTune(freqAt(x1).mhz, 0);   // plain click: retune only
+                    return;
+                }
+                const { center, bwKhz } = spanOf(x0, x1);
+                applyTune(center, bwKhz);
+            });
+            wrap.title = 'Click to tune this dongle; drag to set frequency (center) and recorded bandwidth (width)';
         }
 
         function toast(msg, isError) {
