@@ -229,7 +229,7 @@ def passes_to_json(passes):
         }
         if demod_bw_khz:
             entry["demod_bw_khz"] = demod_bw_khz
-        tx = transmitter_status(p["catnr"], tuned)
+        tx = transmitter_status(p["catnr"])
         if tx:
             entry["tx"] = {
                 "description": tx.get("description"),
