@@ -1,144 +1,191 @@
-"""DSP chain: offset rotation, low-pass filtering, FM discrimination."""
+"""DSP chain: offset rotation, low-pass filtering, Doppler NCO, FM discrimination.
+
+Every stage carries its state in a per-capture-thread dict (new_state()) so
+that block-wise processing is identical to processing the whole stream: FIR
+tails, the decimation phase, the rotator counter and the NCO phase all
+survive block boundaries. Two dongles demodulate concurrently, so nothing
+stream-specific may live in a module global — that includes the Doppler
+NCO's cached ramp, which therefore sits in the state dict too.
+"""
+from math import gcd
+
+import numpy as np
+
 from .config import SDR_RATE
 
-def iq_to_complex(iq_bytes):
-    """Convert raw 8-bit IQ bytes to a complex64 baseband array."""
-    import numpy as np
-    raw = np.frombuffer(iq_bytes, dtype=np.uint8).astype(np.float32) - 127.5
-    return (raw[0::2] + 1j * raw[1::2]).astype(np.complex64)
+TWO_PI = 2.0 * np.pi
 
-# State shared by a (single-threaded) DSP chain: rotator sample counter and
-# FIR filter tails, continuous across blocks. Each capture thread owns its
-# own state dict (dsp.new_state()) — a shared one would corrupt the
-# demodulation once several dongles demodulate concurrently.
+
 def new_state():
-    return {"rot": 0, "fir_tail": None, "afir_tail": None, "last_c": None, "audio_pos": 0, "nco_phase": 0.0}
+    """Fresh DSP state for one IQ stream."""
+    return {
+        "rot": 0,            # offset rotator: sample counter mod its period
+        "fir_tail": None,    # IQ low-pass: last numtaps-1 input samples
+        "afir_tail": None,   # audio low-pass: last numtaps-1 input samples
+        "last_c": None,      # discriminator: previous block's last sample
+        "audio_pos": 0,      # decimation phase: sample count mod decimation
+        "nco_phase": 0.0,    # Doppler NCO phase in rad, kept in [0, 2*pi)
+        "nco_key": None,     # (doppler_hz, fs) the cached ramp was built for
+        "nco_ramp": None,    # exp(i*dphase*j), j < block length
+    }
+
 
 demod_state = new_state()  # default for single-stream callers
 
+
+def iq_to_complex(iq_bytes):
+    """Convert raw 8-bit interleaved IQ bytes to a complex64 baseband array."""
+    raw = np.frombuffer(iq_bytes, dtype=np.uint8)
+    if len(raw) & 1:
+        raw = raw[:-1]
+    f = raw.astype(np.float32)
+    f -= 127.5
+    # Interleaved float32 pairs viewed as complex64 — no second copy
+    return f.view(np.complex64)
+
+
+# ---------- offset rotator ----------
+# One LUT per (offset, fs, block length). For the periodic phasor (period
+# fs/gcd(offset, fs) = 4 samples at 60 kHz / 240 kHz) the LUT holds one
+# pre-rolled block-length row per rotator phase, so a block costs a single
+# complex multiply with no index arithmetic. Offsets with a long period fall
+# back to a one-period LUT with modulo indexing.
 _phasor_luts = {}
+_MAX_ROLLED_ROWS = 64
+
 
 def frequency_shift(c, offset_hz, fs, st=None):
-    st = st if st is not None else demod_state
     """Rotate baseband so a signal at -offset_hz moves to 0 Hz.
 
     The dongle is tuned offset_hz ABOVE the wanted frequency, so the signal
     arrives at -offset_hz and the DC spike at 0; this rotation centers the
-    signal and displaces the DC spike to +offset_hz. Phase is continuous
-    across calls via st["rot"]. The phasor is periodic in
-    fs/gcd(offset_hz, fs) samples (4 for 60 kHz at 240 kHz), so a tiny LUT
-    replaces computing exp() for every sample — this runs per IQ block.
+    signal and displaces the DC spike to +offset_hz. The phase is continuous
+    across calls via st["rot"].
     """
-    import numpy as np
+    st = st if st is not None else demod_state
     if offset_hz == 0:
         return c
-    key = (int(offset_hz), int(fs))
+    n = len(c)
+    key = (int(offset_hz), int(fs), n)
     lut = _phasor_luts.get(key)
     if lut is None:
-        from math import gcd
-        period = int(fs // gcd(int(offset_hz), int(fs)))
-        lut = np.exp(2j * np.pi * offset_hz / fs * np.arange(period)).astype(np.complex64)
+        period = int(fs) // gcd(int(offset_hz), int(fs))
+        w = TWO_PI * offset_hz / fs
+        if period <= _MAX_ROLLED_ROWS:
+            base = np.exp(1j * w * np.arange(period + n)).astype(np.complex64)
+            lut = np.stack([base[r:r + n] for r in range(period)])
+        else:
+            lut = np.exp(1j * w * np.arange(period)).astype(np.complex64)
         _phasor_luts[key] = lut
-    period = len(lut)
-    n = len(c)
-    idx = (np.arange(n) + st["rot"]) % period
-    st["rot"] = int((st["rot"] + n) % period)
-    return (c * lut[idx]).astype(np.complex64)
+    if lut.ndim == 2:
+        period = lut.shape[0]
+        rot = lut[st["rot"]]
+    else:
+        period = len(lut)
+        rot = lut[(np.arange(n) + st["rot"]) % period]
+    st["rot"] = (st["rot"] + n) % period
+    return c * rot
 
+
+# ---------- low-pass FIRs ----------
 _lowpass_taps = {}
+_real_taps = {}
+FIR_TAPS = 25
+
+
+def _windowed_sinc(cutoff_hz, numtaps):
+    m = np.arange(numtaps) - (numtaps - 1) / 2.0
+    h = np.sinc(2 * cutoff_hz / SDR_RATE * m) * np.hamming(numtaps)
+    return (h / h.sum()).astype(np.float32)
+
 
 def get_lowpass_taps(cutoff_hz=22000.0):
-    """Windowed-sinc low-pass FIR taps, cached per cutoff (~22 kHz for the
-    APT channel; ~95 kHz for broadcast FM test tunes)."""
+    """Windowed-sinc low-pass FIR taps (complex64, for the IQ path), cached
+    per cutoff. 25 taps at 240 kHz: -3 dB at ~18 kHz for the 22 kHz design
+    cutoff, -8 dB at 24 kHz, below -55 dB from 40 kHz up."""
     key = int(cutoff_hz)
     if key not in _lowpass_taps:
-        import numpy as np
-        numtaps = 25
-        m = np.arange(numtaps) - (numtaps - 1) / 2.0
-        h = np.sinc(2 * cutoff_hz / SDR_RATE * m) * np.hamming(numtaps)
-        _lowpass_taps[key] = (h / h.sum()).astype(np.float32)
+        _lowpass_taps[key] = _windowed_sinc(cutoff_hz, FIR_TAPS).astype(np.complex64)
     return _lowpass_taps[key]
 
-def lowpass(c, cutoff_hz=22000.0, st=None):
-    st = st if st is not None else demod_state
-    """Low-pass filter with state carried across blocks (no boundary artifacts)."""
-    import numpy as np
-    taps = get_lowpass_taps(cutoff_hz)
-    tail = st["fir_tail"]
-    if tail is None or len(tail) != len(taps) - 1:
-        tail = np.zeros(len(taps) - 1, dtype=np.complex64)
-    x = np.concatenate([tail, c])
-    out = np.convolve(x, taps.astype(np.complex64), mode='valid')
-    st["fir_tail"] = x[-(len(taps) - 1):].copy()
-    return out.astype(np.complex64)
-
-_real_taps = {}
 
 def get_real_taps(cutoff_hz):
     """Real (audio) low-pass FIR taps, cached per cutoff."""
     key = int(cutoff_hz)
     if key not in _real_taps:
-        import numpy as np
-        numtaps = 25
-        m = np.arange(numtaps) - (numtaps - 1) / 2.0
-        h = np.sinc(2 * cutoff_hz / SDR_RATE * m) * np.hamming(numtaps)
-        _real_taps[key] = (h / h.sum()).astype(np.float32)
+        _real_taps[key] = _windowed_sinc(cutoff_hz, FIR_TAPS)
     return _real_taps[key]
 
-def lowpass_audio(a, cutoff_hz, st=None):
+
+def lowpass(c, cutoff_hz=22000.0, st=None):
+    """Complex low-pass with the filter tail carried across blocks."""
     st = st if st is not None else demod_state
-    """Low-pass the real discriminator output before decimation (anti-alias)."""
-    import numpy as np
+    taps = get_lowpass_taps(cutoff_hz)
+    tail = st["fir_tail"]
+    if tail is None or len(tail) != len(taps) - 1:
+        tail = np.zeros(len(taps) - 1, dtype=np.complex64)
+    x = np.concatenate([tail, c])
+    st["fir_tail"] = x[-(len(taps) - 1):].copy()
+    return np.convolve(x, taps, mode='valid')
+
+
+def lowpass_audio(a, cutoff_hz, st=None):
+    """Real low-pass on the discriminator output (anti-alias before decimation)."""
+    st = st if st is not None else demod_state
     taps = get_real_taps(cutoff_hz)
     tail = st["afir_tail"]
     if tail is None or len(tail) != len(taps) - 1:
         tail = np.zeros(len(taps) - 1, dtype=np.float32)
-    x = np.concatenate([tail, a.astype(np.float32)])
-    out = np.convolve(x, taps, mode='valid')
+    x = np.concatenate([tail, np.asarray(a, dtype=np.float32)])
     st["afir_tail"] = x[-(len(taps) - 1):].copy()
-    return out
+    return np.convolve(x, taps, mode='valid')
 
-_doppler_lut = {"key": None, "lut": None}
 
+# ---------- Doppler NCO ----------
 def doppler_shift(c, doppler_hz, fs, st):
     """Rotate baseband by -doppler_hz with a phase-continuous NCO.
 
     Compensates a Doppler-shifted carrier into the demod center: a signal
     observed at +doppler_hz (approaching satellite) lands at 0 Hz. The
-    scheduler steps doppler_hz every few seconds — a frequency change in an
+    scheduler steps doppler_hz every few seconds; a frequency change in an
     NCO must not jump the phase, so the phase (st["nco_phase"]) accumulates
-    across blocks AND across doppler updates. (An absolute-sample-count
+    across blocks AND across Doppler updates. (An absolute-sample-count
     phase like -2*pi*d*k/fs jumps by an arbitrary angle at every update:
     each jump is a full-scale click in the demodulated audio.)
-    The rotation phasor for integer Hz is periodic with fs/gcd(doppler_hz,
-    fs) samples, so it comes from a single-slot LUT that is only rebuilt
-    when doppler_hz changes — no per-sample exp() in the capture loop.
-    """
-    import numpy as np
-    if doppler_hz == 0:
-        return c
-    n = len(c)
-    dphase = -2.0 * np.pi * doppler_hz / fs
-    key = (int(doppler_hz), int(fs))
-    if _doppler_lut["key"] != key:
-        from math import gcd
-        period = int(fs // gcd(abs(int(doppler_hz)), int(fs)))
-        if period > (1 << 18):
-            _doppler_lut["key"], _doppler_lut["lut"] = key, None  # pathological gcd: direct exp
-        else:
-            _doppler_lut["key"] = key
-            _doppler_lut["lut"] = np.exp(1j * dphase * np.arange(period)).astype(np.complex64)
-    lut = _doppler_lut["lut"]
-    if lut is None:
-        rot = np.exp(1j * (st["nco_phase"] + dphase * np.arange(n)))
-    else:
-        # exp(i*(phase + dphase*j)) == exp(i*phase) * lut[j % period]
-        rot = lut[np.arange(n) % len(lut)] * np.exp(1j * st["nco_phase"])
-    st["nco_phase"] = (st["nco_phase"] + dphase * n) % (2.0 * np.pi)
-    return (c * rot.astype(np.complex64)).astype(np.complex64)
 
+    The per-block rotation is exp(i*phase) * ramp, with ramp[j] =
+    exp(i*dphase*j) for j < block length. The ramp only depends on the
+    Doppler value and is rebuilt when it changes (every few seconds), so
+    no per-sample exp() runs in the capture loop — and unlike a
+    fs/gcd-period LUT it is tiny (block length, not up to fs samples) and
+    needs no periodicity argument.
+
+    doppler_hz == 0 keeps applying the constant phasor exp(i*phase): going
+    from a rotation to "multiply by 1" is itself a phase jump. (A Doppler
+    track crossing 0 Hz at closest approach clicked by up to 27 % of full
+    scale before this was handled.) The phase is per stream, so the ramp
+    cache lives in st and not in a module global shared by both dongles.
+    """
+    d = int(round(doppler_hz))
+    phase = st["nco_phase"]
+    if d == 0:
+        if phase == 0.0:
+            return c
+        return c * np.complex64(np.exp(1j * phase))
+    n = len(c)
+    dphase = -TWO_PI * d / fs
+    key = (d, int(fs))
+    ramp = st["nco_ramp"]
+    if st["nco_key"] != key or ramp is None or len(ramp) < n:
+        ramp = np.exp(1j * dphase * np.arange(max(n, 1024))).astype(np.complex64)
+        st["nco_key"], st["nco_ramp"] = key, ramp
+    rot = ramp[:n] * np.complex64(np.exp(1j * phase))
+    st["nco_phase"] = (phase + dphase * n) % TWO_PI
+    return c * rot
+
+
+# ---------- FM discriminator ----------
 def fm_demodulate(c, decimation=5, iq_cutoff_hz=22000.0, audio_cutoff_hz=None, st=None):
-    st = st if st is not None else demod_state
     """FM discriminate a baseband-centered complex signal, decimate to audio rate.
 
     iq_cutoff_hz: IQ low-pass before discrimination (default 22 kHz APT
@@ -146,8 +193,12 @@ def fm_demodulate(c, decimation=5, iq_cutoff_hz=22000.0, audio_cutoff_hz=None, s
     capture band, because a short FIR cannot shape a clean ~95 kHz passband
     and the ±75 kHz deviation must stay inside. audio_cutoff_hz: anti-alias
     low-pass on the discriminator output before decimation to 48 kHz.
+
+    Output: int16 PCM bytes, ±32767 == ±pi rad/sample (±fs/2 deviation).
     """
-    import numpy as np
+    st = st if st is not None else demod_state
+    if len(c) == 0:
+        return b''
     if iq_cutoff_hz:
         c = lowpass(c, iq_cutoff_hz, st)
     # Discriminator: phase advance of c[n] relative to c[n-1]. The conjugate
@@ -155,13 +206,13 @@ def fm_demodulate(c, decimation=5, iq_cutoff_hz=22000.0, audio_cutoff_hz=None, s
     # diff(arctan2(phase)), which produces 2*pi spikes whenever the wrapped
     # phase crosses the branch cut (any FM whose phase excursion exceeds pi,
     # i.e. also the APT signal). The previous block's last sample is carried
-    # in demod_state so block processing matches whole-signal processing.
-    if len(c) == 0:
-        return b''
+    # in st so block processing matches whole-signal processing.
     prev = st["last_c"]
     if prev is None:
         prev = c[0]
-    dd = c * np.conj(np.concatenate([np.array([prev], dtype=c.dtype), c[:-1]]))
+    dd = np.empty_like(c)
+    dd[0] = c[0] * np.conj(prev)
+    np.multiply(c[1:], np.conj(c[:-1]), out=dd[1:])
     st["last_c"] = c[-1].copy()
     audio = np.arctan2(dd.imag, dd.real)
     if audio_cutoff_hz:
@@ -170,9 +221,9 @@ def fm_demodulate(c, decimation=5, iq_cutoff_hz=22000.0, audio_cutoff_hz=None, s
         # Decimate on a continuous phase across blocks — a per-block [::n]
         # reset would drop samples at every block boundary (0.2% rate error
         # at IQ_BLOCK size) and make block processing differ from a
-        # continuous stream.
-        keep = (np.arange(len(audio)) + st["audio_pos"]) % decimation == 0
-        st["audio_pos"] += len(audio)
-        audio = audio[keep]
-    audio = (audio * 32767 / (np.pi + 1e-9)).astype(np.int16)
-    return audio.tobytes()
+        # continuous stream. Sample i of this block is kept when
+        # (i + audio_pos) % decimation == 0.
+        phase = st["audio_pos"] % decimation
+        st["audio_pos"] = (st["audio_pos"] + len(audio)) % decimation
+        audio = audio[(-phase) % decimation::decimation]
+    return (audio * (32767.0 / np.pi)).astype(np.int16).tobytes()

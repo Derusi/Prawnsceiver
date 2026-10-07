@@ -10,6 +10,13 @@ LOGDIR = "/var/log/noaa"
 RECORD_DIR = "/var/log/noaa/recordings"
 PASS_HISTORY_FILE = os.path.join(LOGDIR, "pass_history.json")
 RTL_LOG = os.path.join(LOGDIR, "rtl_sdr.log")
+# noaa-apt (APT image decoder): install directory (its res/ folder must be
+# the working directory), per-decode timeout, and the TLE file the
+# scheduler writes for its map overlay (3-line format, refreshed with the
+# pass-prediction TLEs so the overlay never uses noaa-apt's bundled stale set)
+NOAA_APT_DIR = "/opt/noaa-apt"
+NOAA_APT_TIMEOUT_SECS = 120
+NOAA_APT_TLE_FILE = os.path.join(LOGDIR, "weather.txt")
 WEBDIR = "/home/eugene/aprs_website"
 FFT_SIZE = 512
 WATERFALL_ROWS = 120
