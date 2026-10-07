@@ -14,6 +14,7 @@ from .history import get_recordings, quality_map, set_recording_quality
 from .pages import CONSOLE_HTML, HISTORY_HTML
 from .thumbs import THUMB_SUFFIX, ensure_thumb
 from .passes import HAS_SKYFIELD, load, passes_to_json, wgs84
+from .satnogs import satellite_info
 from .quality import estimate_quality
 
 def _dongle_list():
@@ -75,6 +76,7 @@ def get_status():
     if cur_pass:
         status["current_pass"] = {
             "sat_name": cur_pass["sat_name"],
+            "catnr": cur_pass["catnr"],
             "frequency_mhz": round(cur_pass["frequency"] / 1e6, 4),
             "max_alt": cur_pass["max_alt"],
             "set_local": (cur_pass["set_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%H:%M"),
@@ -522,6 +524,21 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": str(e)}).encode())
+        elif self.path.startswith('/satnogs.json'):
+            # SatNOGS DB metadata for the tracked satellite (proxied and
+            # cached server-side — the DB has no CORS headers and the
+            # dashboard would otherwise hammer it on every poll)
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                catnr = int((query.get('catnr') or ['0'])[0])
+            except ValueError:
+                catnr = 0
+            info, err = (satellite_info(catnr) if catnr else (None, 'missing catnr'))
+            self.send_response(200 if info else 404)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Cache-Control', 'max-age=3600')
+            self.end_headers()
+            self.wfile.write(json.dumps({"info": info, "error": err}).encode())
         elif self.path.startswith('/images/'):
             filename = self.path[8:]
             if '..' in filename or '/' in filename:

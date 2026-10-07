@@ -121,6 +121,24 @@
     </div>
     <div id="pass-banner" class="pass-idle">Checking pass schedule...</div>
     <div id="conn-banner">Connection to the receiver lost — retrying…</div>
+    <div id="track-section" style="display:none;padding:12px 15px 0 15px;">
+        <div class="section-title">🧭 Live Pass — <span id="track-sat"></span></div>
+        <div style="display:flex;gap:15px;flex-wrap:wrap;align-items:flex-start;">
+            <div style="flex:0 1 440px;max-width:440px;">
+                <canvas id="track-canvas" width="440" height="440" style="width:100%;max-width:440px;background:#000;border:1px solid #0f3460;border-radius:4px;"></canvas>
+                <div style="font-size:0.85em;color:#888;margin-top:3px;">Polar view: center = zenith (90°), outer ring = horizon (0°). North is up.</div>
+            </div>
+            <div id="satnogs-info" style="flex:1 1 300px;min-width:280px;"></div>
+            <div id="liveimg-panel" style="flex:1 1 340px;min-width:280px;">
+                <div style="font-size:1em;color:#a8b8d8;margin-bottom:4px;">🖼️ Live Image — <span id="liveimg-mode" style="color:#53d769;">—</span></div>
+                <div style="position:relative;background:#000;border:1px solid #0f3460;border-radius:4px;overflow:hidden;">
+                    <canvas id="liveimg-canvas" width="909" height="900" style="width:100%;display:block;image-rendering:pixelated;"></canvas>
+                    <div id="liveimg-status" style="position:absolute;top:4px;left:6px;font-size:0.85em;color:#53d769;background:rgba(0,0,0,0.6);padding:1px 6px;border-radius:3px;white-space:nowrap;">—</div>
+                </div>
+                <div style="font-size:0.85em;color:#888;margin-top:3px;">Decoded live from the FM demod audio. APT: channel A (top) / channel B (bottom). Robot 36 image builds line by line.</div>
+            </div>
+        </div>
+    </div>
     <div id="waterfall-section">
         <div id="waterfall-row">
             <div id="wf-col">
@@ -149,23 +167,6 @@
     </div>
     <div id="container">
         <div id="main-panel">
-            <div id="track-section" style="display:none;margin-bottom:12px;">
-                <div class="section-title">🧭 Live Pass — <span id="track-sat"></span></div>
-                <div style="display:flex;gap:15px;flex-wrap:wrap;align-items:flex-start;">
-                    <div style="flex:0 1 440px;max-width:440px;">
-                        <canvas id="track-canvas" width="440" height="440" style="width:100%;max-width:440px;background:#000;border:1px solid #0f3460;border-radius:4px;"></canvas>
-                        <div style="font-size:0.85em;color:#888;margin-top:3px;">Polar view: center = zenith (90°), outer ring = horizon (0°). North is up.</div>
-                    </div>
-                    <div id="liveimg-panel" style="flex:1 1 340px;min-width:280px;">
-                        <div style="font-size:1em;color:#a8b8d8;margin-bottom:4px;">🖼️ Live Image — <span id="liveimg-mode" style="color:#53d769;">—</span></div>
-                        <div style="position:relative;background:#000;border:1px solid #0f3460;border-radius:4px;overflow:hidden;">
-                            <canvas id="liveimg-canvas" width="909" height="900" style="width:100%;display:block;image-rendering:pixelated;"></canvas>
-                            <div id="liveimg-status" style="position:absolute;top:4px;left:6px;font-size:0.85em;color:#53d769;background:rgba(0,0,0,0.6);padding:1px 6px;border-radius:3px;white-space:nowrap;">—</div>
-                        </div>
-                        <div style="font-size:0.85em;color:#888;margin-top:3px;">Decoded live from the FM demod audio. APT: channel A (top) / channel B (bottom). Robot 36 image builds line by line.</div>
-                    </div>
-                </div>
-            </div>
             <div class="section-title">📅 Upcoming Passes (24h)</div>
             <div id="passes-list">Loading pass predictions...</div>
         </div>
@@ -709,6 +710,47 @@
             c.listenBtn.style.color = (liveAudioOn === d.id) ? '#1a1a2e' : '#53d769';
         }
 
+        function escHtml(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // ---------- SatNOGS DB info card for the active pass ----------
+        // Fetched once per pass via the server-side proxy (the DB API has
+        // no CORS headers); cached server-side for a day per satellite.
+        let satnogsCatnr = null;
+        async function fetchSatnogsInfo(catnr, satName) {
+            const el = document.getElementById('satnogs-info');
+            el.innerHTML = '<div class="status-item" style="color:#888;">📡 loading satellite info…</div>';
+            try {
+                const res = await fetch('/satnogs.json?catnr=' + encodeURIComponent(catnr));
+                const data = await res.json();
+                if (!data.info) { el.innerHTML = ''; return; }
+                const s = data.info;
+                let html = '<div class="section-title" style="margin-top:0;">📡 ' + escHtml(satName) + ' — SatNOGS DB</div>';
+                html += '<div class="status-item">';
+                if (s.image) html += '<img src="' + escHtml(s.image) + '" alt="satellite" style="max-height:96px;max-width:130px;border-radius:4px;border:1px solid #0f3460;float:right;margin:0 0 6px 10px;" onerror="this.remove()">';
+                const row = (l, v) => v ? '<div><span style="color:#888;">' + l + ':</span> ' + escHtml(v) + '</div>' : '';
+                html += row('alt. names', s.names) + row('launched', s.launched)
+                      + row('status', s.status) + row('country', s.countries);
+                html += '</div>';
+                if (s.transmitters && s.transmitters.length) {
+                    html += '<div class="section-title">Transmitters</div>';
+                    for (const t of s.transmitters) {
+                        const dl = t.downlink_hz ? (t.downlink_hz / 1e6).toFixed(4) + ' MHz' : '—';
+                        const dot = t.alive ? 'green' : 'red';
+                        html += '<div class="status-item" style="font-size:0.9em;">'
+                              + '<span class="indicator ' + dot + '" style="margin-right:2px;"></span>'
+                              + escHtml(t.description || '?')
+                              + ' <span style="color:#a8b8d8;">· ' + dl + (t.mode ? ' · ' + escHtml(t.mode) : '') + '</span></div>';
+                    }
+                }
+                el.innerHTML = html;
+            } catch (e) {
+                el.innerHTML = '';
+            }
+        }
+
         let statusFails = 0;
         async function fetchStatus() {
             try {
@@ -772,6 +814,15 @@
                 } else {
                     banner.className = 'pass-idle';
                     banner.textContent = 'No passes predicted in the next 24h';
+                }
+
+                // SatNOGS info card: fetch once per pass (per catalog number)
+                const activeCatnr = (data.pass_active && data.current_pass) ? data.current_pass.catnr : null;
+                if (activeCatnr && activeCatnr !== satnogsCatnr) {
+                    satnogsCatnr = activeCatnr;
+                    fetchSatnogsInfo(activeCatnr, data.current_pass.sat_name);
+                } else if (!activeCatnr) {
+                    satnogsCatnr = null;
                 }
             } catch(e) {
                 if (++statusFails >= 2) document.getElementById('conn-banner').style.display = 'block';

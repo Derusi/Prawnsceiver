@@ -146,6 +146,7 @@ def predict_passes(sats, hours=24):
                             duration_min = (set_time - rise_time).total_seconds() / 60
                     passes.append({
                         "sat": sat,
+                        "catnr": catnr,
                         "sat_name": name,
                         "frequency": freq,
                         "rise_utc": rise_time,
@@ -169,6 +170,7 @@ def passes_to_json(passes):
     for p in passes:
         result.append({
             "sat_name": p["sat_name"],
+            "catnr": p["catnr"],
             "frequency_mhz": round(p["frequency"] / 1e6, 4),
             "rise_local": (p["rise_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%a %d.%m %H:%M"),
             "culm_local": (p["culm_utc"] + timedelta(hours=UTC_OFFSET)).strftime("%H:%M"),
