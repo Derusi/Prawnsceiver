@@ -18,8 +18,13 @@
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.7; } }
         #waterfall-section { padding: 12px 15px; border-bottom: 2px solid #0f3460; flex-shrink: 0; }
         #waterfall-section h2 { color: #53d769; font-size: 1em; margin-bottom: 6px; }
-        #waterfall-row { display: flex; gap: 12px; align-items: stretch; }
-        #wf-col { flex: 1; min-width: 0; }
+        /* One container per dongle: waterfall column + control card side by
+           side, collapsed together with the button in the block header */
+        .dongle-block-body { display: flex; gap: 12px; align-items: stretch; }
+        .dongle-block-wf { flex: 1; min-width: 0; }
+        .dongle-block-card { width: var(--sidebar-width); flex-shrink: 0; display: flex; flex-direction: column; }
+        .wf-block-collapsed .dongle-block-body { display: none; }
+        .wf-freq-labels { display: flex; justify-content: space-between; font-size:0.85em; color: #666; margin-top: 3px; }
         .wf-canvas { width: 100%; height: 300px; background: #000; border: 1px solid #0f3460; border-radius: 4px; image-rendering: pixelated; }
         /* Time gutter left of each waterfall, scrolled in sync with the data */
         /* Time gutter left of each waterfall, scrolled in sync with the data */
@@ -27,16 +32,10 @@
         /* Per-dongle collapse: one toggle hides the dongle's waterfall AND
            its sidebar card together */
         .wf-block-row { display: flex; gap: 4px; align-items: flex-start; }
-        .wf-block-collapsed .wf-block-row { display: none; }
         .wf-collapse-btn { background: none; border: 1px solid #0f3460; color: #a8b8d8; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.85em; padding: 0 7px; margin-left: 8px; transition: transform 0.2s; }
         .wf-collapse-btn:hover { border-color: #53d769; color: #53d769; }
         .wf-collapse-btn.collapsed { transform: rotate(-90deg); }
         .wf-spec { width: 100%; height: 50px; background: #000; border: 1px solid #0f3460; border-radius: 4px; margin-top: 4px; }
-        #freq-labels { display: flex; justify-content: space-between; font-size:0.85em; color: #666; margin-top: 3px; }
-        #dongle-status-col { width: var(--sidebar-width); flex-shrink: 0; display: flex; flex-direction: column; }
-        #dongle-status-col.collapsed { width: auto; }
-        #dongle-cards { flex: 1; display: flex; flex-direction: column; }
-        #dongle-status-col.collapsed #dongle-cards { display: none; }
         #container { display: flex; flex: 1; min-height: 300px; }
         #main-panel { flex: 1; overflow-y: auto; padding: 12px 15px; }
         /* The panel's 15px+15px padding and 2px border sit inside its box, so
@@ -95,8 +94,8 @@
            the waterfall full-width (sidebars collapse via their toggles) */
         @media (max-width: 860px) {
             body { height: auto; min-height: 100vh; }
-            #waterfall-row { flex-direction: column; }
-            #dongle-status-col { width: 100%; }
+            .dongle-block-body { flex-direction: column; }
+            .dongle-block-card { width: 100%; }
             #container { flex-direction: column; }
             #main-panel { overflow-y: visible; }
             #status-panel { width: 100%; border-left: none; border-top: 2px solid #0f3460; overflow-y: visible; }
@@ -148,30 +147,12 @@
         </div>
     </div>
     <div id="waterfall-section">
-        <div id="waterfall-row">
-            <div id="wf-col">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <h2 style="margin-bottom:0;">Live Waterfall — <span id="wf-freq">137.620 MHz</span> ± 120 kHz</h2>
-                    <button id="wf-overlay-btn" class="btn-outline" onclick="toggleWfOverlay()">📐 Features</button>
-                </div>
-                <div id="wf-list"></div>
-                <div id="freq-labels">
-                    <span id="fl-1">137.500</span>
-                    <span id="fl-2">137.560</span>
-                    <span id="fl-3">137.620</span>
-                    <span id="fl-4">137.680</span>
-                    <span id="fl-5">137.740</span>
-                </div>
-            </div>
-            <div id="dongle-status-col">
-                <div class="section-title panel-head" style="margin-top:0;margin-bottom:8px;">
-                    Dongles
-                    <button class="panel-toggle" onclick="togglePanel('dongle-status-col')" aria-label="Toggle dongles panel">▾</button>
-                </div>
-                <div id="dongle-cards"></div>
-                <audio id="live-audio" preload="none" style="display:none;"></audio>
-            </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h2 style="margin-bottom:0;">Live Waterfall — <span id="wf-freq">137.620 MHz</span> ± 120 kHz</h2>
+            <button id="wf-overlay-btn" class="btn-outline" onclick="toggleWfOverlay()">📐 Features</button>
         </div>
+        <div id="wf-list"></div>
+        <audio id="live-audio" preload="none" style="display:none;"></audio>
     </div>
     <div id="container">
         <div id="main-panel">
@@ -297,13 +278,33 @@
             hover.className = 'wf-hover';
             wrap.appendChild(hover);
             row.appendChild(timeCanvas); row.appendChild(wrap);
-            block.appendChild(head); block.appendChild(row);
+            // Per-block frequency labels under this dongle's waterfall
+            // (each dongle can be tuned independently via overrides)
+            const labels = document.createElement('div');
+            labels.className = 'wf-freq-labels';
+            const freqLabels = [];
+            for (let i = 0; i < 5; i++) {
+                const s = document.createElement('span');
+                labels.appendChild(s);
+                freqLabels.push(s);
+            }
+            const wfPart = document.createElement('div');
+            wfPart.className = 'dongle-block-wf';
+            wfPart.appendChild(row); wfPart.appendChild(labels);
+            // The dongle control card is created into this holder — waterfall
+            // and controls form ONE container, collapsed together
+            const cardHolder = document.createElement('div');
+            cardHolder.className = 'dongle-block-card';
+            const body = document.createElement('div');
+            body.className = 'dongle-block-body';
+            body.appendChild(wfPart); body.appendChild(cardHolder);
+            block.appendChild(head); block.appendChild(body);
             list.appendChild(block);
             b = wfBlocks[idx] = {
                 wfCtx: wfCanvas.getContext('2d'),
                 specCtx: specCanvas.getContext('2d'),
                 timeCtx, overlay, hover, title, led, sig,
-                block, collapseBtn,
+                block, collapseBtn, cardHolder, freqLabels,
                 serial: meta.id, centerMHz: null,
             };
             wireWfInteractions(b, wrap, wfCanvas, meta);
@@ -326,8 +327,6 @@
                 b.block.classList.toggle('wf-block-collapsed', collapsed);
                 b.collapseBtn.classList.toggle('collapsed', collapsed);
             }
-            const c = dongleCards[serial];
-            if (c && c.cardEl) c.cardEl.style.display = collapsed ? 'none' : '';
         }
         function toggleDongleCollapse(serial) {
             try { localStorage.setItem('dongle-collapsed-' + serial, dongleCollapsed(serial) ? '0' : '1'); }
@@ -454,15 +453,18 @@
         }
 
         function updateFreqLabels(freqMHz) {
-            const center = freqMHz;
-            const span = 0.120; // ±120 kHz
-            document.getElementById('fl-1').textContent = (center - span/2).toFixed(3);
-            document.getElementById('fl-2').textContent = (center - span/4).toFixed(3);
-            document.getElementById('fl-3').textContent = center.toFixed(3);
-            document.getElementById('fl-4').textContent = (center + span/4).toFixed(3);
-            document.getElementById('fl-5').textContent = (center + span/2).toFixed(3);
-            document.getElementById('wf-freq').textContent = center.toFixed(3) + ' MHz';
-            document.getElementById('freq-current').textContent = center.toFixed(4) + ' MHz';
+            document.getElementById('wf-freq').textContent = freqMHz.toFixed(3) + ' MHz';
+            document.getElementById('freq-current').textContent = freqMHz.toFixed(4) + ' MHz';
+            // Per-block labels reflect each dongle's own center frequency
+            // (manual overrides retune dongles independently)
+            for (const idx in wfBlocks) {
+                const b = wfBlocks[idx];
+                if (!b.freqLabels) continue;
+                const c = (b.centerMHz !== null && b.centerMHz !== undefined) ? b.centerMHz : freqMHz;
+                b.freqLabels.forEach((el, i) => {
+                    el.textContent = (c + (i - 2) * 0.06).toFixed(3);
+                });
+            }
         }
 
         let wfOverlayOn = false;
@@ -556,12 +558,12 @@
                 const res = await fetch('/dongles.json');
                 const dongles = await res.json();
                 for (const d of dongles) {
-                    updateDongleCard(d);
                     const b = ensureWfBlock(d);
                     // Frequency axis center for hover/click: the dongle's
                     // manual override if set, else the shared tune frequency
                     b.centerMHz = (d.manual_frequency_mhz !== null && d.manual_frequency_mhz !== undefined)
                         ? d.manual_frequency_mhz : lastSharedMHz;
+                    updateDongleCard(d);
                     try {
                         // last=1: only the newest row — the waterfall scrolls
                         // client-side, the full buffer need not be transferred
@@ -590,22 +592,14 @@
         function ensureDongleCard(d) {
             let c = dongleCards[d.id];
             if (c) return c;
-            const col = document.getElementById('dongle-cards');
+            // The card lives inside its dongle block's holder (created by
+            // ensureWfBlock) — waterfall and controls belong to one container
+            const col = (wfBlocks[d.id] && wfBlocks[d.id].cardHolder) || document.getElementById('wf-list');
             const card = document.createElement('div');
             card.className = 'status-item';
             // flex:1 stretches the card to line up with its waterfall block;
             // the border visually separates the dongles
             card.style.cssText = 'flex:1;display:flex;flex-direction:column;border-bottom:1px solid #0f3460;margin-bottom:8px;';
-            const head = document.createElement('div');
-            head.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:0.95em;color:#a8b8d8;';
-            const led = document.createElement('span');
-            led.className = 'indicator yellow';
-            const title = document.createElement('span');
-            title.style.cssText = 'font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-            head.appendChild(led); head.appendChild(title);
-            const sn = document.createElement('div');
-            sn.style.cssText = 'font-size:0.75em;color:#888;margin-top:2px;';
-            sn.textContent = 'SN ' + d.serial;
             const sigRow = document.createElement('div');
             sigRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px;font-size:0.9em;';
             const sigVal = document.createElement('span');
@@ -674,17 +668,16 @@
             listenBtn.textContent = '🔊 Listen';
             const sn_card = d.id;
             listenBtn.onclick = () => toggleLiveAudio(sn_card);
-            card.appendChild(head); card.appendChild(sn); card.appendChild(sigRow);
+            card.appendChild(sigRow);
             card.appendChild(tl); card.appendChild(recRow);
             card.appendChild(tuneRow); card.appendChild(nudgeRow);
             card.appendChild(info); card.appendChild(listenBtn);
             col.appendChild(card);
             c = dongleCards[d.id] = {
                 cardEl: card,
-                led, title, sigVal, sigFill, tlCtx: tl.getContext('2d'),
+                sigVal, sigFill, tlCtx: tl.getContext('2d'),
                 hist: [], recLed, recTxt, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
             };
-            applyDongleCollapse(d.id);
             return c;
         }
 
@@ -716,8 +709,6 @@
 
         function updateDongleCard(d) {
             const c = ensureDongleCard(d);
-            c.title.textContent = `Dongle ${d.index}${d.primary ? ' ★' : ''} — ${d.label} (${d.tuner})`;
-            c.led.className = 'indicator ' + (d.running ? 'green' : 'red');
             c.sigVal.textContent = d.signal ? d.signal.toFixed(1) : '—';
             // Signal metric: ~150 = silence floor, 800+ = strong APT carrier
             // with auto-gain — map that range onto the bar so idle noise
@@ -1041,7 +1032,7 @@
         // ---------- Collapsible side panels (dongles / system status) ----------
         // State persists in localStorage; narrow screens start collapsed so
         // the waterfall keeps the full width on mobile devices.
-        const PANELS = { 'dongle-status-col': 'panel-dongles-collapsed', 'status-panel': 'panel-status-collapsed' };
+        const PANELS = { 'status-panel': 'panel-status-collapsed' };
         function togglePanel(id) {
             const el = document.getElementById(id);
             const collapsed = !el.classList.contains('collapsed');

@@ -10,6 +10,7 @@ from .config import LAT, LON, PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, 
 from .decode import decode_recording
 from .history import log_pass
 from .passes import HAS_SKYFIELD, load, predict_passes, refresh_tles, wgs84
+from .satnogs import satellite_info
 from .quality import estimate_quality
 
 def _doppler_hz(sat, freq_hz):
@@ -211,10 +212,18 @@ def scheduler_thread():
                         png_file = os.path.basename(latest_png) if rec_decoded else None
                         wav_name = wav_base
                         quality = rec_quality
+                    # Snapshot the SatNOGS DB record with the pass: the
+                    # history page shows what was tracked (names, launch,
+                    # transmitters) even long after the satellite changes
+                    satnogs = None
+                    try:
+                        satnogs = satellite_info(finished_pass["catnr"])[0]
+                    except Exception:
+                        pass
                     log_pass(finished_pass["sat_name"], finished_pass["frequency"],
                              finished_pass["max_alt"], finished_pass["duration_min"],
                              finished_pass["rise_utc"], finished_pass["set_utc"],
-                             pass_peak, decoded, png_file, wav_name, quality)
+                             pass_peak, decoded, png_file, wav_name, quality, satnogs)
                 
                 # Refresh passes list every 30 min
                 if datetime.utcnow().minute % 30 == 0 and datetime.utcnow().second < 10:

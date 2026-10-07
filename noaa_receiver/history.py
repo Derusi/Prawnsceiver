@@ -6,8 +6,12 @@ from datetime import datetime, timedelta, timezone
 from . import state
 from .config import PASS_HISTORY_FILE, RECORD_DIR, UTC_OFFSET
 
-def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, signal_peak, decoded, png_file, wav_file, quality=None):
-    """Log a completed pass (with recording metadata) to the history file."""
+def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, signal_peak, decoded, png_file, wav_file, quality=None, satnogs=None):
+    """Log a completed pass (with recording metadata) to the history file.
+
+    satnogs: the SatNOGS DB snapshot fetched during the pass (names, launch,
+    status, transmitters) — stored with the pass so the history page shows
+    what was received even long after the satellite decays."""
     history = _load_history()
     history.append({
         "sat_name": sat_name,
@@ -23,6 +27,7 @@ def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, si
         "png": png_file,
         "wav": wav_file,
         "quality": quality,
+        "satnogs": satnogs,
         "timestamp": datetime.now().isoformat(),
     })
     # Keep last 50 passes

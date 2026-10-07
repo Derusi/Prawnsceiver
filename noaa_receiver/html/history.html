@@ -62,6 +62,21 @@ function render() {
             const rec = h.wav ? recordingsData.find(r => r.filename === h.wav) : null;
             const img = (h.png && rec && rec.png) ? h.png : (rec && rec.png ? rec.png : null);
             const rid = h.wav ? 'result-' + safeId(h.wav) : '';
+            // SatNOGS DB snapshot stored with the pass (hover for transmitters)
+            let satLine = '';
+            if (h.satnogs) {
+                const s = h.satnogs;
+                const bits = [];
+                if (s.names) bits.push(esc(s.names));
+                if (s.launched) bits.push('launched ' + esc(s.launched));
+                if (s.status) bits.push(esc(s.status));
+                if (s.countries) bits.push(esc(s.countries));
+                const tip = (s.transmitters || []).map(t => {
+                    const dl = t.downlink_hz ? ' ' + (t.downlink_hz / 1e6).toFixed(4) + ' MHz' : '';
+                    return (t.description || '?') + dl + (t.mode ? ' [' + t.mode + ']' : '') + (t.alive ? '' : ' (inactive)');
+                }).join('\n');
+                satLine = '<div class="card-meta" style="margin:-4px 0 8px;color:#666;" title="' + esc(tip) + '">🛰 ' + bits.join(' · ') + '</div>';
+            }
             html += '<div class="pass-card ' + q + '">'
                 + '<div class="card-head"><span class="sat">' + qi + ' ' + esc(h.sat_name) + '</span>'
                 + ' &nbsp;' + esc(h.rise_local) + ' → ' + esc(h.set_local || '?')
@@ -69,7 +84,8 @@ function render() {
                 + '<div class="card-meta">max ' + esc(h.max_alt) + '° &nbsp;|&nbsp; '
                 + esc(h.duration_min) + ' min &nbsp;|&nbsp; peak: ' + esc(h.signal_peak || '—')
                 + ' &nbsp;|&nbsp; ' + (h.decoded ? '🖼️ decoded' : '❌ not decoded')
-                + qualityBadge(h.quality !== null && h.quality !== undefined ? h.quality : (rec ? rec.quality : null)) + '</div>';
+                + qualityBadge(h.quality !== null && h.quality !== undefined ? h.quality : (rec ? rec.quality : null)) + '</div>'
+                + satLine;
             if (rec) {
                 html += '<div class="filename">' + esc(rec.filename) + ' (' + esc(rec.size_mb) + ' MB)</div>';
                 if (rec.recording_in_progress) {
