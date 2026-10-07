@@ -190,6 +190,14 @@
                 <div style="font-size:0.75em;color:#888;margin-top:3px;">Parks the dongle on any frequency and pauses satellite tracking. Then use ▶ Listen Live to hear it (e.g. 89.7 = FM radio).</div>
             </div>
             <div class="status-item">
+                <div class="status-label">Pass Data (TLE)</div>
+                <div class="status-value" style="display:flex;gap:6px;align-items:center;">
+                    <span id="tle-age" style="color:#888;font-size:0.85em;flex:1;">TLE age —</span>
+                    <button class="btn-outline" onclick="syncTle()">🔄 Sync now</button>
+                </div>
+                <div style="font-size:0.75em;color:#888;margin-top:3px;">Startup uses cached TLEs (no network wait). Sync fetches fresh elements and re-predicts passes.</div>
+            </div>
+            <div class="status-item">
                 <div class="status-label">Recordings</div>
                 <div class="status-value" id="rec-count">0</div>
             </div>
@@ -1302,6 +1310,9 @@
                 document.getElementById('sat-current').textContent = data.satellite;
                 tleInfo = data.tle || null;
                 renderTleBar();
+                const ageEl = document.getElementById('tle-age');
+                if (ageEl) ageEl.textContent = (data.tle_age_min !== null && data.tle_age_min !== undefined)
+                    ? 'TLEs ' + Math.round(data.tle_age_min) + ' min old' : 'no TLE data yet';
 
                 // Update frequency display
                 updateFreqLabels(data.frequency_mhz);
@@ -1595,6 +1606,18 @@
 
         async function tuneAuto() {
             try { await fetch('/tune?f=auto'); } catch (e) {}
+        }
+
+        async function syncTle() {
+            try {
+                const res = await fetch('/sync_tle');
+                const data = await res.json();
+                if (data.success) {
+                    toast('🔄 TLE sync started — pass predictions refresh when it finishes');
+                } else {
+                    toast('Sync failed: ' + (data.error || 'unknown error'), true);
+                }
+            } catch (e) { toast('Sync failed: receiver unreachable', true); }
         }
 
         // Live image rendering is disabled (browser-side APT/SSTV decode

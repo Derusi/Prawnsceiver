@@ -57,6 +57,35 @@ def _sat_from_lines(lines, ts):
     return EarthSatellite(lines[1], lines[2], lines[0], ts)
 
 
+def load_tles_from_cache():
+    """Load TLEs from the on-disk cache only — no network, seconds not
+    minutes. Used at startup: when the online sources are slow or down, an
+    eager fetch leaves the receiver blind for minutes right after every
+    restart, exactly when a pass may need triggering. Freshness is kept by
+    the periodic refresh and the manual sync (/sync_tle) instead."""
+    if not HAS_SKYFIELD:
+        state.log_console("Skyfield not available, cannot predict passes", "warn")
+        return {}
+    if not os.path.exists(TLE_CACHE_FILE):
+        state.log_console("No TLE cache yet — start a sync from the dashboard or wait for the periodic refresh", "warn")
+        return {}
+    try:
+        ts = load.timescale()
+        with open(TLE_CACHE_FILE, 'r') as f:
+            cached = json.load(f)
+        sats = {}
+        for catnr_str, lines in cached.items():
+            catnr = int(catnr_str)
+            if catnr not in TRACKED_SATS:
+                continue
+            name, freq = TRACKED_SATS[catnr]
+            sats[catnr] = (_sat_from_lines(lines, ts), name, freq)
+        state.log_console(f"Loaded {len(sats)} TLEs from cache (no network fetch)")
+        return sats
+    except Exception as e:
+        state.log_console(f"TLE cache read failed: {e}", "error")
+        return {}
+
 def refresh_tles():
     """Refresh TLE data from SatNOGS (Celestrak fallback), with an on-disk
     cache as last resort."""

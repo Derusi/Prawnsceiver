@@ -3,6 +3,7 @@ import http.server
 import json
 import os
 import struct
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
@@ -71,6 +72,7 @@ def get_status():
         "rtl_log": "",
         "next_pass": None,
         "tle": tle,
+        "tle_age_min": round((time.time() - state.last_tle_refresh) / 60, 1) if state.last_tle_refresh else None,
     }
     with state.signal_lock:
         status["signal_strength"] = round(state.signal_strength, 2)
@@ -363,6 +365,22 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps({"success": True, "mode": "manual", "frequency_mhz": mhz}).encode())
+        elif self.path.split('?')[0] == '/sync_tle':
+            # Manual TLE refresh: sets a flag; the scheduler picks it up
+            # within its 10 s tick and refetches + re-predicts. The network
+            # fetch can take minutes, so it must never block this handler.
+            if state.tle_sync_requested or (state.tle_progress or {}).get("active"):
+                self.send_response(409)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "A TLE sync is already running"}).encode())
+                return
+            state.tle_sync_requested = True
+            state.log_console("🔄 Manual TLE sync requested — fetching fresh elements")
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "mode": "queued"}).encode())
         elif self.path.startswith('/tune_dongle'):
             # Per-dongle manual frequency override:
             # /tune_dongle?d=<serial>&f=<mhz> tunes just that dongle (e.g.

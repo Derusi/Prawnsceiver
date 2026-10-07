@@ -9,7 +9,7 @@ from .config import LAT, LON, PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, 
 
 from .decode import decode_recording
 from .history import log_pass
-from .passes import HAS_SKYFIELD, load, predict_passes, refresh_tles, wgs84
+from .passes import HAS_SKYFIELD, load, load_tles_from_cache, predict_passes, refresh_tles, wgs84
 from .satnogs import satellite_info
 from .quality import estimate_quality
 
@@ -63,7 +63,22 @@ def scheduler_thread():
             # A refresh that yields nothing (Celestrak down, no cache)
             # clears last_tle_refresh so the next outer-loop pass (~30 min)
             # retries instead of leaving the receiver blind for hours.
-            if state.last_tle_refresh == 0 or time.time() - state.last_tle_refresh > TLE_REFRESH_HOURS * 3600:
+            if state.last_tle_refresh == 0:
+                # First run after a restart: cached TLEs only — an online
+                # fetch can take minutes when the sources are slow/down and
+                # would leave the receiver blind right when a pass triggers.
+                # Freshness comes from the periodic refresh below and the
+                # manual sync button (/sync_tle).
+                sats = load_tles_from_cache()
+                state.last_tle_refresh = time.time()
+            elif state.tle_sync_requested:
+                # Manual sync (dashboard button): one fetch per click
+                state.tle_sync_requested = False
+                state.log_console("Manual TLE sync: fetching fresh elements")
+                new_sats = refresh_tles()
+                if new_sats:
+                    sats = new_sats
+            elif time.time() - state.last_tle_refresh > TLE_REFRESH_HOURS * 3600:
                 new_sats = refresh_tles()
                 if new_sats:
                     sats = new_sats
@@ -241,6 +256,10 @@ def scheduler_thread():
                              finished_pass["rise_utc"], finished_pass["set_utc"],
                              pass_peak, decoded, png_file, wav_name, quality, satnogs)
                 
+                # Manual TLE sync requested: break to the outer loop, which
+                # refetches and re-predicts
+                if state.tle_sync_requested:
+                    break
                 # Refresh passes list every 30 min
                 if datetime.utcnow().minute % 30 == 0 and datetime.utcnow().second < 10:
                     break
