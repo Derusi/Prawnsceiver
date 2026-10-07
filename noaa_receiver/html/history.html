@@ -50,6 +50,17 @@ function qualityBadge(q) {
     return ' <span style="color:' + color + ';font-weight:bold;" title="Reception quality (sync + signal integrity)">&#128246; ' + esc(q) + '%</span>';
 }
 
+// Decode button(s) for an un-decoded recording: recordings whose decode
+// already failed once (server-side attempt marker) show the reason and a
+// Retry button (?force=1) instead of auto-re-decoding on every page load
+function decodeButtonsHtml(r) {
+    if (r.decoded) return '';
+    if (r.decode_attempted)
+        return '<div class="result" style="color:#e74c3c;">&#10060; ' + esc(r.decode_error || 'previous decode attempt failed') + '</div>'
+             + '<button onclick="decodeRecording(\'' + esc(r.filename) + '\', true)">&#128260; Retry Decode</button>';
+    return '<button onclick="decodeRecording(\'' + esc(r.filename) + '\')">&#128260; Decode APT Image</button>';
+}
+
 function render() {
     const list = document.getElementById('history-list');
     if (historyData.length === 0) {
@@ -91,7 +102,7 @@ function render() {
                 if (rec.recording_in_progress) {
                     html += '<div class="result" style="color:#f39c12;">🔴 Pass is being recorded right now — audio and decoding are available after the pass ends.</div>';
                 } else {
-                    html += (rec.decoded ? '' : '<button onclick="decodeRecording(\'' + esc(rec.filename) + '\')">🔄 Decode APT Image</button>')
+                    html += decodeButtonsHtml(rec)
                         + '<button class="danger" onclick="deleteRecording(\'' + esc(rec.filename) + '\')">🗑 Delete</button>'
                         + '<audio controls preload="none"><source src="/audio/' + esc(rec.filename) + '" type="audio/wav"></audio>'
                         + '<div class="result" id="' + rid + '"></div>'
@@ -114,7 +125,7 @@ function render() {
             + '<div class="card-head"><span class="sat">🎧 ' + esc(r.filename) + '</span> &nbsp;|&nbsp; ' + esc(r.size_mb) + ' MB' + qualityBadge(r.quality) + '</div>'
             + (r.recording_in_progress
                 ? '<div class="result" style="color:#f39c12;">🔴 Pass is being recorded right now — audio and decoding are available after the pass ends.</div>'
-                : '<button onclick="decodeRecording(\'' + esc(r.filename) + '\')">🔄 Decode APT Image</button>'
+                : decodeButtonsHtml(r)
                     + '<button class="danger" onclick="deleteRecording(\'' + esc(r.filename) + '\')">🗑 Delete</button>'
                     + '<audio controls preload="none"><source src="/audio/' + esc(r.filename) + '" type="audio/wav"></audio>'
                     + '<div class="result" id="' + rid + '"></div>')
@@ -125,18 +136,18 @@ function render() {
     document.getElementById('crab-count').textContent = recordingsData.filter(r => r.decoded).length;
     // Auto-decode recordings that are not decoded yet (never the one being written)
     for (const r of recordingsData) {
-        if (!r.decoded && !r.recording_in_progress && !decodingInProcess[r.filename]) {
+        if (!r.decoded && !r.recording_in_progress && !r.decode_attempted && !decodingInProcess[r.filename]) {
             decodingInProcess[r.filename] = true;
             setTimeout(() => decodeRecording(r.filename), 3000);
         }
     }
 }
 
-async function decodeRecording(filename) {
+async function decodeRecording(filename, force) {
     const resultDiv = document.getElementById('result-' + safeId(filename));
     if (resultDiv) resultDiv.innerHTML = '<span style="color:#f39c12;">⏳ Decoding...</span>';
     try {
-        const res = await fetch('/decode/' + filename);
+        const res = await fetch('/decode/' + filename + (force ? '?force=1' : ''));
         const data = await res.json();
         if (data.success && resultDiv) {
             resultDiv.innerHTML = '<span style="color:#53d769;">✅ Decoded!</span>' + qualityBadge(data.quality) + '<img class="decoded-img" src="/thumbs/' + esc(data.png) + '?t=' + Date.now() + '" alt="Decoded APT image" loading="lazy" title="Click to open the full-size image" onclick="window.open(\'/images/' + esc(data.png) + '\')" style="cursor:pointer;">';

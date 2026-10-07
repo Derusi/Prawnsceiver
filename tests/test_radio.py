@@ -91,7 +91,7 @@ state.sdrs[SERIAL] = {
     'waterfall': state.waterfall_buffer, 'lock': state.waterfall_lock,
     'signal': 0.0, 'proc': None, 'last_data': 0.0, 'port': PORT,
     'la': {'data': [], 'base': 0, 'total': 0, 'cond': threading.Condition()},
-    'is_recording': False, 'wav': None, 'wav_path': None,
+    'is_recording': False, 'wav': None, 'wav_path': None, 'iq': None,
 }
 entry = state.sdrs[SERIAL]
 t = threading.Thread(target=radio.sdr_capture_thread, args=(SERIAL,), daemon=True); t.start()

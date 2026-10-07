@@ -78,3 +78,31 @@ os.environ['PATH'] = '/nonexistent'; decode.NOAA_APT_DIR = '/nonexistent'
 ok, png, err = decode.decode_recording(touch("NOAA_15_20261007_215400.wav"))
 assert not ok and 'could not be run' in err, err
 print("decode_recording paths OK")
+
+# ---- decode-attempt markers: failures persist, short-circuit, and can be forced ----
+os.environ['PATH'] = fakebin + ':' + os.environ['PATH']; decode.NOAA_APT_DIR = d
+d2 = tempfile.mkdtemp()
+wav2 = os.path.join(d2, "NOAA_18_20261007_215400.wav"); open(wav2, 'wb').write(b'RIFF')
+ok, png, err = decode.decode_recording(wav2)
+assert not ok and 'DSB' in err, (ok, err)
+m = decode.read_decode_marker(wav2)
+assert m is not None and not m['success'] and 'IQ' in m['message'], m
+# second call returns the marker message without touching the filesystem again
+ok, png, err = decode.decode_recording(wav2)
+assert not ok and 'already attempted' in err and 'IQ' in err, (ok, err)
+# success also persists: fake noaa-apt writes the PNG once; later calls
+# answer from the marker without re-running the decoder
+os.environ['FAKE_OK'] = '1'
+decode.NOAA_APT_DIR = d
+wav3 = os.path.join(d2, "NOAA_15_20261007_215400.wav"); open(wav3, 'wb').write(b'RIFF')
+open(log, 'w').close()
+ok, png, err = decode.decode_recording(wav3)
+assert ok and png and os.path.exists(png), (ok, err)
+first_invocations = open(log).read()
+ok2, png2, err2 = decode.decode_recording(wav3)
+assert ok2 and png2 == png, (ok2, err2)
+assert open(log).read() == first_invocations   # marker short-circuit: decoder NOT re-run
+# force=True re-runs the decoder and overwrites the marker
+ok3, png3, err3 = decode.decode_recording(wav3, force=True)
+assert ok3 and open(log).read() != first_invocations, (ok3, err3)
+print("decode markers OK")

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import state
 from .config import PASS_HISTORY_FILE, RECORD_DIR, UTC_OFFSET
+from .decode import read_decode_marker
 
 def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, signal_peak, decoded, png_file, wav_file, quality=None, satnogs=None):
     """Log a completed pass (with recording metadata) to the history file.
@@ -145,12 +146,17 @@ def get_recordings():
                 path = os.path.join(RECORD_DIR, f)
                 size = os.path.getsize(path)
                 has_png = os.path.exists(path.replace('.wav', '.png'))
+                marker = read_decode_marker(path)
                 recordings.append({
                     "filename": f,
                     "size_mb": round(size / (1024*1024), 1),
                     "decoded": has_png,
                     "png": f.replace('.wav', '.png') if has_png else None,
                     "quality": qualities.get(f),
+                    "decode_attempted": marker is not None,
+                    "decode_error": (marker.get('message')
+                                     if marker is not None and not marker.get('success')
+                                     else None),
                     # A wav that is still being written must not be played or
                     # decoded: its WAV header is stale and the file incomplete
                     "recording_in_progress": bool(active_wav and os.path.abspath(path) == os.path.abspath(active_wav)),

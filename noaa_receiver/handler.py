@@ -512,7 +512,9 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             state.log_console(f"🔊 Live audio listener disconnected ({self.client_address[0]}, dongle {dev})")
             return
         elif self.path.startswith('/decode/'):
-            filename = self.path[8:]
+            filename = self.path[8:].split('?')[0]
+            # ?force=1 re-runs a decode whose attempt marker says it failed
+            force = (parse_qs(urlparse(self.path).query).get('force') or [''])[0] == '1'
             if '..' in filename or '/' in filename:
                 state.log_console(f"Decode rejected invalid filename: {filename!r}", "warn")
                 self.send_response(400)
@@ -527,7 +529,7 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(b'Recording not found')
                 return
             output_png = wav_path.replace('.wav', '.png')
-            decoded, png_path, err = decode_recording(wav_path)
+            decoded, png_path, err = decode_recording(wav_path, force=force)
             # Reception quality: reuse the pass-end value if present, otherwise
             # analyze the recording now (takes a few seconds on a Pi)
             quality = quality_map().get(filename)
@@ -592,6 +594,10 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 if os.path.exists(thumb):
                     os.remove(thumb)
                     deleted.append(os.path.basename(thumb))
+                marker = png_path[:-4] + '.decode.json'
+                if os.path.exists(marker):
+                    os.remove(marker)
+                    deleted.append(os.path.basename(marker))
                 state.log_console(f"🗑 Deleted: {', '.join(deleted)}")
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')

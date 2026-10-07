@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from . import state
 from .config import LAT, LON, PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, RECORD_ISS, SAT_DSB_FREQ, TLE_REFRESH_HOURS, UTC_OFFSET
 
-from .decode import decode_recording
+from .decode import decode_recording, read_decode_marker
 from .history import log_pass
 from .passes import HAS_SKYFIELD, load, load_tles_from_cache, predict_passes, refresh_tles, wgs84
 from .satnogs import satellite_info
@@ -227,12 +227,19 @@ def scheduler_thread():
                         png_path = latest_png if os.path.exists(latest_png) else None
                         rec_decoded = os.path.exists(latest_png)
                         if not rec_decoded:
-                            state.log_console(f"Auto-decoding: {wav_base}")
-                            rec_decoded, png_path, err = decode_recording(latest)
-                            if rec_decoded:
-                                state.log_console(f"Auto-decode successful: {os.path.basename(png_path)}")
+                            marker = read_decode_marker(latest)
+                            if marker is not None and not marker.get('success'):
+                                # Previous attempt failed (dark transmitter,
+                                # no raw IQ, decoder error) — the marker
+                                # short-circuits re-decodes; say so once
+                                state.log_console(f"Auto-decode skipped, previous attempt failed: {wav_base}")
                             else:
-                                state.log_console(f"Auto-decode failed for {wav_base}: {err}", "error")
+                                state.log_console(f"Auto-decoding: {wav_base}")
+                                rec_decoded, png_path, err = decode_recording(latest)
+                                if rec_decoded:
+                                    state.log_console(f"Auto-decode successful: {os.path.basename(png_path) if png_path else 'background decode started'}")
+                                else:
+                                    state.log_console(f"Auto-decode failed for {wav_base}: {err}", "error")
                         rec_quality = estimate_quality(latest)
                         if rec_quality is not None:
                             state.log_console(f"Reception quality for {wav_base}: {rec_quality}%")

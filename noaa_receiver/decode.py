@@ -1,9 +1,11 @@
 """Recording decoding: noaa-apt for NOAA APT, sstv for ISS Robot 36."""
+import json
 import os
 import re
 import shutil
 import subprocess
 import threading
+import time
 
 from . import state
 from .config import NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE, SAT_DSB_FREQ, SDR_RATE, TRACKED_SATS
@@ -49,6 +51,34 @@ def satellite_from_filename(wav_path):
 def _png_path(wav_path):
     base, _ = os.path.splitext(wav_path)
     return base + '.png'
+
+# ---------- decode-attempt markers ----------
+# The dashboard auto-decodes every undecoded recording on every history-page
+# load, and a decode that can never succeed (dark transmitter, ISS outside
+# an ARISS event, missing raw IQ) was re-run each time — loading big WAVs
+# into this process until it OOMed (2.4 GB, killed by the kernel once).
+# Each attempt's outcome is therefore persisted next to the recording and
+# short-circuits every later attempt unless force=True (Retry button).
+
+def _marker_path(wav_path):
+    base, _ = os.path.splitext(wav_path)
+    return base + '.decode.json'
+
+def read_decode_marker(wav_path):
+    """The recorded outcome of a previous decode attempt, or None."""
+    try:
+        with open(_marker_path(wav_path), encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+def _write_decode_marker(wav_path, success, message):
+    try:
+        with open(_marker_path(wav_path), 'w', encoding='utf-8') as f:
+            json.dump({'success': bool(success), 'message': str(message),
+                       'ts': time.time()}, f)
+    except OSError:
+        pass
 
 def _satdump_decode(pipeline, iq_path, out_dir, label):
     """Decode a raw IQ recording with SatDump (runs minutes on the Pi — the
@@ -98,30 +128,44 @@ def _remove_quietly(path):
         pass
 
 
-def decode_recording(wav_path):
+def decode_recording(wav_path, force=False):
     """Decode a pass recording to a PNG next to the WAV.
 
-    The decoder is chosen by satellite, detected from the recording filename.
+    The decoder is chosen by satellite, detected from the recording
+    filename. The outcome of every attempt is written to a decode marker
+    (<base>.decode.json) and short-circuits later attempts — see the
+    marker block above. force=True re-runs and overwrites the marker.
 
     Returns (success, png_path, error_message).
     """
+    if not force:
+        marker = read_decode_marker(wav_path)
+        if marker is not None:
+            if marker.get('success'):
+                png = _png_path(wav_path)
+                return True, (png if os.path.exists(png) else None), marker.get('message')
+            return False, None, f"decode already attempted: {marker.get('message')}"
     output_png = _png_path(wav_path)
     sat = satellite_from_filename(wav_path)
     if sat is None:
         state.log_console(f"Decode: no tracked satellite in the name of {os.path.basename(wav_path)} — trying noaa-apt without map overlay", "warn")
+        result = _decode_apt(wav_path, output_png, sat)
     elif sat.startswith('ISS'):
-        return _decode_sstv(wav_path, output_png)
+        result = _decode_sstv(wav_path, output_png)
     elif sat.startswith('Meteor'):
         # LRPT is a ~72 kHz wide QPSK digital mode — noaa-apt cannot decode
         # it, but the raw IQ capture can (SatDump meteor_m2-x_lrpt)
         started, msg = _decode_iq(wav_path, 'meteor_m2-x_lrpt', '_lrpt')
-        return (True, None, f'LRPT recording - {msg}') if started else (False, None, f'LRPT recording - {msg}')
+        result = (started, None, f'LRPT recording - {msg}')
     elif sat in _DSB_RECEIVE_SATS:
         # APT transmitter off: this satellite is received via its DSB
         # downlink (instrument telemetry) - decodable from the raw IQ
         started, msg = _decode_iq(wav_path, 'noaa_dsb', '_dsb')
-        return (True, None, f'DSB recording - {msg}') if started else (False, None, f'DSB recording - {msg}')
-    return _decode_apt(wav_path, output_png, sat)
+        result = (started, None, f'DSB recording - {msg}')
+    else:
+        result = _decode_apt(wav_path, output_png, sat)
+    _write_decode_marker(wav_path, result[0], result[2] or 'decoded')
+    return result
 
 
 def _decode_sstv(wav_path, output_png):
