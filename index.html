@@ -658,6 +658,7 @@
                 let newZoom = oldZoom * (e.deltaY < 0 ? 1.18 : 1 / 1.18);
                 if (newZoom < 1.05) newZoom = 1;
                 newZoom = Math.min(32, newZoom);
+                if (Math.abs(newZoom - oldZoom) < 0.001) return;   // at the floor/ceiling: nothing to redraw
                 const cursorKhz = (b.zoomOffKHz || 0) + (frac - 0.5) * wfSpanKhz(b);
                 const newSpan = 240 / newZoom;
                 let newOff = newZoom === 1 ? 0 : cursorKhz - (frac - 0.5) * newSpan;
