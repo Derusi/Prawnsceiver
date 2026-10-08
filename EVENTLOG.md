@@ -533,3 +533,59 @@ stale FC0013 retry loop cleared on the restart below.
     current from status.json drive it; hides itself when finished.
 - Next: 13:19 NOAA 19 28° (watch for the WAV-split recurrence on the
   v5), 13:33 ISS 62°, 14:15 Meteor-M 2-4 32° (v5's first TCXO LRPT try).
+
+### 2026-10-08 14:30 CEST — decode chain deep-dive: two real bugs fixed; all tracked digital transmitters dark
+(1) SIGN BUG in the decode centering (fixed, ac7d0ad): _measure_signal_offset
+    returns the signal's POSITION (negative Hz; -71425 measured live on the
+    04:29 M2-4 file) but _decode_iq passed that value as the ROTATION.
+    frequency_shift rotates BY its argument, so every decode whose
+    measurement succeeded rotated the signal to twice its offset — aliased
+    out of the demod band. The +60 kHz fallback is a rotation and was
+    correct, so only measurement-failed (weak) decodes were ever centered
+    right. Mechanically explains the whole 0-byte-CADU LRPT streak.
+    Fixed: shift_hz = -measured. Verified: synthetic signal at the measured
+    -71425.78 Hz lands at 0.0 Hz; live console now logs "measured at
+    -84.3 kHz, rotating 84.3 kHz" / "NOT FOUND, assuming -60.0 kHz,
+    rotating 60.0 kHz".
+(2) BUT: no satellite signal was ever in the failing files. Time-resolved
+    FFT drift analysis (fixed peaks only, zero Doppler drift — impossible
+    for a satellite carrier) across 04:29 M2-4 (80.8°, healthy AGC, rms
+    9.4-15.5), 06:10 M2-4, 09:31 M2-3, 12:52 NOAA 18 (BOTH dongles, 70°)
+    and 13:18 NOAA 19 (v5): no satellite anywhere. The 10:15 entry's
+    "clear +8 dB / 72 kHz LRPT plateau" does not reproduce — the
+    measurement was fooled by a broad ~2x noise hump (AGC pumping/tuner
+    shape), and the "-13 kHz off-nominal M2-4 LRPT" claim came from the
+    same fooled measurement (noise hump sits at raw -71.4 kHz = -11.4 kHz
+    in waterfall coords).
+(3) M2-3 TRACKING FREQUENCY (fixed, c594048): tracked at 137.1 MHz —
+    ~800 kHz below its LRPT (SatNOGS: 137.9125/137.9; the 137.1 entries
+    are stale duplicates). Every M2-3 recording tuned dead spectrum.
+    Now 137912500. First correctly-tuned M2-3 passes: TODAY 20:56 (46.1°)
+    and 22:36 (29.4°).
+(4) DSB verdict: NOAA 18 DSB (137.35, tuned right, 70°) and NOAA 19 DSB
+    (137.77 per SatNOGS, tuned right, 28°) — no carrier on either dongle.
+    The 12:52 "HIRS/SEM products" were SatDump scaffolding on noise
+    (telemetry words all -1, "Unknown NOAA", timestamp 0). The dashboard
+    also cannot show _dsb products at all (only APT PNGs) — feature gap,
+    moot while the DSBs are dark.
+(5) v5 PASS-TIME STREAM CORRUPTION (open hardware issue): during passes
+    the v5's IQ shows equal-power mirror pairs (±15.7/±45.4 kHz at 12:52,
+    ±25.3 kHz at 13:18) and, live at 14:15-14:21, an artifact cluster at
+    waterfall -85.8 kHz (= raw -145.8 kHz — outside the band,
+    impossible for a real signal) averaging 206/255. Parked streams are
+    clean. Correlates with recording activity → suspect USB/CPU load:
+    the 10:15 runbook's POWERED HUB recommendation, plus port/cable
+    swap if it persists. The one-off WAV split at 12:53:29 did NOT recur
+    (13:18 and 14:15 passes: single continuous files, no console errors).
+(6) CORRECTION to the 13:08 entry: the 13:07 restart killed two in-flight
+    SatDump decodes (proof: their .centered.c32 temp files survived —
+    the finally-clause never ran). "Centering = prime suspect for the
+    12:52 DSB failure" was wrong: those files contained no satellite.
+    Leftover c32s (2.7 GB) removed 13:44.
+(7) 14:15 M2-4 32.4°: LRPT confirmed OFF live — at max elevation both
+    dongles show nothing at the target (R820T target-band/median 1.07);
+    fixed-code decode ran cleanly on empty spectrum.
+(8) Real-data outlook today (pipeline correct end-to-end for the first
+    time): M2-4 15:55 (43.8°), M2-3 20:56 (46.1°, first ever correctly
+    tuned), M2-3 22:36 (29.4°). NOAA 15 APT keeps producing its degraded
+    "snowstorm" images. Watches scheduled 16:08 / 21:10 / 22:52.
