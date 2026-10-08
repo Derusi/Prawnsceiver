@@ -741,3 +741,13 @@ start via crontab @reboot noaa_receiver.sh). Timeline and findings:
   disconnected antenna path. Next on-site: replug the v5, check the
   R820T antenna, watch the waterfall for two faint carriers +/-25 kHz
   around center.
+
+### 2026-10-08 17:05 CEST — CORRECTION to 16:50: no crash — the Pi was moved indoors
+
+The "hard crash" was the user unplugging the Pi and carrying it inside
+ahead of rain (~16:33-16:38; the 16:38:14 boot is it coming back up on
+the desk, same state as any power cycle). No PSU/kernel problem. The
+v5 (48263793) is still off the USB bus after the move — replug pending;
+satellite tracking stays down until then. AIS runs on the R820T as
+before (0 frames so far; antenna situation after the move to be
+re-checked — see next entry when the dongles/antennas are settled).
