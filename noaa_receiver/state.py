@@ -85,6 +85,11 @@ current_frequency = 137620000
 current_sat_name = "NOAA 15 (idle)"
 is_recording = False
 is_pass_active = False
+# Global recording pause (dashboard switch): while set, the capture threads
+# do not open WAV/IQ files during passes — an already-running WAV is closed
+# within one IQ block. Tracking, waterfall, Doppler and live audio keep
+# running, so reception quality can be judged without collecting garbage.
+recordings_paused = False
 current_wav = None
 current_wav_path = None
 upcoming_passes = []

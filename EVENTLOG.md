@@ -589,3 +589,17 @@ stale FC0013 retry loop cleared on the restart below.
     time): M2-4 15:55 (43.8°), M2-3 20:56 (46.1°, first ever correctly
     tuned), M2-3 22:36 (29.4°). NOAA 15 APT keeps producing its degraded
     "snowstorm" images. Watches scheduled 16:08 / 21:10 / 22:52.
+
+### 2026-10-08 14:40 CEST — dashboard recording-pause switch deployed (user request)
+User wants to stop collecting garbage recordings while reception quality
+is being fixed. Added a global pause: System Status panel -> "Automatic
+Recordings" -> Pause button (also reachable as /record_pause?paused=1|0,
+state in status.json:recordings_paused). While paused the receiver still
+tracks passes (tuning, Doppler, waterfall, live audio) but no WAV/IQ
+files are opened; a running WAV closes within one IQ block. Paused passes
+still get a pass-history entry (peak, no wav). Flag is in-memory — a
+restart resumes recording.
+Deploy: restart in the idle window after the 14:39 NOAA 18 set, before
+the 15:11 ISS rise. Recordings LEFT PAUSED after deploy per user intent
+— note this skips the 15:55 M2-4 43.8 deg LRPT outlook pass (and the
+16:08 watch) unless the user resumes first.

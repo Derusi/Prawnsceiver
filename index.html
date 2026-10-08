@@ -211,6 +211,14 @@
                 <div style="font-size:0.75em;color:#888;margin-top:3px;">Startup uses cached TLEs (no network wait). Sync fetches fresh elements and re-predicts passes.</div>
             </div>
             <div class="status-item">
+                <div class="status-label">Automatic Recordings</div>
+                <div class="status-value" style="display:flex;gap:6px;align-items:center;">
+                    <span id="rec-pause-state" style="flex:1;font-size:0.85em;color:#888;">—</span>
+                    <button id="rec-pause-btn" class="btn-outline" data-paused="0" onclick="toggleRecordPause()">⏸ Pause</button>
+                </div>
+                <div style="font-size:0.75em;color:#888;margin-top:3px;">While paused, passes are still tracked (waterfall, Doppler, live audio) but no WAV/IQ files are written.</div>
+            </div>
+            <div class="status-item">
                 <div class="status-label">Recordings</div>
                 <div class="status-value" id="rec-count">0</div>
             </div>
@@ -1339,6 +1347,7 @@
                 if (statusFails >= 2) document.getElementById('conn-banner').style.display = 'none';
                 statusFails = 0;
                 document.getElementById('rec-count').textContent = data.recording_count || 0;
+                renderRecordPause(!!data.recordings_paused);
                 document.getElementById('rtl-log').textContent = data.rtl_log || '—';
                 document.getElementById('sat-current').textContent = data.satellite;
                 tleInfo = data.tle || null;
@@ -1412,6 +1421,7 @@
                     banner.className = 'pass-idle';
                     banner.textContent = 'No passes predicted in the next 24h';
                 }
+                if (data.recordings_paused) banner.textContent += '  —  ⏸ recordings paused';
 
                 // SatNOGS info card: fetch once per pass (per catalog number)
                 const activeCatnr = (data.pass_active && data.current_pass) ? data.current_pass.catnr : null;
@@ -1680,6 +1690,38 @@
 
         async function tuneAuto() {
             try { await fetch('/tune?f=auto'); } catch (e) {}
+        }
+
+        // Global recording pause (System Status panel): server-side flag,
+        // rendered from status.json so the button survives reloads and
+        // reflects changes made from another browser tab.
+        function renderRecordPause(paused) {
+            const btn = document.getElementById('rec-pause-btn');
+            const st = document.getElementById('rec-pause-state');
+            if (btn) {
+                btn.dataset.paused = paused ? '1' : '0';
+                btn.textContent = paused ? '▶ Resume' : '⏸ Pause';
+                btn.className = paused ? 'btn-solid' : 'btn-outline';
+            }
+            if (st) {
+                st.textContent = paused ? '⏸ Paused — nothing is recorded' : 'Active — WAVs recorded during passes';
+                st.style.color = paused ? '#f39c12' : '#888';
+            }
+        }
+
+        async function toggleRecordPause() {
+            const btn = document.getElementById('rec-pause-btn');
+            const to = (btn && btn.dataset.paused === '1') ? 0 : 1;
+            try {
+                const res = await fetch('/record_pause?paused=' + to);
+                const data = await res.json();
+                if (data.success) {
+                    renderRecordPause(!!data.recordings_paused);
+                    toast(data.recordings_paused ? '⏸ Automatic recordings paused' : '▶ Automatic recordings resumed');
+                } else {
+                    toast('Pause failed: ' + (data.error || 'unknown error'), true);
+                }
+            } catch (e) { toast('Pause failed: receiver unreachable', true); }
         }
 
         async function syncTle() {

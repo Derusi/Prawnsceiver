@@ -463,6 +463,7 @@ def sdr_capture_thread(serial):
                     freq_now = state.manual_dongle_freq.get(serial, state.current_frequency)
                     sat_now = state.current_sat_name
                     pass_active = state.is_pass_active
+                    rec_paused = state.recordings_paused
                     dop_hz, dop_freq = state.doppler_hz, state.doppler_freq_hz
                     bw_hz = state.manual_dongle_bw.get(serial)
 
@@ -553,7 +554,10 @@ def sdr_capture_thread(serial):
                 # status/handler/scheduler. A dongle with a manual frequency
                 # override is parked on the operator's frequency — recording
                 # it would fill a satellite-named WAV with the wrong band.
-                should_record = pass_active and not override
+                # The dashboard's global pause (rec_paused) skips the WAV
+                # entirely: mid-pass it closes a running file within one
+                # block, and no new one opens until it is cleared.
+                should_record = pass_active and not override and not rec_paused
                 if should_record and not entry['is_recording']:
                     if now_ts >= wav_retry_at and open_wav(sat_now):
                         record_sat = sat_now

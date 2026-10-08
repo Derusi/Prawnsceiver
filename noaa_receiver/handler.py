@@ -53,6 +53,7 @@ def get_status():
         sat = state.current_sat_name
         passing = state.is_pass_active
         manual = state.manual_frequency
+        rec_paused = state.recordings_paused
         passes = state.upcoming_passes
         cur_pass = state.current_pass
         tle = dict(state.tle_progress)
@@ -67,6 +68,7 @@ def get_status():
         "satellite": sat,
         "pass_active": passing,
         "recording": state.is_recording,
+        "recordings_paused": rec_paused,
         "recording_count": len(get_recordings()),
         "signal_strength": 0,
         "rtl_log": "",
@@ -383,6 +385,26 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"success": True, "mode": "queued"}).encode())
+        elif self.path.split('?')[0] == '/record_pause':
+            # Global recording pause (dashboard switch): paused=1 stops the
+            # capture threads from opening WAV/IQ files during passes (a
+            # running WAV is closed within ~one IQ block); paused=0 resumes.
+            # Tracking, waterfall, Doppler and live audio keep running either
+            # way, so reception quality stays observable while paused.
+            query = parse_qs(urlparse(self.path).query)
+            p = (query.get('paused') or [''])[0].strip().lower()
+            paused = p in ('1', 'true', 'on', 'yes')
+            with state.status_lock:
+                state.recordings_paused = paused
+            if paused:
+                state.log_console("⏸ Automatic recordings paused — passes are received but not written to disk")
+            else:
+                state.log_console("▶ Automatic recordings resumed")
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "recordings_paused": paused}).encode())
         elif self.path.startswith('/tune_dongle'):
             # Per-dongle manual frequency override:
             # /tune_dongle?d=<serial>&f=<mhz> tunes just that dongle (e.g.
