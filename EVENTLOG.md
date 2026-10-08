@@ -366,3 +366,55 @@ RUNBOOK for when the dongle arrives (see also the 11:10 LRPT test first):
    Add its serial to SDR_DONGLE_GAIN (measure best fixed gain first).
 7. CPU: a third capture thread adds ~50% DSP load; FFT_EVERY was
    budgeted for two dongles — watch demod stalls / load average.
+
+### 2026-10-08 10:42 CEST — morning wrap-up: night summary, state: healthy
+All 9 monitored passes since 02:51 recorded and logged; pipeline
+automated end to end every time (record, auto-decode with markers,
+quality, history attribution — no operator action all night).
+
+| Rise | Satellite        | Alt   | Peak  | Decoded | Products |
+|------|------------------|-------|-------|---------|----------|
+| 02:51 | Meteor-M 2-4    | 12.7° | 350.7 | yes (decode-started) | _lrpt: 0-byte CADU |
+| 04:29 | Meteor-M 2-4    | 80.8° | 420.5 | yes | _lrpt: 0-byte CADU |
+| 06:10 | Meteor-M 2-4    | 19.2° | 695.4 | yes | _lrpt: 0-byte CADU |
+| 07:23 | NOAA 15         | 24.7° | 1132  | yes | PNG (weak/degraded video) |
+| 08:45 | ISS (Zarya)     | 11.3° | 717.9 | no (correct, no ARISS) | — |
+| 09:02 | NOAA 15         | 54.0° | 474   | yes | PNG (weak/degraded video) |
+| 09:31 | Meteor-M 2-3    | 19.9° | 418.4 | yes | _lrpt: 0-byte CADU |
+| 10:19 | ISS (Zarya)     | 53.7° | 22.4  | no (correct) | — |
+
+1. LRPT PRODUCTS: ZERO digital images from any Meteor pass. All 7
+   _lrpt dirs (both dongles x 3 Meteor passes + 09:31 M2-3) contain
+   only a 0-byte .cadu + empty MSU-MR + 4-byte telemetry.json. No
+   _dsb product dirs exist yet (NOAA 18/19 DSB decodes: the 00:36
+   NOAA 18 pass predates the watch window and recorded no IQ-era
+   products). The decisive test remains 11:10 Meteor-M 2-3 at 67.4°.
+2. MEMORY: no OOM, no crash overnight — the receiver ran from the
+   01:42 restart through all passes until the deliberate 10:07
+   fixed-gain restart (RSS crept 47 -> 260 MB as logged; tracemalloc
+   investigation stays on the backlog). Post-restart RSS 89 MB.
+   Console ring was reset by the restart, so no overnight console
+   evidence remains — the per-pass entries above are the record.
+3. SATNOGS BLOCK LIFTED: db.satnogs.org answers in ~0.12 s from the
+   Pi with real JSON (satellite 25338 fetch verified). The loader's
+   30-min retries self-populated tonight's history entries with
+   transmitter metadata — nothing was triggered manually. Notable
+   data now in pass_history: NOAA 15 APT 137.62 marked INACTIVE,
+   NOAA 18/19 APT marked inactive (confirms our dark-transmitter
+   findings), Meteor-M 2-4 lists LRPT at 137.9125/137.9/137.1 MHz in
+   both 80k and 72k modes.
+4. CELESTRAK STILL BLOCKED (timeout, HTTP 000 after 8 s) — but
+   tle_age_min is 33 (fresh): TLE syncs are succeeding (SatNOGS-side
+   source), so no action needed.
+5. ANOMALY (fixed gain, for the 11:35 evaluation): the 10:19 ISS
+   pass — the FIRST recorded after the 29.7 dB manual-gain deploy —
+   peaked at 22.4 vs the usual ~150 noise floor. Recordings are
+   normal-sized (48 MB WAVs), so capture worked; the low peak
+   suggests 29.7 dB leaves the primary under-driven relative to AGC
+   (or the RSSI scaling changed with manual gain mode). The 10:45
+   NOAA 15 pass + 11:35 cron must judge this from the audio/waterfall
+   before deciding whether 29.7 dB is the right fixed value.
+- Next: 10:45 NOAA 15 10.6° (gain smoke test), 11:10 Meteor-M 2-3
+  67.4° (decisive LRPT test), 11:12 NOAA 18 DSB 20°, then the 11:35
+  cron evaluation (gain A/B + LRPT verdict). NESDR SMArt v5 arriving
+  today — runbook in the 10:15 entry.
