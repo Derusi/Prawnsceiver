@@ -494,3 +494,42 @@ stale FC0013 retry loop cleared on the restart below.
 - v5'S FIRST PASS as primary: NOAA 18 70° at 12:52 (DSB mode, IQ +
   SatDump noaa_dsb) — the shakedown. Meteor-M 2-4 32° at 14:15 gives
   the v5's first LRPT attempt with a TCXO.
+
+### 2026-10-08 13:08 CEST — v5 shakedown pass done; DC-spike verdict + blanking removed; TLE sync bar
+(1) 12:52 NOAA 18 (DSB 137.35, 70°) — NESDR SMArt v5's first pass as
+    primary: CAPTURE OK, one anomaly. signal_peak 939.3, full coverage,
+    file sizes normal. ANOMALY: the v5's WAV/IQ SPLIT mid-pass —
+    125108 recorded 12:51:08 to ~12:53:2x (62 MB IQ), then a fresh file
+    125329 ran to pass end (302 MB); together they match the R820T's
+    unbroken 370 MB. Cause unknown: the console ring with the exact log
+    line was destroyed by the 13:07 restart (below). Suspects: a
+    momentary rtl_tcp/USB hiccup on the v5 (precedent: the 12:23 replug
+    "Connection reset by peer" storm) or a WAV write error (disk NOT
+    the cause — 37G free). WATCH: whether it recurs at 13:19 NOAA 19;
+    if it does, escalate before trusting the v5 for unattended passes.
+(2) DSB DECODE — first _dsb attempt ever (no baseline; the 00:36 NOAA 18
+    pass predates IQ-era products):
+      v5 125108 (short segment): PRODUCTS — HIRS + SEM (real NOAA DSB
+        instruments), dataset.json "Unknown NOAA", timestamp 0.0.
+      v5 125329 (main segment): 0-byte tip, no products.
+      R820T full pass: 8216-byte tip, no products.
+    Pattern: the only decode with products ran from the RAW iq.u8; the
+    two failures are exactly the files with freshly generated
+    .centered.c32 (1.2/1.5 GB mistune-centering products of the new
+    centering path; no c32 exists for 125108). Next step when idle:
+    re-run SatDump noaa_dsb on a big file directly from iq.u8 and/or
+    inspect the centering output — prime suspect for the DSB failure.
+(3) DC SPIKE VERDICT (from the 12:52 pass IQ, 120 FFT windows each):
+    v5 0.43x row max, 0% of windows dominated; R820T 0.32x, 0%;
+    removed FC0013 reference 0.73x, 11%. The waterfall blanking
+    (c9fc3f9) existed only for the FC0013 → REMOVED in 4bfc8ae (rows
+    normalize by the plain row max again, pre-2026-10-06 behavior).
+    Deployed + receiver restarted 13:07:17 (idle window, NOAA 19 next
+    at 13:19); live row verified unblanked (spike bins now vary, spike
+    peak 135 vs row max 255). Both dongles back up after restart.
+(4) TLE sync progress bar (2817a6d, static index.html — no restart):
+    bar beneath the Pass Data box on Sync-now click; starting state
+    bridges the <=10 s scheduler pickup, then tle.active/done/total/
+    current from status.json drive it; hides itself when finished.
+- Next: 13:19 NOAA 19 28° (watch for the WAV-split recurrence on the
+  v5), 13:33 ISS 62°, 14:15 Meteor-M 2-4 32° (v5's first TCXO LRPT try).
