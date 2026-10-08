@@ -144,6 +144,10 @@ def _sample(entry, sc, settle=SCAN_SETTLE_SECS, dwell=SCAN_DWELL_SECS):
         time.sleep(SCAN_SAMPLE_EVERY)
     if not rows:
         return 0.0, None
+    if len(rows) < 5:
+        # Too few rows to average impulses away (dongle just started,
+        # FFT stalled) — not a trustworthy measurement, treat as silence
+        return 0.0, None
     mean_row = np.mean(rows, axis=0)
     _, ratio, _ = _measure(mean_row)
     return ratio, mean_row

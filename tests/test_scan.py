@@ -73,10 +73,12 @@ assert scan.fit_bw_hz(400000) == 120000  # clamp at the top (full band)
 print(f"3. fit_bw_hz: 34 kHz signal -> {apt/1000:g} kHz cutoff, clamps hold: ok")
 
 # --- 4. scan thread end-to-end (fake dongle entry + row feeder) ---
-# Speed the dwell windows up: wrap _sample with near-zero timings
+# Speed the dwell windows up: wrap _sample with a short-but-sufficient
+# dwell (>= 5 rows are averaged per window by design — the feeder
+# publishes a fresh row every 4 ms, so 0.15 s gathers ~30 rows)
 _orig_sample = scan._sample
 def _fast_sample(entry, sc, settle=None, dwell=None):
-    return _orig_sample(entry, sc, settle=0.0, dwell=0.03)
+    return _orig_sample(entry, sc, settle=0.0, dwell=0.15)
 scan._sample = _fast_sample
 scan.SCAN_SAMPLE_EVERY = 0.002
 
