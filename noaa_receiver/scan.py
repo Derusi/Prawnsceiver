@@ -26,7 +26,10 @@ over each step's dwell window (the same trick as a spectrogram average):
   absolute calibration, so it works at any gain.
 
 On a hit the dongle is re-centered on the measured peak (bin offset)
-and the hit confirmed with a second dwell; then the recorded (demod)
+and the hit confirmed with a second dwell in which the peak must land
+within CONFIRM_TOLERANCE_HZ of 0 Hz — a real signal stays put when the
+dongle tunes onto it, while tune-relative artifacts (tuner spurs,
+band-edge junk) move away and are rejected; then the recorded (demod)
 bandwidth is fitted from the signal's measured width, so the WAV/live
 audio band is neither too wide (extra noise) nor too narrow (clipping
 the deviation). fit_bandwidth() is served on its own endpoint for the
@@ -54,6 +57,12 @@ SCAN_RATIO = 3.0           # hit threshold: peak/floor = +9.5 dB over the floor
 SPIKE_GUARD_HZ = 15000     # bins masked around +SDR_OFFSET_HZ (the DC spike)
 FIT_MIN_RATIO = 1.8         # below this nothing "stands out" — refuse to fit
 STEP_MIN_HZ, STEP_MAX_HZ = 20000, 400000
+# After re-centering on a hit, the peak must land within this of 0 Hz: a
+# real signal stays put when the dongle tunes onto it, while a
+# tune-relative artifact (tuner spur, band-edge junk — measured live:
+# phantom finds at +40.8 kHz and at the ±120 kHz window edges) moves
+# with the tuner and fails the confirm here.
+CONFIRM_TOLERANCE_HZ = 5000
 
 def _bin_hz():
     return SDR_RATE / FFT_SIZE
@@ -247,11 +256,14 @@ def scan_dongle_thread(serial):
                 with state.status_lock:
                     state.manual_dongle_freq[serial] = center
                 confirm_r, confirm_row = _sample(entry, sc)
-                if confirm_row is not None and confirm_r >= sc["ratio"]:
+                confirm_off = _peak_offset_hz(confirm_row) if confirm_row is not None else None
+                if (confirm_row is not None and confirm_r >= sc["ratio"]
+                        and confirm_off is not None and abs(confirm_off) <= CONFIRM_TOLERANCE_HZ):
                     sc["found_hz"], sc["found_ratio"] = center, confirm_r
                     sc["result"] = "found"
                     break
-                # transient (single-block impulse): keep sweeping
+                # transient, or a tune-relative artifact that moved away
+                # from the re-centered peak — keep sweeping
             freq += step_dir * sc["step_hz"]
         if sc["result"] is None:
             sc["result"] = "nothing"
