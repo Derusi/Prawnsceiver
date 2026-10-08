@@ -235,3 +235,25 @@ NO SatDump products. Root-caused through the whole chain:
   no products (same anomalous signal). Automation works.
 - NEXT MAJOR TEST: 07:23 NOAA 15 APT (transmitter believed alive) —
   the audio-path image chance; then 09:31 Meteor-M 2-3.
+
+### 2026-10-08 06:45 CEST — 06:10 Meteor pass verification (cron)
+- Complete pipeline ran unattended end to end: PASS 06:09:27-06:18:48,
+  both dongles WAV (54 MB) + IQ (269 MB), auto-decode with markers,
+  measured centering, quality scores, history entry — all automatic,
+  no operator action.
+- Primary: signal measured at -71.4 kHz (identical to the 04:29 pass
+  — the anomaly is reproducible, satellite-side). Decode ran, no
+  products (0-byte CADU, as established).
+- Secondary (FC0013): signal NOT FOUND in its IQ (weaker antenna at
+  19.2°, or its different ppm puts the plateau outside the search
+  range) — fell back to the +60 kHz assumption, decode ran, no
+  products. Expected at this elevation.
+- Reception quality scored 0% on both (the FM-demod audio of a
+  digital pass is noise — honest).
+- History: single entry, peak 695.4 (note: likely inflated by the
+  constant -55 kHz interferer sitting in the strength window;
+  see the 06:40 entry), decoded=True (decode-started semantics).
+- Memory: server 140 MB after the pass-end decodes (was 108 MB) —
+  watch the slow creep (47 -> 92 -> 108 -> 140 over the night);
+  nowhere near the 1.5 GB flag.
+- Receiver healthy, no restart performed; next: NOAA 15 APT 07:23.
