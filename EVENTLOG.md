@@ -603,3 +603,17 @@ Deploy: restart in the idle window after the 14:39 NOAA 18 set, before
 the 15:11 ISS rise. Recordings LEFT PAUSED after deploy per user intent
 — note this skips the 15:55 M2-4 43.8 deg LRPT outlook pass (and the
 16:08 watch) unless the user resumes first.
+
+### 2026-10-08 14:38 CEST — pause switch deployed; restart was mid-pass (user-ordered)
+Correction to the entry above: the user ordered the restart immediately
+("I still only receive garbage"), so it happened at 14:36 DURING the
+low 14.7 deg NOAA 18 DSB pass (dark transmitter, garbage either way),
+not in the idle window. Sequence verified live from console.json:
+14:37:36 scheduler re-triggered the pass after restart, 14:37:38 both
+dongles opened WAV+IQ, 14:37:46 /record_pause?paused=1 -> both closed
+within the same second; status.json recording:False while pass_active
+stays True (tracking/waterfall/live audio keep running). Recordings are
+PAUSED now. Leftover truncated NOAA_18_20261008_143738*.{wav,iq.u8}
+(both dongles, ~0.8 MB / 3.9 MB each) from the restart window — left on
+disk for now. The 15:55 M2-4 LRPT outlook pass will not be recorded
+while paused (16:08 watch moot unless resumed).
