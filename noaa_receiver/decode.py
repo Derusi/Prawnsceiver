@@ -8,7 +8,9 @@ import threading
 import time
 
 from . import state
-from .config import NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE, SAT_DSB_FREQ, SDR_RATE, TRACKED_SATS
+from .calibration import PRIMARY_DONGLE_SN, tuning_correction
+from .config import NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE, SAT_DSB_FREQ, SDR_OFFSET_HZ, SDR_RATE, TRACKED_SATS
+from .dsp import frequency_shift, iq_to_complex, new_state
 
 # Recording names are '<sat>_<YYYYMMDD>_<HHMMSS>[-<n>][_<serial>].wav', written by
 # radio.sdr_capture_thread via sat_short_name(). The satellite part is
@@ -80,19 +82,75 @@ def _write_decode_marker(wav_path, success, message):
     except OSError:
         pass
 
-def _satdump_decode(pipeline, iq_path, out_dir, label):
+def _satellite_freq(sat_name):
+    """The receive frequency used for a satellite's passes (its DSB
+    downlink when we receive DSB for it)."""
+    for catnr, (name, freq) in TRACKED_SATS.items():
+        if name == sat_name:
+            return SAT_DSB_FREQ.get(catnr, freq)
+    return None
+
+
+def _serial_from_filename(wav_path):
+    """The dongle serial suffix of a recording name, or None (primary)."""
+    m = _RECORDING_RE.match(os.path.basename(wav_path))
+    return m.group('serial') if m else None
+
+
+def _centered_cf32(iq_path, shift_hz):
+    """Rewrite the raw u8 IQ as cf32 with the satellite rotated to 0 Hz.
+
+    The .iq.u8 files hold the RAW rtl_tcp stream: the dongle is tuned
+    SDR_OFFSET_HZ + correction above the target, so the satellite sits at
+    -(SDR_OFFSET_HZ + correction) Hz in the file (plus Doppler). SatDump
+    baseband pipelines demodulate around 0 Hz — decoding the raw file
+    yields no lock at all (verified live on the 04:29 80.8-degree pass:
+    clear +8 dB / 72 kHz LRPT plateau in the FFT, zero products from
+    the raw decode). The rotation is chunked (phase-continuous via the
+    DSP state) so memory stays bounded; residual Doppler (a few kHz,
+    slowly varying) is left to the demod's frequency tracking.
+
+    Returns the temp path; the caller removes it."""
+    import numpy as np
+    tmp = iq_path + '.centered.c32'
+    st = new_state()
+    chunk = SDR_RATE * 10
+    with open(iq_path, 'rb') as fin, open(tmp, 'wb') as fout:
+        while True:
+            raw = fin.read(chunk * 2)
+            if not raw or len(raw) < 4096:
+                break
+            c = iq_to_complex(raw)
+            c = frequency_shift(c, shift_hz, SDR_RATE, st)
+            fout.write(c.astype(np.complex64).view(np.float32).tobytes())
+    return tmp
+
+
+def _satdump_decode(pipeline, iq_path, out_dir, label, shift_hz=None):
     """Decode a raw IQ recording with SatDump (runs minutes on the Pi — the
     caller spawns this detached so the scheduler never blocks on it). The
-    out_dir doubles as the run marker: existing = already decoded/decoding."""
+    out_dir doubles as the run marker: existing = already decoded/decoding.
+
+    The IQ is first rotated so the satellite lands at 0 Hz (SatDump's
+    baseband pipelines expect a centered signal — see _centered_cf32).
+    Note: SatDump also retries fetching TLEs from Celestrak at startup;
+    while that host is unreachable each retry costs ~134 s before the
+    actual demodulation even starts."""
     exe = shutil.which('satdump')
     if not exe:
         state.log_console(f"SatDump is not installed - cannot decode {label}", "warn")
         return
     os.makedirs(out_dir, exist_ok=True)
-    cmd = [exe, pipeline, 'baseband', iq_path, out_dir,
-           '--samplerate', str(SDR_RATE), '--baseband_format', 'cu8']
-    state.log_console(f"🛰 SatDump decode started ({label}): {pipeline}")
+    baseband, fmt = iq_path, 'cu8'
+    tmp = None
     try:
+        if shift_hz:
+            state.log_console(f"Centering baseband for {label}: rotating {shift_hz} Hz")
+            tmp = _centered_cf32(iq_path, shift_hz)
+            baseband, fmt = tmp, 'cf32'
+        cmd = [exe, pipeline, 'baseband', baseband, out_dir,
+               '--samplerate', str(SDR_RATE), '--baseband_format', fmt]
+        state.log_console(f"🛰 SatDump decode started ({label}): {pipeline}")
         subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
     except subprocess.TimeoutExpired:
         state.log_console(f"SatDump decode timed out ({label})", "warn")
@@ -100,6 +158,12 @@ def _satdump_decode(pipeline, iq_path, out_dir, label):
     except Exception as e:
         state.log_console(f"SatDump decode error ({label}): {e}", "error")
         return
+    finally:
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
     products = [f for f in os.listdir(out_dir) if os.path.isfile(os.path.join(out_dir, f))]
     if products:
         state.log_console(f"🛰 SatDump decode done ({label}): {len(products)} product file(s) in {os.path.basename(out_dir)}/")
@@ -116,7 +180,16 @@ def _decode_iq(wav_path, pipeline, suffix):
         return False, f'No raw IQ capture for {label} - cannot decode'
     if os.path.exists(out_dir):
         return True, 'already decoded'
-    threading.Thread(target=_satdump_decode, args=(pipeline, iq_path, out_dir, label),
+    # Where the satellite sits in the raw baseband: the dongle was tuned
+    # SDR_OFFSET_HZ + correction above the target frequency
+    sat = satellite_from_filename(wav_path)
+    freq = _satellite_freq(sat) if sat else None
+    shift_hz = None
+    if freq is not None:
+        serial = _serial_from_filename(wav_path) or PRIMARY_DONGLE_SN
+        shift_hz = SDR_OFFSET_HZ + tuning_correction(freq, serial)
+    threading.Thread(target=_satdump_decode,
+                     args=(pipeline, iq_path, out_dir, label, shift_hz),
                      daemon=True, name='satdump').start()
     return True, 'decode started in the background (SatDump)'
 
