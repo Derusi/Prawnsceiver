@@ -160,3 +160,32 @@ Changes made while the user is asleep (all pushed, Pi restarted at
   no duplicate.
 - Memory: server RSS 92 MB (up from 47 MB during recording —
   buffers, fine), no satdump blowup. No OOM risk.
+
+### 2026-10-08 04:50 CEST — 04:29 Meteor 80.8° pass + re-trigger bug fix
+- Pass recorded fully: 349 MB IQ + 69 MB WAV per dongle, peak 420.5,
+  single correct history entry. Primary's SatDump on the full IQ
+  started 04:41:06 — products dir still empty at 05:10 (decode
+  running; LRPT lock unconfirmed so far).
+- BUG FOUND AND FIXED (deployed 04:52, restart in idle window): the
+  04:29 pass logged FOUR "PASS START" lines at 04:30:00-04:30:09.
+  Root cause: pass identity compared rise_utc with exact equality;
+  the 30-min re-prediction recomputes rise times that can drift by
+  microseconds, so a re-predict landing mid-pass re-triggered the
+  running pass each tick (the 30-min break condition spans several
+  10 s ticks). Each re-trigger "finished" the pass prematurely: the
+  secondary's PARTIAL IQ (first ~100 s) got decoded at 04:30 and its
+  _lrpt dir now blocks the full decode via the out-dir marker.
+  Fix: _same_pass uses a 30 s rise tolerance; the trigger compares
+  via _same_pass. Critical to land before the 07:23 NOAA 15 pass
+  (a mid-pass re-decode marker would have blocked the full APT
+  decode of the first good image chance).
+- FALLOUT (pending): the secondary dongle's 04:29 full IQ needs a
+  manual re-decode once the primary finishes: kill the 04:30 partial
+  satdump if still running, delete the empty
+  Meteor-M_2-4_20261008_042820_00000991_lrpt dir, then
+  curl '/decode/Meteor-M_2-4_20261008_042820_00000991.wav?force=1'.
+- Note: restarts kill SatDump's supervision thread (1 h timeout +
+  product logging) while the satdump process itself survives as an
+  orphan — the 02:51 pair and the 04:41 primary therefore have no
+  completion console lines; watch orphans manually and kill them if
+  they run absurdly long (> 1 h).
