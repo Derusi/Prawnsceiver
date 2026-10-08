@@ -201,6 +201,13 @@
                     <span id="tle-age" style="color:#888;font-size:0.85em;flex:1;">TLE age —</span>
                     <button class="btn-outline" onclick="syncTle()">🔄 Sync now</button>
                 </div>
+                <div id="tle-sync-bar" style="display:none;margin-top:4px;">
+                    <div style="display:flex;justify-content:space-between;font-size:0.75em;color:#888;">
+                        <span id="tle-sync-label">Sync starting…</span>
+                        <span id="tle-sync-count"></span>
+                    </div>
+                    <div class="signal-bar"><div class="signal-fill" id="tle-sync-fill" style="width:0%;"></div></div>
+                </div>
                 <div style="font-size:0.75em;color:#888;margin-top:3px;">Startup uses cached TLEs (no network wait). Sync fetches fresh elements and re-predicts passes.</div>
             </div>
             <div class="status-item">
@@ -234,6 +241,14 @@
     <script>
         const startTime = Date.now();
         let tleInfo = null;
+        // TLE sync progress bar state: ms timestamp of the last accepted
+        // sync request — bridges the gap between the button click and the
+        // scheduler picking the request up (~10 s) with a "starting" bar.
+        // tleSyncWasActive: the previous poll saw the sync running, so a
+        // following inactive poll means it FINISHED — the bar must hide,
+        // not fall back into the starting window.
+        let tleSyncClickAt = 0;
+        let tleSyncWasActive = false;
         const WF_WIDTH = 512, WF_HEIGHT = 300, SPEC_HEIGHT = 25;
         // One waterfall block per dongle, built dynamically from /dongles.json.
         // Blocks are keyed by dongle SERIAL (id) — USB indices shift on
@@ -1328,6 +1343,7 @@
                 document.getElementById('sat-current').textContent = data.satellite;
                 tleInfo = data.tle || null;
                 renderTleBar();
+                updateTleSyncBar(tleInfo);
                 const ageEl = document.getElementById('tle-age');
                 if (ageEl) ageEl.textContent = (data.tle_age_min !== null && data.tle_age_min !== undefined)
                     ? 'TLEs ' + Math.round(data.tle_age_min) + ' min old' : 'no TLE data yet';
@@ -1408,6 +1424,39 @@
             } catch(e) {
                 if (++statusFails >= 2) document.getElementById('conn-banner').style.display = 'block';
                 console.error('Status fetch failed:', e);
+            }
+        }
+
+        // Progress bar beneath the TLE info box: visible while a sync is
+        // starting (button pressed, scheduler picks it up within ~10 s) or
+        // running (status.json tle.active/done/total/current). Hides itself
+        // once the sync is over or the starting window (60 s) has elapsed.
+        function updateTleSyncBar(tle) {
+            const bar = document.getElementById('tle-sync-bar');
+            if (!bar) return;
+            const active = !!(tle && tle.active);
+            if (active) tleSyncWasActive = true;
+            const starting = !active && !tleSyncWasActive && tleSyncClickAt && (Date.now() - tleSyncClickAt) < 60000;
+            if (active) {
+                const label = document.getElementById('tle-sync-label');
+                const count = document.getElementById('tle-sync-count');
+                const fill = document.getElementById('tle-sync-fill');
+                if (label) label.textContent = 'Updating ' + (tle.current || 'TLE data') + '…';
+                if (count) count.textContent = tle.total ? tle.done + '/' + tle.total : '';
+                if (fill) fill.style.width = (tle.total ? Math.round((tle.done / tle.total) * 100) : 0) + '%';
+                bar.style.display = 'block';
+            } else if (starting) {
+                const label = document.getElementById('tle-sync-label');
+                const count = document.getElementById('tle-sync-count');
+                const fill = document.getElementById('tle-sync-fill');
+                if (label) label.textContent = 'Sync starting…';
+                if (count) count.textContent = '';
+                if (fill) fill.style.width = '0%';
+                bar.style.display = 'block';
+            } else {
+                bar.style.display = 'none';
+                tleSyncClickAt = 0;
+                tleSyncWasActive = false;
             }
         }
 
@@ -1634,15 +1683,28 @@
         }
 
         async function syncTle() {
+            // Show the bar immediately on click; kept up on success (and on
+            // "already running") until the scheduler reports progress or the
+            // sync finishes — updateTleSyncBar drives it from status.json
+            tleSyncClickAt = Date.now();
+            updateTleSyncBar(null);
             try {
                 const res = await fetch('/sync_tle');
                 const data = await res.json();
                 if (data.success) {
                     toast('🔄 TLE sync started — pass predictions refresh when it finishes');
                 } else {
+                    if (!(data.error || '').includes('already running')) {
+                        tleSyncClickAt = 0;
+                        updateTleSyncBar(null);
+                    }
                     toast('Sync failed: ' + (data.error || 'unknown error'), true);
                 }
-            } catch (e) { toast('Sync failed: receiver unreachable', true); }
+            } catch (e) {
+                tleSyncClickAt = 0;
+                updateTleSyncBar(null);
+                toast('Sync failed: receiver unreachable', true);
+            }
         }
 
         // Live image rendering is disabled (browser-side APT/SSTV decode
