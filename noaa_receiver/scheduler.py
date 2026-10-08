@@ -45,7 +45,19 @@ def _reception_score(p):
     return float(alt)
 
 def _same_pass(p, q):
-    return p["sat_name"] == q["sat_name"] and p["rise_utc"] == q["rise_utc"]
+    """Two pass dicts describe the same physical pass?
+
+    Rise times are compared with a small tolerance: every re-prediction
+    recomputes them and the last microseconds can differ between runs, so
+    exact equality would make the scheduler treat the running pass as a
+    NEW pass after each 30-min re-predict (observed live: four PASS START
+    lines for one 04:29 pass, each ending/decoding it prematurely). Two
+    passes of one satellite never rise within a minute of each other, so
+    30 s is a safe margin.
+    """
+    if p is None or q is None or p["sat_name"] != q["sat_name"]:
+        return False
+    return abs((p["rise_utc"] - q["rise_utc"]).total_seconds()) <= 30
 
 def _tune_freq(p):
     """Frequency the receiver actually tunes for a pass: the satellite's
@@ -141,9 +153,7 @@ def scheduler_thread():
                 finished_pass = None
                 pass_peak = 0.0
                 with state.status_lock:
-                    if triggered and (state.current_pass is None
-                                      or state.current_pass["sat_name"] != triggered["sat_name"]
-                                      or state.current_pass["rise_utc"] != triggered["rise_utc"]):
+                    if triggered and not _same_pass(state.current_pass, triggered):
                         if state.current_pass is not None:
                             # Direct switch between overlapping passes: close
                             # out the old pass (log + decode) before moving on
