@@ -128,7 +128,7 @@ def _centered_cf32(iq_path, shift_hz):
     return tmp
 
 
-def _measure_signal_offset(iq_path):
+def _measure_signal_offset(iq_path, signal_bw_hz=50_000):
     """Where the satellite actually sits in a raw IQ capture (Hz from
     baseband center), measured from the recording itself.
 
@@ -143,17 +143,20 @@ def _measure_signal_offset(iq_path):
     is always SDR_OFFSET_HZ above the satellite (and Doppler plus tuning
     error stay far below that), so the satellite MUST sit below center —
     this excludes the +SDR_OFFSET_HZ DC spike and the R820T spurs that
-    otherwise win a naive peak search (a spur at +24 kHz fooled the
-    first version on a satellite-less window). Windows are scored by
-    total elevated power in that band, so a 72 kHz-wide QPSK plateau
-    beats any narrow spur even when the spur's peak is higher.
+    otherwise win a naive peak search (a spur at +24 kHz and the band-edge
+    noise rise at -110 kHz each fooled an earlier version). A
+    signal-width-matched sliding window (72 kHz for LRPT, ~6 kHz for DSB)
+    finds where the mean power peaks — wide plateaus win over narrow
+    spurs, and spurs cannot drag a centroid through the tuner's
+    edge-noise rise.
 
     Returns None when nothing stands out."""
     import numpy as np
     n_fft = 4096
-    band_lo, band_hi = -110_000, -20_000   # where the satellite can be
+    bin_hz = SDR_RATE / n_fft
+    # window centers to try (satellite side only)
+    center_lo, center_hi = -105_000, -25_000
     best = None
-    # Sample up to 5 windows spread over the file, keep the strongest
     with open(iq_path, 'rb') as f:
         size = os.path.getsize(iq_path)
         span = max(0, size // 2 - SDR_RATE * 8)   # bytes; stay inside
@@ -169,31 +172,33 @@ def _measure_signal_offset(iq_path):
                 psd += np.abs(np.fft.fftshift(np.fft.fft(s_))) ** 2
             psd /= len(segs)
             freqs = np.fft.fftshift(np.fft.fftfreq(n_fft, 1.0 / SDR_RATE))
-            med = np.median(psd)
+            med = float(np.median(psd))
             sm = np.convolve(psd, np.ones(5) / 5, 'same')
-            in_band = (freqs >= band_lo) & (freqs <= band_hi)
-            elevated = np.where(in_band, sm, 0.0)
-            total = float(elevated[elevated > 1.8 * med].sum())
-            if total > 0 and (best is None or total > best[0]):
-                best = (total, freqs.copy(), sm, med, in_band)
+            half = max(1, int(signal_bw_hz / 2 / bin_hz))
+            acc = np.concatenate(([0.0], np.cumsum(sm)))
+            # sliding mean power per window center (integer bins;
+            # fftshifted axis: index 0 = -fs/2)
+            best_c, best_p = None, -1.0
+            lo_bin = n_fft // 2 + int(center_lo / bin_hz)
+            hi_bin = n_fft // 2 + int(center_hi / bin_hz)
+            for center_bin in range(lo_bin, hi_bin):
+                a, b = center_bin - half, center_bin + half
+                if a < 0 or b >= len(sm):
+                    continue
+                mean_p = (acc[b + 1] - acc[a]) / (b - a)
+                if mean_p > best_p:
+                    best_p, best_c = mean_p, center_bin
+            if best_c is None:
+                continue
+            score = best_p / (med or 1.0)
+            if best is None or score > best[0]:
+                best = (score, freqs[best_c])
     if best is None:
         return None
-    _total, freqs, sm, med, in_band = best
-    # Contiguous elevated run around the in-band maximum
-    on = (sm > 1.8 * med) & in_band
-    peak = int(np.argmax(np.where(on, sm, 0.0)))
-    lo = hi = peak
-    while lo > 0 and on[lo - 1]:
-        lo -= 1
-    while hi < len(on) - 1 and on[hi + 1]:
-        hi += 1
-    if hi - lo < 3:
-        return None   # too narrow to be the satellite signal
-    w = sm[lo:hi + 1]
-    offset = float((w * freqs[lo:hi + 1]).sum() / w.sum())
-    if abs(offset) > 110_000:
-        return None
-    return offset
+    score, offset = best
+    if score < 2.0:
+        return None   # nothing clearly above the noise floor
+    return float(offset)
 
 
 def _seed_satdump_tles():
@@ -284,7 +289,9 @@ def _decode_iq(wav_path, pipeline, suffix):
     # itself (the dongle error is modeled, transmitters can be off their
     # nominal frequency, Doppler shifts a few kHz — see
     # _measure_signal_offset). The tuner offset is the fallback.
-    measured = _measure_signal_offset(iq_path)
+    # LRPT is a ~72 kHz wide QPSK stream, the DSB telemetry ~6 kHz —
+    # the width makes the offset measurement robust against spurs
+    measured = _measure_signal_offset(iq_path, 72_000 if 'lrpt' in pipeline else 6_000)
     shift_hz = measured if measured is not None else SDR_OFFSET_HZ
     state.log_console(f"Baseband centering for {os.path.basename(wav_path)}: "
                       f"signal {'measured at' if measured is not None else 'NOT FOUND, assuming'} "
