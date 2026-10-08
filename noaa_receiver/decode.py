@@ -126,6 +126,65 @@ def _centered_cf32(iq_path, shift_hz):
     return tmp
 
 
+def _measure_signal_offset(iq_path):
+    """Where the satellite actually sits in a raw IQ capture (Hz from
+    baseband center), measured from the recording itself.
+
+    Static models are not trustworthy here: the dongle's tuning error is
+    only approximated by the calibration ppm, transmitters can be off
+    their nominal frequency (measured live: Meteor-M 2-4's LRPT sits
+    ~13 kHz below the configured 137.9125 MHz), and Doppler adds a few
+    kHz. So the decode centering measures the signal's spectral centroid
+    instead of trusting any of that.
+
+    Averaged PSD over a few seconds, DC-spike region blanked (it sits at
+    +SDR_OFFSET_HZ and would otherwise win), smoothed peak run's
+    power-weighted centroid. Returns None when nothing stands out."""
+    import numpy as np
+    n_fft = 4096
+    best = None
+    # Sample up to 5 windows spread over the file, keep the clearest
+    with open(iq_path, 'rb') as f:
+        size = os.path.getsize(iq_path)
+        span = max(0, size // 2 - SDR_RATE * 8)   # bytes; stay inside
+        for t in range(5):
+            f.seek(int(span * t / 5) if span else 0)
+            raw = f.read(SDR_RATE * 4 * 2)
+            if len(raw) < SDR_RATE * 2 * 2:
+                break
+            c = iq_to_complex(raw)
+            segs = c[:len(c) // n_fft * n_fft].reshape(-1, n_fft)
+            psd = np.zeros(n_fft)
+            for s_ in segs:
+                psd += np.abs(np.fft.fftshift(np.fft.fft(s_))) ** 2
+            psd /= len(segs)
+            freqs = np.fft.fftshift(np.fft.fftfreq(n_fft, 1.0 / SDR_RATE))
+            med = np.median(psd)
+            sm = np.convolve(psd, np.ones(5) / 5, 'same')
+            # blank the tuner's DC spike region
+            sm[(freqs > SDR_OFFSET_HZ - 8000) & (freqs < SDR_OFFSET_HZ + 8000)] = 0
+            peak = int(np.argmax(sm))
+            strength = sm[peak] / (med or 1)
+            if best is None or strength > best[0]:
+                best = (strength, freqs.copy(), sm, med, peak)
+    if best is None:
+        return None
+    strength, freqs, sm, med, peak = best
+    if strength < 2.0:
+        return None   # nothing clearly above the noise floor
+    on = sm > 1.8 * med
+    lo = hi = peak
+    while lo > 0 and on[lo - 1]:
+        lo -= 1
+    while hi < len(on) - 1 and on[hi + 1]:
+        hi += 1
+    w = sm[lo:hi + 1]
+    offset = float((w * freqs[lo:hi + 1]).sum() / w.sum())
+    if abs(offset) > 110_000:
+        return None
+    return offset
+
+
 def _satdump_decode(pipeline, iq_path, out_dir, label, shift_hz=None):
     """Decode a raw IQ recording with SatDump (runs minutes on the Pi — the
     caller spawns this detached so the scheduler never blocks on it). The
@@ -180,14 +239,15 @@ def _decode_iq(wav_path, pipeline, suffix):
         return False, f'No raw IQ capture for {label} - cannot decode'
     if os.path.exists(out_dir):
         return True, 'already decoded'
-    # Where the satellite sits in the raw baseband: the dongle was tuned
-    # SDR_OFFSET_HZ + correction above the target frequency
-    sat = satellite_from_filename(wav_path)
-    freq = _satellite_freq(sat) if sat else None
-    shift_hz = None
-    if freq is not None:
-        serial = _serial_from_filename(wav_path) or PRIMARY_DONGLE_SN
-        shift_hz = SDR_OFFSET_HZ + tuning_correction(freq, serial)
+    # Where the satellite sits in the raw baseband: measured from the IQ
+    # itself (the dongle error is modeled, transmitters can be off their
+    # nominal frequency, Doppler shifts a few kHz — see
+    # _measure_signal_offset). The tuner offset is the fallback.
+    measured = _measure_signal_offset(iq_path)
+    shift_hz = measured if measured is not None else SDR_OFFSET_HZ
+    state.log_console(f"Baseband centering for {os.path.basename(wav_path)}: "
+                      f"signal {'measured at' if measured is not None else 'NOT FOUND, assuming'} "
+                      f"{shift_hz / 1000:.1f} kHz")
     threading.Thread(target=_satdump_decode,
                      args=(pipeline, iq_path, out_dir, label, shift_hz),
                      daemon=True, name='satdump').start()
