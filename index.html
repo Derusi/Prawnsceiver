@@ -82,7 +82,15 @@
         .pass-alt { font-size:1em; text-align: right; }
         .pass-freq { font-size:0.9em; color: #888; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .pass-countdown { font-size:0.95em; color: #f39c12; font-weight: bold; text-align: right; }
-        .status-item { margin-bottom: 8px; padding: 6px 8px; background: #0f3460; border-radius: 4px; }
+
+        /* AIS ship table (Danube traffic) */
+        .ais-row { display: grid; grid-template-columns: minmax(0, 1.6fr) 64px 74px minmax(0, 1.1fr) minmax(0, 90px) 58px; gap: 4px 10px; align-items: center; padding: 6px 10px; margin-bottom: 4px; background: #0f3460; border-radius: 4px; border-left: 3px solid #4da6ff; }
+        .ais-row .ais-name { font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ais-row .ais-sub { font-size: 0.8em; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ais-row .ais-val { font-size: 0.9em; color: #a8b8d8; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ais-row .ais-pos { font-size: 0.85em; text-align: right; }
+        .ais-row .ais-pos a { color: #4da6ff; text-decoration: none; }
+        .ais-stats { color: #888; font-size: 0.85em; margin: 6px 0; }        .status-item { margin-bottom: 8px; padding: 6px 8px; background: #0f3460; border-radius: 4px; }
         .status-label { color: #888; font-size:0.85em; }
         .status-value { color: #e0e0e0; font-size:1em; margin-top: 2px; }
         .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
@@ -179,6 +187,15 @@
         <div id="main-panel">
             <div class="section-title">📅 Upcoming Passes (24h)</div>
             <div id="passes-list">Loading pass predictions...</div>
+            <div class="section-title" id="ais-title" style="margin-top:14px; display:none;">🚢 Danube Traffic (AIS)</div>
+            <div id="ais-section" style="display:none;">
+                <div class="ais-stats" id="ais-stats"></div>
+                <div id="ais-list"></div>
+                <details id="ais-nmea-wrap" style="margin-top:6px;">
+                    <summary style="color:#888;cursor:pointer;font-size:0.85em;">raw NMEA feed</summary>
+                    <pre id="ais-nmea" style="font-size:0.8em;color:#a8b8d8;margin:4px 0 0;white-space:pre-wrap;"></pre>
+                </details>
+            </div>
         </div>
         <div id="status-panel">
             <div class="section-title panel-head" style="margin-bottom:8px;">
@@ -2180,16 +2197,59 @@
             else liApt();
         }
 
+        async function fetchAIS() {
+            try {
+                const res = await fetch('/ais.json');
+                const data = await res.json();
+                const title = document.getElementById('ais-title');
+                const section = document.getElementById('ais-section');
+                if (!data.enabled) { title.style.display = 'none'; section.style.display = 'none'; return; }
+                title.style.display = '';
+                section.style.display = '';
+                const ch = data.channels || {};
+                const chStat = ['A', 'B'].map(c => ch[c] ? (c + ': ' + ch[c].frames + '✓') : (c + ': —')).join(' · ');
+                document.getElementById('ais-stats').textContent =
+                    data.ships.length + ' ships · ch ' + chStat + ' · dongle ' + data.dongle;
+                const now = Date.now() / 1000;
+                let html = '';
+                data.ships.forEach(sh => {
+                    const name = sh.name || ('MMSI ' + sh.mmsi);
+                    const sub = [sh.cls, sh.status, sh.callsign].filter(Boolean).join(' · ');
+                    const sog = sh.sog != null ? sh.sog.toFixed(1) + ' kn' : '—';
+                    const cog = sh.cog != null ? Math.round(sh.cog) + '°' : '—';
+                    let pos = '<span style="color:#888">—</span>';
+                    if (sh.lat != null) {
+                        const maps = 'https://www.google.com/maps?q=' + sh.lat + ',' + sh.lon;
+                        pos = '<a href="' + maps + '" target="_blank" rel="noopener">' + sh.lat.toFixed(4) + ', ' + sh.lon.toFixed(4) + '</a>';
+                    }
+                    const age = Math.max(0, Math.round(now - sh.last_seen));
+                    html += '<div class="ais-row">' +
+                        '<div><div class="ais-name">' + escHtml(name) + '</div><div class="ais-sub">#' + sh.mmsi + ' · ' + escHtml(sub) + '</div></div>' +
+                        '<div class="ais-val">' + sog + '</div>' +
+                        '<div class="ais-val">' + cog + '</div>' +
+                        '<div class="ais-pos">' + pos + '</div>' +
+                        '<div class="ais-val">' + age + 's ago</div>' +
+                        '<div class="ais-val" style="color:#4da6ff">' + (sh.last_channel || '') + '</div>' +
+                        '</div>';
+                });
+                document.getElementById('ais-list').innerHTML = html ||
+                    '<div style="color:#666;padding:10px;">No ships heard yet.</div>';
+                document.getElementById('ais-nmea').textContent = (data.nmea || []).slice(-20).join('
+');
+            } catch (e) { console.error('Error fetching AIS:', e); }
+        }
+
         // Init
         setInterval(fetchWaterfall, 200);
         setInterval(fetchStatus, 3000);
         setInterval(fetchPasses, 30000);
         setInterval(fetchTrack, 2000);
         setInterval(fetchCrabCount, 10000);
+        setInterval(fetchAIS, 10000);
         setInterval(updateUptime, 1000);
         setInterval(liveImgTick, 250);
         document.getElementById('tune-freq').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); tuneManual(); } });
-        fetchWaterfall(); fetchStatus(); fetchPasses(); fetchTrack(); fetchCrabCount(); updateUptime(); initPanels(); buildBandJump();
+        fetchWaterfall(); fetchStatus(); fetchPasses(); fetchTrack(); fetchCrabCount(); fetchAIS(); updateUptime(); initPanels(); buildBandJump();
     </script>
 </body>
 </html>

@@ -14,6 +14,14 @@ recalibrating a dongle (or plugging in a new one) never touches config.py.
 # generic R820T as primary; the R820T stays as secondary.
 PRIMARY_DONGLE_SN = "48263793"
 
+# AIS dongle: serial of an RTL-SDR dedicated to ship-traffic reception
+# (161.975/162.025 MHz, Danube vessels -- see noaa_receiver/ais.py). AIS
+# needs a continuously listening receiver, so a dongle pinned here is
+# excluded from satellite tracking and never becomes the primary. Plug in
+# any spare dongle, read its serial from the /console dongle enumeration
+# line (or rtl_sdr -d 99), and set it here to enable AIS. None = off.
+AIS_DONGLE_SN = None
+
 # FM broadcast band (VHF2) range definition
 FM_BAND = (87_500_000, 108_000_000)
 

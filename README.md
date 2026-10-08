@@ -25,12 +25,21 @@ Live at: https://prawnceiver.derusi.de
 - 📚 Pass history — every pass and recording is kept in a browsable history
   with decoded images
 - 🦀 Crabs caught — every successfully decoded satellite image counts as a crab
+- 🚢 AIS ship traffic — a dedicated dongle decodes Danube vessels on the
+  marine AIS channels (161.975/162.025 MHz, GMSK 9600 baud) in software:
+  name, position, speed and course of every ship within VHF range show up
+  live on the dashboard (`AIS_DONGLE_SN` in calibration.py pins the dongle;
+  none of the satellite work is affected)
+
 
 ## Hardware
 
 - Raspberry Pi 4
 - RTL-SDR dongle (RTL2832U with R820T tuner)
 - Antenna for 137 MHz (VHF 137 MHz SATCOM or a crossed dipole works)
+- Optional: any spare RTL-SDR dongle as a dedicated AIS receiver (the
+  137 MHz antenna hears 162 MHz ships fine at close range; a ~46 cm
+  quarter-wave whip is better)
 
 ## Software Stack
 
@@ -42,6 +51,8 @@ Live at: https://prawnceiver.derusi.de
 - noaa-apt — APT image decoding
 - sstv — ISS Slow-Scan TV decoding (Robot 36)
 - nginx — HTTPS reverse proxy (Let's Encrypt) in front of the Python server
+- noaa_receiver/ais.py — AIS demodulation/decoding (GMSK discriminator,
+  HDLC deframing, CRC-16/SDLC, ship database) — pure NumPy, no extra deps
 
 ## Architecture
 

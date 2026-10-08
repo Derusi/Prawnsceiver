@@ -25,7 +25,7 @@ from collections import deque
 from datetime import datetime
 
 from . import state
-from .calibration import (FM_BAND, PRIMARY_DONGLE_SN, SDR_DONGLE_GAIN,
+from .calibration import (AIS_DONGLE_SN, FM_BAND, PRIMARY_DONGLE_SN,
                           correction_info, tuning_correction)
 from .config import (AUDIO_RATE, DOPPLER_APPLY_RANGE_HZ, DECIMATION, FFT_SIZE,
                      IQ_BLOCK, IQ_RECORD_FREQS, LOGDIR, RECORD_DIR, RTL_LOG,
@@ -194,9 +194,13 @@ def enumerate_dongles():
         if PRIMARY_DONGLE_SN and PRIMARY_DONGLE_SN in serials:
             state.primary_serial = PRIMARY_DONGLE_SN
         else:
-            state.primary_serial = serials[0]
+            # The dedicated AIS dongle (if configured) never becomes primary
+            selectable = [sn for sn in serials if sn != AIS_DONGLE_SN] or serials
+            state.primary_serial = selectable[0]
             if PRIMARY_DONGLE_SN:
                 state.log_console(f"Configured primary dongle {PRIMARY_DONGLE_SN} not found — using {state.primary_serial}", "warn")
+        if AIS_DONGLE_SN and AIS_DONGLE_SN in serials:
+            state.log_console(f'Dongle {AIS_DONGLE_SN} dedicated to AIS (ship traffic) — excluded from satellite tracking')
     for idx_s, label, tuner, serial in found:
         serial = serial.strip()
         if not serial:
@@ -216,6 +220,7 @@ def enumerate_dongles():
         state.sdrs[serial] = {
             'label': label.strip(), 'tuner': tuner.strip(), 'serial': serial,
             'primary': primary,
+            'ais': serial == AIS_DONGLE_SN,
             'waterfall': waterfall, 'lock': lock,
             'signal': 0.0, 'proc': None, 'last_data': 0.0,
             # rtl_tcp port for this dongle (localhost-bound, one per dongle)
@@ -242,8 +247,13 @@ def sdr_thread():
         for sn, entry in state.sdrs.items():
             t = threads.get(sn)
             if t is None or not t.is_alive():
-                t = threading.Thread(target=sdr_capture_thread, args=(sn,),
-                                     daemon=True, name=f'sdr-{sn}')
+                if entry.get('ais'):
+                    from .ais import ais_capture_thread
+                    t = threading.Thread(target=ais_capture_thread, args=(sn,),
+                                         daemon=True, name=f'ais-{sn}')
+                else:
+                    t = threading.Thread(target=sdr_capture_thread, args=(sn,),
+                                         daemon=True, name=f'sdr-{sn}')
                 t.start()
                 threads[sn] = t
                 continue

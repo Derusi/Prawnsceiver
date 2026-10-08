@@ -11,6 +11,7 @@ from . import state
 from .config import (AUDIO_RATE, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS, SAT_DSB_FREQ,
                    PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, UTC_OFFSET, WEBDIR)
 
+from . import ais
 from .decode import decode_recording
 from .history import get_recordings, quality_map, set_recording_quality
 from .pages import CONSOLE_HTML, HISTORY_HTML
@@ -36,6 +37,7 @@ def _dongle_list():
                 "tuner": e["tuner"],
                 "serial": sn,
                 "primary": e["primary"],
+                "ais": bool(e.get("ais")),
                 "signal": round(e["signal"], 2),
                 "running": e["proc"] is not None and e["proc"].poll() is None,
                 "recording": e["is_recording"],
@@ -220,6 +222,13 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(result).encode())
+        elif self.path == '/ais.json':
+            # Danube ship traffic: ship table + per-channel stats + raw feed
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(ais.ais_status()).encode())
         elif self.path == '/console.json':
             with state.console_lock:
                 lines = list(state.console_buffer)
@@ -454,6 +463,14 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(json.dumps({"success": True, "mode": "bw", "bandwidth_khz": bw_hz / 1000 if bw_hz else None}).encode())
                     return
+            if entry.get('ais'):
+                # The dedicated AIS dongle listens to 161.975/162.025 MHz
+                # for ship traffic - retuning it would stop AIS reception
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Dongle is dedicated to AIS'}).encode())
+                return
             if f in ('', 'auto', 'sync'):
                 with state.status_lock:
                     state.manual_dongle_freq.pop(dev, None)

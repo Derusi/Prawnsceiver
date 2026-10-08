@@ -101,3 +101,15 @@ tle_sync_requested = False
 # TLE fetch progress, exposed via status.json for the dashboard progress bar
 tle_progress = {"active": False, "done": 0, "total": 0, "current": None}
 status_lock = threading.Lock()
+
+# AIS ship traffic (Danube vessels; see noaa_receiver/ais.py): filled by
+# the AIS capture thread when a dongle is dedicated via
+# calibration.AIS_DONGLE_SN. ais_ships maps MMSI -> ship dict (name,
+# position, speed, course, ... last_seen); ais_nmea keeps the most recent
+# raw !AIVDM sentences for the dashboard's raw feed.
+ais_ships = {}
+ais_lock = threading.Lock()
+ais_nmea = deque(maxlen=60)
+ais_channels = {}    # 'A'/'B' -> per-channel stats (frames, bad, floor)
+ais_enabled = False
+ais_serial = None

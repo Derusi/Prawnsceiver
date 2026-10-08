@@ -626,3 +626,55 @@ product dirs). Recordings were paused at the time (nothing in-flight);
 recordings.json now lists 0, 48 GB free. pass_history.json KEPT — its
 signal-peak-per-pass data is diagnostic value for the reception-quality
 work, but its wav/png links now dangle (decode/delete buttons will 404).
+
+### 2026-10-08 16:05 CEST — AIS receiver built: Danube ship traffic on a dedicated dongle (user request)
+
+User wants to listen to AIS messages from Danube ships. Built the full
+receive chain as a new module `noaa_receiver/ais.py` — pure NumPy, no new
+dependencies, mirroring the existing rtl_tcp architecture:
+
+- A dongle pinned by calibration.AIS_DONGLE_SN (currently None — feature
+  is OFF until one is plugged in and its serial set; any spare dongle
+  works, the console prints serials at enumeration) is excluded from
+  satellite tracking, never becomes primary, and /tune_dongle rejects
+  it. Its rtl_tcp is parked at 162.000 MHz +60 kHz offset; both AIS
+  channels (A 161.975 / B 162.025) sit at -25/-75 kHz and are demodulated
+  from the same 240 kHz IQ stream: per-channel rotation, 61-tap 14 kHz
+  low-pass, discriminator, decimation to 48 kHz (5 samples/bit).
+- Radio layer conventions cross-checked against dgiardini/rtl-ais'
+  aisdecoder source (NRZI 0=transition, flags 0x7E, stuff-0-after-five-1s
+  on the transmitted stream, SDLC CRC-16 with the 0xF0B8 magic residue,
+  AIVDM bit vector = transmitted stream with each byte REVERSED) and
+  then VALIDATED against a real over-the-air capture: the Helsinki
+  210-messages recording from the freerange/ais-on-sdr wiki decodes —
+  known Finnish ships, names (AILA, JOANNA SATURNA...), plausible
+  positions/speeds/courses. A 3 s slice + one real type-5 payload are
+  committed as test fixtures.
+- Demod note (measured): AIS is GMSK BT<=0.4 (ITU M.1371: 0.4 max on
+  25 kHz channels, index 0.5 = +/-2.4 kHz). Frequency slicing must use
+  near-transparent smoothing — a wide low-pass or matched filter crushes
+  the 4800 Hz level alternation of 00 bit pairs (their amplitude is only
+  ~200-500 Hz after BT=0.3/0.4 premodulation) and mis-slices them; the
+  rtl-ais-style approach (light smoothing + point sampling at bit
+  centers, 5-phase search per burst) works. Single-bit errors are caught
+  by the frame CRC; positions are also sanity-checked (|lat|<90,
+  |lon|<180 — a CRC-passing garbage position was observed in the capture).
+- Messages 1-5, 9, 11, 18, 19, 21, 24, 27 decode into a ship table
+  (state.ais_ships, keyed by MMSI); /ais.json serves it plus per-channel
+  stats and a raw AIVDM feed (receiver-side armored, NMEA-checksummed,
+  2 fragments for type-5-length payloads). Ships expire after 30 min of
+  silence. Dashboard: new 'Danube Traffic' section under Upcoming Passes
+  (hidden while AIS_DONGLE_SN is None), 10 s refresh, Google Maps links
+  per ship.
+- tests/test_ais.py: CRC test vector, armoring round-trip incl. the
+  gpsd example sentence, end-to-end synthetic RF through the PRODUCTION
+  per-block chain, and the real-capture conformance asserts. All pass;
+  test_dsp also still passes (test_decode/test_radio need noaa-apt and
+  rtl_tcp binaries and fail identically with and without these changes
+  on the Windows dev box).
+- NOT YET DEPLOYED/TESTED LIVE on the Pi: no AIS dongle attached yet,
+  and real-antenna behavior at 162 MHz is unmeasured. Next step when a
+  third dongle arrives: set AIS_DONGLE_SN in calibration.py, watch the
+  console for the rtl_tcp start line, and check the waterfall for two
+  faint carriers at +/-25 kHz of center; ships should appear on any
+  Danube movement.
