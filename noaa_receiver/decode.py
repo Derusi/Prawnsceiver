@@ -139,13 +139,21 @@ def _measure_signal_offset(iq_path):
     kHz. So the decode centering measures the signal's spectral centroid
     instead of trusting any of that.
 
-    Averaged PSD over a few seconds, DC-spike region blanked (it sits at
-    +SDR_OFFSET_HZ and would otherwise win), smoothed peak run's
-    power-weighted centroid. Returns None when nothing stands out."""
+    The search is restricted to the negative-frequency side: the tuner
+    is always SDR_OFFSET_HZ above the satellite (and Doppler plus tuning
+    error stay far below that), so the satellite MUST sit below center —
+    this excludes the +SDR_OFFSET_HZ DC spike and the R820T spurs that
+    otherwise win a naive peak search (a spur at +24 kHz fooled the
+    first version on a satellite-less window). Windows are scored by
+    total elevated power in that band, so a 72 kHz-wide QPSK plateau
+    beats any narrow spur even when the spur's peak is higher.
+
+    Returns None when nothing stands out."""
     import numpy as np
     n_fft = 4096
+    band_lo, band_hi = -110_000, -20_000   # where the satellite can be
     best = None
-    # Sample up to 5 windows spread over the file, keep the clearest
+    # Sample up to 5 windows spread over the file, keep the strongest
     with open(iq_path, 'rb') as f:
         size = os.path.getsize(iq_path)
         span = max(0, size // 2 - SDR_RATE * 8)   # bytes; stay inside
@@ -163,23 +171,24 @@ def _measure_signal_offset(iq_path):
             freqs = np.fft.fftshift(np.fft.fftfreq(n_fft, 1.0 / SDR_RATE))
             med = np.median(psd)
             sm = np.convolve(psd, np.ones(5) / 5, 'same')
-            # blank the tuner's DC spike region
-            sm[(freqs > SDR_OFFSET_HZ - 8000) & (freqs < SDR_OFFSET_HZ + 8000)] = 0
-            peak = int(np.argmax(sm))
-            strength = sm[peak] / (med or 1)
-            if best is None or strength > best[0]:
-                best = (strength, freqs.copy(), sm, med, peak)
+            in_band = (freqs >= band_lo) & (freqs <= band_hi)
+            elevated = np.where(in_band, sm, 0.0)
+            total = float(elevated[elevated > 1.8 * med].sum())
+            if total > 0 and (best is None or total > best[0]):
+                best = (total, freqs.copy(), sm, med, in_band)
     if best is None:
         return None
-    strength, freqs, sm, med, peak = best
-    if strength < 2.0:
-        return None   # nothing clearly above the noise floor
-    on = sm > 1.8 * med
+    _total, freqs, sm, med, in_band = best
+    # Contiguous elevated run around the in-band maximum
+    on = (sm > 1.8 * med) & in_band
+    peak = int(np.argmax(np.where(on, sm, 0.0)))
     lo = hi = peak
     while lo > 0 and on[lo - 1]:
         lo -= 1
     while hi < len(on) - 1 and on[hi + 1]:
         hi += 1
+    if hi - lo < 3:
+        return None   # too narrow to be the satellite signal
     w = sm[lo:hi + 1]
     offset = float((w * freqs[lo:hi + 1]).sum() / w.sum())
     if abs(offset) > 110_000:
