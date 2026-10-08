@@ -152,6 +152,39 @@ assert sc["result"] == "stopped", sc["result"]
 assert state.manual_dongle_freq.get(SERIAL) == sc["cur_hz"], "must stay parked after Stop"
 print("4c. stop request -> parked at the current frequency: ok")
 
+# 4d. impulse noise regression (measured live 2026-10-08: this site shows
+# one saturating bin per FFT row at a wandering offset): must NOT be
+# detected as a signal, however hot the impulses are
+def impulse_row(seed, amp=700.0):
+    m = noise_row(seed).astype(np.float64)
+    m[int(np.random.RandomState(seed + 1000).randint(0, FFT_SIZE))] = amp
+    return m.astype(np.float32)
+
+state.sdrs[SERIAL] = entry = make_entry()
+state.manual_dongle_freq.clear()
+stop = feed(entry, [impulse_row(40), impulse_row(41), impulse_row(42), impulse_row(43)])
+sc = scan.start_scan(SERIAL, 100.0, 100.4, 200)
+wait_done(sc)
+stop.set()
+assert sc["result"] == "nothing", f"impulse noise falsely detected: {sc}"
+print("4d. saturating impulse noise ignored (clip + time-average): ok")
+
+# 4e. a real carrier must still be found THROUGH that impulse noise
+state.sdrs[SERIAL] = entry = make_entry()
+state.manual_dongle_freq.clear()
+sig_rows = []
+for k in range(6):
+    m = signal_row(50 + k, -50000).astype(np.float64)
+    m[int(np.random.RandomState(k).randint(0, FFT_SIZE))] = 700.0
+    sig_rows.append(m.astype(np.float32))
+stop = feed(entry, sig_rows)
+sc = scan.start_scan(SERIAL, 100.0, 100.4, 200)
+wait_done(sc)
+stop.set()
+assert sc["result"] == "found", sc["result"]
+assert abs(sc["found_hz"] - 99_950_000) <= 2000, sc["found_hz"]
+print("4e. carrier found through impulse noise, parked at 99.95 MHz: ok")
+
 # restore global state
 state.manual_dongle_freq.clear(); state.manual_dongle_bw.clear(); state.scans.clear()
 state.manual_dongle_freq.update(saved[0]); state.manual_dongle_bw.update(saved[1])

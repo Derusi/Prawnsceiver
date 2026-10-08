@@ -7,17 +7,23 @@ capture thread picks up within one IQ block and applies as a live
 rtl_tcp retune command — the stream keeps flowing, so the waterfall
 shows the swept spectrum in real time and no audio gap opens.
 
-Signal detection runs on the raw FFT magnitude row the capture thread
-publishes as entry['last_mag'] (512 bins, one row every ~34 ms):
+Signal detection runs on the raw FFT magnitude rows the capture thread
+publishes as entry['last_mag'] (512 bins, one row every ~34 ms), averaged
+over each step's dwell window (the same trick as a spectrogram average):
 
-- noise floor = median of the row (mostly noise bins even when a
-  strong carrier is in it), peak = strongest bin OUTSIDE the
+- noise floor = median of the averaged row (mostly noise bins even when
+  a strong carrier is in it), peak = strongest bin OUTSIDE the
   +SDR_OFFSET_HZ window — the dongle's center DC spike (~2x floor,
   measured 2026-10-08) lives there and would end every scan instantly;
-- a step is a hit when the MEDIAN of peak/floor over the dwell window
-  exceeds the ratio threshold: the median over ~14 samples ignores
-  single-block impulses, and a ratio (default 3 = +9.5 dB over the
-  floor) needs no absolute calibration — it works at any gain.
+- the time-average is the impulse filter: a stationary carrier keeps
+  its level in every row, while the single-block impulses that saturate
+  one random bin per row at this site (measured: wandering full-scale
+  peaks in every waterfall row) are clipped at 8x their row's median and
+  then divided by the number of averaged rows, so they fall below the
+  hit threshold however hot they are;
+- a step is a hit when the averaged row's peak/floor exceeds the ratio
+  threshold — a ratio (default 3 = +9.5 dB over the floor) needs no
+  absolute calibration, so it works at any gain.
 
 On a hit the dongle is re-centered on the measured peak (bin offset)
 and the hit confirmed with a second dwell; then the recorded (demod)
@@ -108,15 +114,19 @@ def fit_bw_hz(width_hz):
     return max(1000, min(120000, bw))
 
 def _sample(entry, sc, settle=SCAN_SETTLE_SECS, dwell=SCAN_DWELL_SECS):
-    """Measure one dwell window at the current tune -> (median ratio, best row).
+    """Average the magnitude rows over one dwell window at the current tune
+    -> (peak/floor ratio of the AVERAGED row, averaged row).
 
-    Returns (0.0, None) when the scan was stopped mid-dwell. Each new
-    magnitude row published by the capture thread is measured once; the
-    median over the window ignores transients, the best row is kept for
-    peak re-centering and the width fit.
+    The time-average is the impulse filter (see module docstring): a
+    stationary carrier keeps its level, single-block impulses are
+    clipped at 8x their row's median (bounding them however hot they
+    are) and then divided by the number of averaged rows. Returns
+    (0.0, None) when the scan was stopped mid-dwell. Only rows not yet
+    seen are accumulated (the capture thread publishes a new array
+    object per FFT).
     """
     time.sleep(settle)
-    ratios, best, best_r = [], None, 0.0
+    rows = []
     deadline = time.time() + dwell
     last_seen = None
     while time.time() < deadline:
@@ -126,15 +136,17 @@ def _sample(entry, sc, settle=SCAN_SETTLE_SECS, dwell=SCAN_DWELL_SECS):
             mag = entry.get("last_mag")
         if mag is not None and mag is not last_seen:
             last_seen = mag
-            _, r, _ = _measure(mag)
-            ratios.append(r)
-            if r > best_r:
-                best_r, best = r, mag
+            r = np.asarray(mag, dtype=np.float64)
+            med = float(np.median(r))
+            if med > 0.0:
+                np.clip(r, 0.0, 8.0 * med, out=r)
+            rows.append(r)
         time.sleep(SCAN_SAMPLE_EVERY)
-    if not ratios:
+    if not rows:
         return 0.0, None
-    ratios.sort()
-    return ratios[len(ratios) // 2], best
+    mean_row = np.mean(rows, axis=0)
+    _, ratio, _ = _measure(mean_row)
+    return ratio, mean_row
 
 def start_scan(serial, start_mhz, end_mhz, step_khz, ratio=SCAN_RATIO):
     """Register the scan state and spawn its thread (handler entry point)."""
@@ -205,8 +217,8 @@ def scan_dongle_thread(serial):
             sc["cur_hz"] = freq
             with state.status_lock:
                 state.manual_dongle_freq[serial] = freq
-            median_r, best = _sample(entry, sc)
-            if best is None:   # stopped mid-dwell
+            ratio, avg_row = _sample(entry, sc)
+            if avg_row is None:   # stopped mid-dwell
                 sc["result"] = "stopped"
                 break
             # Someone (card Tune/Sync, another scan) took the override over:
@@ -214,16 +226,16 @@ def scan_dongle_thread(serial):
             if state.manual_dongle_freq.get(serial) != freq:
                 sc["result"] = "overtaken"
                 break
-            if median_r >= sc["ratio"]:
+            if ratio >= sc["ratio"]:
                 # Re-center on the measured peak and confirm the hit there
-                off = _peak_offset_hz(best)
+                off = _peak_offset_hz(avg_row)
                 center = freq + int(round(off)) if off is not None else freq
                 center = max(24000000, min(1766000000, center))
                 sc["cur_hz"] = center
                 with state.status_lock:
                     state.manual_dongle_freq[serial] = center
-                confirm_r, confirm_best = _sample(entry, sc)
-                if confirm_best is not None and confirm_r >= sc["ratio"]:
+                confirm_r, confirm_row = _sample(entry, sc)
+                if confirm_row is not None and confirm_r >= sc["ratio"]:
                     sc["found_hz"], sc["found_ratio"] = center, confirm_r
                     sc["result"] = "found"
                     break
@@ -236,7 +248,7 @@ def scan_dongle_thread(serial):
         if sc["result"] == "found":
             # Parked on the signal: fit the recorded (demod) bandwidth to
             # its measured width, so the WAV/live audio band matches it
-            width = _signal_width_hz(confirm_best) if confirm_best is not None else 0.0
+            width = _signal_width_hz(confirm_row) if confirm_row is not None else 0.0
             db = round(20 * math.log10(sc["found_ratio"]))
             if width > 0:
                 bw = fit_bw_hz(width)
@@ -270,18 +282,18 @@ def fit_bandwidth(serial):
     entry = state.sdrs.get(serial)
     if entry is None:
         return {"success": False, "error": "Unknown dongle"}
-    _, best = _sample(entry, {"stop": False}, settle=SCAN_SETTLE_SECS, dwell=0.5)
-    if best is None:
+    _, mean_row = _sample(entry, {"stop": False}, settle=SCAN_SETTLE_SECS, dwell=0.5)
+    if mean_row is None:
         return {"success": False, "error": "No spectrum data from this dongle yet"}
-    _, ratio, _ = _measure(best)
-    width = _signal_width_hz(best)
+    _, ratio, _ = _measure(mean_row)
+    width = _signal_width_hz(mean_row)
     if width <= 0.0:
         return {"success": False, "error": "No signal standing out of the noise at the current tune",
                 "ratio_db": round(20 * math.log10(ratio), 1) if ratio > 1 else None}
     bw = fit_bw_hz(width)
     with state.status_lock:
         state.manual_dongle_bw[serial] = bw
-    off = _peak_offset_hz(best)
+    off = _peak_offset_hz(mean_row)
     state.log_console(f"🎚 Dongle {serial}: recorded bandwidth fitted — signal "
                       f"{round(width/1000.0, 1)} kHz wide, demod set to ±{round(bw/1000.0, 1)} kHz")
     return {
