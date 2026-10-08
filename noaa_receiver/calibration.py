@@ -10,7 +10,9 @@ recalibrating a dongle (or plugging in a new one) never touches config.py.
 # recording. USB device indices shift when dongles are (re)plugged, so the
 # serial pins the physical dongle (rtl_sdr -d <serial>). If this dongle is
 # not attached at startup, the first detected dongle becomes primary.
-PRIMARY_DONGLE_SN = "77771111153705700"
+# 2026-10-08: the NESDR SMArt v5 (R820T2, 0.5 ppm TCXO) replaces the ancient
+# generic R820T as primary; the R820T stays as secondary.
+PRIMARY_DONGLE_SN = "48263793"
 
 # FM broadcast band (VHF2) range definition
 FM_BAND = (87_500_000, 108_000_000)
@@ -62,12 +64,15 @@ SDR_DONGLE_CORRECTIONS = {
 # Per-dongle fixed tuner gain in dB. Absent serial -> SDR_GAIN from config
 # (0 = the tuner's AGC). Fixed gain gives a stable noise floor: AGC pumps the
 # gain down as a satellite rises, which shifts the whole waterfall during a
-# pass and makes pass-to-pass comparisons unreliable. 29.7 dB is a native
-# R820T gain step and the value the apbouwens NOAA guide found optimal; the
-# FC0013 stays on AGC as the A/B reference (its gain table differs).
-SDR_DONGLE_GAIN = {
-    "77771111153705700": 29.7,
-}
+# pass and makes pass-to-pass comparisons unreliable.
+# 2026-10-08 EXPERIMENT VERDICT: 29.7 dB manual on the R820T left the ADC
+# ~17-22 dB under-driven vs AGC (IQ rms 1.29 vs 9.4-15.5 u8-units = ~1% of
+# ADC range, quantization eats ~3 of the 8 bits) — audio was indistinguish-
+# able, IQ/digital decodes destroyed (see EVENTLOG 11:40). AGC wins until a
+# fixed value is MEASURED for a specific dongle (sweep gain on a strong FM
+# station / NOAA pass, pick the knee before noise floor rise); do not guess
+# from a guide's number for a different dongle.
+SDR_DONGLE_GAIN = {}
 
 def correction_info(freq_hz, serial=None):
     """(correction_hz, source) describing the tuning correction applied to a
