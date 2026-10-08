@@ -783,3 +783,37 @@ rtl_sdr captures + the production decode chain offline:
   hardware step: 46.3 cm quarter-wave ground plane (or a commercial AIS
   whip) outside in the clear. Expected: distant Danube traffic becomes
   decodable; close ships decode today's setup only when they pass.
+
+### 2026-10-08 evening - frequency scanner + recorded-bandwidth fit (new feature)
+
+Requested: per-dongle "scan" button that sweeps for strong signals and
+stops on the next one found, plus a mechanism to keep the recorded band
+from being too wide or too narrow. Implemented:
+
+- `noaa_receiver/scan.py` (new): scan thread per dongle. It only writes
+  the per-dongle frequency override - the capture thread applies each
+  step as a live rtl_tcp retune (no stream gap), so the waterfall shows
+  the swept spectrum in real time. Detection works on the raw FFT row
+  now published as `entry['last_mag']` (radio.py): peak/floor ratio,
+  median over a 0.7 s dwell, DC-spike window (+/-15 kHz around the
+  +60 kHz offset center) masked. Hit threshold: ratio 3 (+9.5 dB).
+  On a hit the dongle re-centers on the measured peak bin, confirms,
+  then fits the recorded demod BW from the signal's measured width
+  (half width + 30%, clamped 1-120 kHz).
+- `/scan_dongle?d=&start=&end=&step=&ratio=` + `&stop=1`;
+  `/fit_bw?d=` fits the BW at the current tune any time (card button).
+  Scan state in `dongles.json` (`scan` field).
+- Dashboard: per-card Scan row (from/to/step + Scan/Stop toggle, live
+  status line) and a Fit button in the Recorded-BW row.
+- Safety: scanning parks the dongle (no pass recording on it, same as a
+  manual tune). Primary dongle: scan refused during a pass and
+  auto-aborts (rejoins the shared frequency) when a pass rises
+  mid-scan. Nothing found -> override restored to pre-scan state.
+- Tests: `tests/test_scan.py` (measurement, spike masking, width fit,
+  end-to-end sweep with fake dongle rows: nothing/found/stop cases) -
+  all pass. test_decode/test_radio failures on this Windows box are
+  pre-existing POSIX dependencies (verified identical on clean HEAD);
+  they pass on the Pi.
+
+State: feature complete locally; deploy + restart pending (avoid
+mid-pass windows).

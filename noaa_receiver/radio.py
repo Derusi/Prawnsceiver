@@ -222,7 +222,7 @@ def enumerate_dongles():
             'primary': primary,
             'ais': serial == AIS_DONGLE_SN,
             'waterfall': waterfall, 'lock': lock,
-            'signal': 0.0, 'proc': None, 'last_data': 0.0,
+            'signal': 0.0, 'last_mag': None, 'proc': None, 'last_data': 0.0,
             # rtl_tcp port for this dongle (localhost-bound, one per dongle)
             'port': 1235 + len(state.sdrs),
             # Live audio ring for this dongle's demodulated audio
@@ -506,6 +506,11 @@ def sdr_capture_thread(serial):
                             band = float(magnitude[center-10:center+10].mean())
                             with entry['lock']:
                                 entry['signal'] = band
+                                # Raw (pre-normalization) row for the scanner
+                                # (scan.py): peak/floor detection and the
+                                # recorded-bandwidth fit need true magnitudes;
+                                # the waterfall row below is display-scaled
+                                entry['last_mag'] = magnitude.astype(np.float32)
                             if primary:
                                 with state.signal_lock:
                                     state.signal_strength = band

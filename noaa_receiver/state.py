@@ -90,6 +90,10 @@ is_pass_active = False
 # within one IQ block. Tracking, waterfall, Doppler and live audio keep
 # running, so reception quality can be judged without collecting garbage.
 recordings_paused = False
+# Per-dongle frequency scan (serial -> state dict, see scan.py): set while a
+# scan sweeps a dongle's override and after it parks on a find, so the
+# dashboard can show live progress and the result.
+scans = {}
 current_wav = None
 current_wav_path = None
 upcoming_passes = []

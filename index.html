@@ -1132,7 +1132,98 @@
             bwSet.onclick = doBwSet;
             bwInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doBwSet(); } });
             bwInput.addEventListener('input', () => { bwInput._typedAt = Date.now(); });
-            bwRow.appendChild(bwLbl); bwRow.appendChild(bwInput); bwRow.appendChild(bwSet); bwRow.appendChild(bwList);
+            // Fit: measure the signal on the current tune (live spectrum)
+            // and size the recorded bandwidth to it, so the WAV/live audio
+            // band is neither too wide (noise) nor too narrow (clips it)
+            const bwFit = document.createElement('button');
+            bwFit.textContent = 'Fit';
+            bwFit.title = 'Measure the signal on the current tune and fit the recorded bandwidth to it';
+            bwFit.style.cssText = 'flex:0 0 auto;padding:2px 8px;background:#0f3460;color:#53d769;border:1px solid #53d769;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.85em;';
+            const sn_fit = d.id;
+            bwFit.onclick = () => {
+                bwFit.disabled = true;
+                fetch('/fit_bw?d=' + encodeURIComponent(sn_fit))
+                    .then(r => r.json())
+                    .then(data => {
+                        bwFit.disabled = false;
+                        if (data.success) {
+                            const c = dongleCards[sn_fit];
+                            if (c && c.lastD) c.lastD.manual_bw_khz = data.bw_khz;
+                            if (c && c.bwInput) c.bwInput._typedAt = 0;
+                            if (wfOverlayOn) drawWfOverlay();
+                            toast('Signal ' + data.width_khz + ' kHz wide \u2192 dongle records \u00b1' + data.bw_khz + ' kHz');
+                        } else {
+                            toast('Bandwidth fit failed: ' + (data.error || 'unknown error'), true);
+                        }
+                    })
+                    .catch(() => { bwFit.disabled = false; toast('Bandwidth fit failed: receiver unreachable', true); });
+            };
+            bwRow.appendChild(bwLbl); bwRow.appendChild(bwInput); bwRow.appendChild(bwSet); bwRow.appendChild(bwFit); bwRow.appendChild(bwList);
+            // Frequency scan: sweep this dongle start\u2192end and park it
+            // on the next strong signal (/scan_dongle; see scan.py). The
+            // button doubles as Stop while a scan runs; the status line
+            // below shows live progress from dongles.json.
+            const scanRow = document.createElement('div');
+            scanRow.style.cssText = 'display:flex;gap:4px;align-items:center;margin-top:6px;';
+            const mkScanInput = () => {
+                const i = document.createElement('input');
+                i.type = 'number'; i.step = 'any'; i.min = '24'; i.max = '1766';
+                i.style.cssText = 'flex:1;min-width:0;background:#0f3460;border:1px solid #53d769;color:#e0e0e0;border-radius:3px;padding:2px 4px;font-family:monospace;font-size:0.85em;';
+                i.addEventListener('input', () => { i._typedAt = Date.now(); });
+                return i;
+            };
+            const scanFrom = mkScanInput(); scanFrom.title = 'scan start (MHz)';
+            const scanTo = mkScanInput(); scanTo.title = 'scan end (MHz)';
+            const scanArrow = document.createElement('span');
+            scanArrow.textContent = '\u2192';
+            scanArrow.style.cssText = 'color:#888;flex:0 0 auto;';
+            const scanBtn = document.createElement('button');
+            scanBtn.textContent = '\uD83D\uDD0D Scan';
+            scanBtn.title = 'Sweep this dongle and stop on the next strong signal';
+            scanBtn.style.cssText = 'flex:0 0 auto;padding:2px 8px;background:#53d769;color:#1a1a2e;border:none;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.85em;';
+            scanRow.appendChild(scanFrom); scanRow.appendChild(scanArrow); scanRow.appendChild(scanTo); scanRow.appendChild(scanBtn);
+            const scanRow2 = document.createElement('div');
+            scanRow2.style.cssText = 'display:flex;gap:4px;align-items:center;margin-top:4px;font-size:0.8em;';
+            const scanStep = document.createElement('input');
+            scanStep.type = 'text'; scanStep.inputMode = 'decimal';
+            scanStep.placeholder = '200';
+            scanStep.title = 'step width in kHz (20-400)';
+            scanStep.style.cssText = 'flex:0 0 40px;min-width:0;background:#0f3460;border:1px solid #53d769;color:#e0e0e0;border-radius:3px;padding:2px 4px;font-family:monospace;font-size:0.9em;text-align:center;';
+            scanStep.addEventListener('input', () => { scanStep._typedAt = Date.now(); });
+            const scanStepLbl = document.createElement('span');
+            scanStepLbl.textContent = 'kHz step';
+            scanStepLbl.style.cssText = 'color:#888;flex:0 0 auto;';
+            const scanTxt = document.createElement('span');
+            scanTxt.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#a8b8d8;';
+            scanRow2.appendChild(scanStep); scanRow2.appendChild(scanStepLbl); scanRow2.appendChild(scanTxt);
+            const sn_scan = d.id;
+            const doScanToggle = () => {
+                const cur = (dongleCards[sn_scan] && dongleCards[sn_scan].lastD && dongleCards[sn_scan].lastD.scan) || null;
+                if (cur && cur.active) {
+                    fetch('/scan_dongle?d=' + encodeURIComponent(sn_scan) + '&stop=1')
+                        .then(r => r.json())
+                        .then(data => { if (data.success) toast('Scan stopping \u2014 dongle stays parked at the current frequency (Sync rejoins tracking)'); })
+                        .catch(() => toast('Scan stop failed: receiver unreachable', true));
+                    return;
+                }
+                const from = parseFloat(scanFrom.value), to = parseFloat(scanTo.value);
+                if (isNaN(from) || isNaN(to)) { toast('Enter scan start and end frequencies in MHz (24-1766)', true); return; }
+                if (from === to) { toast('Scan start and end must differ', true); return; }
+                const step = parseFloat(scanStep.value) || 200;
+                fetch('/scan_dongle?d=' + encodeURIComponent(sn_scan)
+                        + '&start=' + encodeURIComponent(from) + '&end=' + encodeURIComponent(to)
+                        + '&step=' + encodeURIComponent(step))
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            toast('Scanning dongle ' + d.index + (d.primary ? ' \u2605' : '') + ': ' + from + ' \u2192 ' + to + ' MHz \u2014 stops on the next strong signal');
+                        } else {
+                            toast('Scan failed: ' + (data.error || 'unknown error'), true);
+                        }
+                    })
+                    .catch(() => toast('Scan failed: receiver unreachable', true));
+            };
+            scanBtn.onclick = doScanToggle;
             const sn_t = d.id;
             const tuneD = (mhz) => fetch('/tune_dongle?d=' + encodeURIComponent(sn_t) + '&f=' + mhz);
             // Read the input IMMEDIATELY: clicking Tune blurs the field on
@@ -1179,14 +1270,15 @@
             card.appendChild(sigRow);
             card.appendChild(tl); card.appendChild(recRow);
             card.appendChild(tuneRow); card.appendChild(nudgeRow);
-            card.appendChild(bwRow);
+card.appendChild(bwRow);
+card.appendChild(scanRow); card.appendChild(scanRow2);
             card.appendChild(info); card.appendChild(listenBtn);
             col.appendChild(card);
             c = dongleCards[d.id] = {
                 cardEl: card,
                 sigVal, sigFill, tlCtx: tl.getContext('2d'),
                 hist: [], recLed, recTxt, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
-                bandTxt, bwInput, tuneRow, nudgeRow, bwRow,
+bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn, scanTxt,
             };
             // The dedicated AIS dongle is pinned to 162 MHz and rejected by
             // /tune_dongle — tuning controls and live audio (never fed by
@@ -1195,6 +1287,8 @@
                 tuneRow.style.display = 'none';
                 nudgeRow.style.display = 'none';
                 bwRow.style.display = 'none';
+                scanRow.style.display = 'none';
+                scanRow2.style.display = 'none';
                 listenBtn.style.display = 'none';
             }
             return c;
@@ -1265,6 +1359,30 @@
                 const want = d.manual_bw_khz !== null && d.manual_bw_khz !== undefined
                     ? String(Math.round(d.manual_bw_khz * 100) / 100) : '';
                 if (c.bwInput.value !== want) c.bwInput.value = want;
+            }
+            // Scan controls: button doubles as Stop while a scan runs, the
+            // status line shows live progress / the result; empty from/to
+            // fields prefill with the current tune (\u00b15 MHz)
+            if (!d.ais) {
+                const sc = d.scan;
+                const active = !!(sc && sc.active);
+                c.scanBtn.textContent = active ? '\u23F9 Stop' : '\uD83D\uDD0D Scan';
+                c.scanBtn.style.background = active ? '#f39c12' : '#53d769';
+                if (eff !== null) {
+                    if (c.scanFrom.value === '' && Date.now() - (c.scanFrom._typedAt || 0) > 3000) c.scanFrom.value = eff.toFixed(3);
+                    if (c.scanTo.value === '' && Date.now() - (c.scanTo._typedAt || 0) > 3000) c.scanTo.value = (eff + 5).toFixed(3);
+                }
+                let st = '';
+                if (sc) {
+                    if (active) st = 'scanning ' + sc.cur_mhz.toFixed(3) + ' MHz\u2026';
+                    else if (sc.result === 'found') st = 'found ' + sc.found_mhz.toFixed(4) + ' MHz (+' + sc.found_db + ' dB) \u2014 parked'
+                        + (sc.bw_khz ? ', records \u00b1' + sc.bw_khz + ' kHz' : '');
+                    else if (sc.result === 'nothing') st = 'done \u2014 nothing found';
+                    else if (sc.result === 'stopped') st = 'stopped at ' + sc.cur_mhz.toFixed(3) + ' MHz';
+                    else if (sc.result === 'aborted') st = 'aborted \u2014 satellite pass';
+                }
+                c.scanTxt.textContent = st;
+                c.scanTxt.title = st;
             }
             // Selected-range band on the waterfall: visible while a manual
             // frequency or bandwidth selection is active; width = the

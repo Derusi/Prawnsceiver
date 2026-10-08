@@ -12,6 +12,7 @@ from .config import (AUDIO_RATE, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS, SAT_DSB_FRE
                    PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, UTC_OFFSET, WEBDIR)
 
 from . import ais
+from . import scan
 from .decode import decode_recording
 from .history import get_recordings, quality_map, set_recording_quality
 from .pages import AIS_HTML, CONSOLE_HTML, HISTORY_HTML
@@ -46,6 +47,7 @@ def _dongle_list():
                 "correction_src": e.get("correction_src", "none"),
                 "manual_frequency_mhz": round(state.manual_dongle_freq[sn] / 1e6, 4) if sn in state.manual_dongle_freq else None,
                 "manual_bw_khz": round(state.manual_dongle_bw[sn] / 1000.0, 3) if sn in state.manual_dongle_bw else None,
+                "scan": scan.scan_snapshot(sn),
             })
     return dongles
 
@@ -521,6 +523,126 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps({"success": True, "mode": "manual", "frequency_mhz": mhz}).encode())
+        elif self.path.split('?')[0] == '/scan_dongle':
+            # Frequency scan for one dongle (dashboard card Scan button):
+            # /scan_dongle?d=<serial>&start=<mhz>&end=<mhz>&step=<khz>&ratio=<n>
+            # sweeps the dongle's override from start to end and parks it on
+            # the next strong signal (see scan.py); &stop=1 stops a running
+            # scan at its current frequency (Sync on the card rejoins).
+            query = parse_qs(urlparse(self.path).query)
+            dev = (query.get('d') or [''])[0]
+            entry = state.sdrs.get(dev)
+            if entry is None:
+                self.send_response(404)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Unknown dongle'}).encode())
+                return
+            if entry.get('ais'):
+                # The dedicated AIS dongle listens to 161.975/162.025 MHz
+                # for ship traffic - scanning it would stop AIS reception
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Dongle is dedicated to AIS'}).encode())
+                return
+            if (query.get('stop') or [''])[0].strip().lower() in ('1', 'true', 'on', 'yes'):
+                stopped = scan.stop_scan(dev)
+                if stopped:
+                    state.log_console(f'Scan stop requested (dongle {dev})')
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'stopped': stopped}).encode())
+                return
+            f_start = (query.get('start') or [''])[0].strip()
+            f_end = (query.get('end') or [''])[0].strip()
+            f_step = (query.get('step') or ['200'])[0].strip()
+            f_ratio = (query.get('ratio') or [''])[0].strip()
+            try:
+                start_mhz = float(f_start)
+                end_mhz = float(f_end)
+                step_khz = float(f_step)
+                ratio = float(f_ratio) if f_ratio else scan.SCAN_RATIO
+            except ValueError:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Invalid scan parameters (start/end/step/ratio)'}).encode())
+                return
+            if not (24.0 <= start_mhz <= 1766.0 and 24.0 <= end_mhz <= 1766.0):
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Frequencies out of R820T range (24-1766 MHz)'}).encode())
+                return
+            if start_mhz == end_mhz:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Scan start and end must differ'}).encode())
+                return
+            if not scan.STEP_MIN_HZ / 1000.0 <= step_khz <= scan.STEP_MAX_HZ / 1000.0:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': f'Step out of range ({scan.STEP_MIN_HZ // 1000}-{scan.STEP_MAX_HZ // 1000} kHz)'}).encode())
+                return
+            if not 1.5 <= ratio <= 20.0:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Ratio out of range (1.5-20)'}).encode())
+                return
+            with state.status_lock:
+                pass_active = state.is_pass_active
+            if entry['primary'] and pass_active:
+                # Scanning the primary suppresses its pass recording - the
+                # same protection /tune has (reject while a pass is up; the
+                # scan thread also aborts itself when a pass rises mid-scan)
+                self.send_response(409)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Satellite pass in progress - scan again after it ends'}).encode())
+                return
+            if (state.scans.get(dev) or {}).get('active'):
+                self.send_response(409)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'This dongle is already scanning'}).encode())
+                return
+            scan.start_scan(dev, start_mhz, end_mhz, step_khz, ratio)
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': True, 'from_mhz': start_mhz, 'to_mhz': end_mhz, 'step_khz': step_khz}).encode())
+        elif self.path.split('?')[0] == '/fit_bw':
+            # Fit the recorded (demod) bandwidth of one dongle to the signal
+            # currently on its tune: measures the live spectrum and sets the
+            # per-dongle demod low-pass cutoff (scan.fit_bandwidth).
+            query = parse_qs(urlparse(self.path).query)
+            dev = (query.get('d') or [''])[0]
+            entry = state.sdrs.get(dev)
+            if entry is None:
+                self.send_response(404)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Unknown dongle'}).encode())
+                return
+            if entry.get('ais'):
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Dongle is dedicated to AIS'}).encode())
+                return
+            result = scan.fit_bandwidth(dev)
+            self.send_response(200 if result.get('success') else 409)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
         elif self.path.split('?')[0] == '/live.wav':
             # Endless WAV stream of the live FM-demodulated audio of one
             # dongle (default: the primary). WAV header with a maxed-out
