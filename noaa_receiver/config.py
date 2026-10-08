@@ -40,14 +40,18 @@ UTC_OFFSET = 2  # Germany UTC+2
 # Tracked satellites: catalog number -> (name, frequency_hz)
 # ISS: ARISS SSTV (Robot 36) on 437.550 MHz during active events
 # Meteor-M 2-3/2-4: Russian weather satellites, LRPT digital downlink
-# (137.100 / 137.9125 MHz). Not decodable by the APT pipeline — tracked for
+# (137.9125 MHz family per SatNOGS; M2-3 was wrongly tracked at
+# 137.1 — ~800 kHz below its LRPT, so every M2-3 recording tuned dead
+# spectrum. A tune anywhere in 137.86-137.96 captures the LRPT band:
+# the recording spans +/-120 kHz and the decode measures the actual
+# signal position). Not decodable by the APT pipeline — tracked for
 # the pass list, recordings and reception history.
 TRACKED_SATS = {
     25338: ("NOAA 15", 137620000),
     28654: ("NOAA 18", 137912500),
     33591: ("NOAA 19", 137100000),
     25544: ("ISS (Zarya)", 437550000),
-    57166: ("Meteor-M 2-3", 137100000),
+    57166: ("Meteor-M 2-3", 137912500),
     59051: ("Meteor-M 2-4", 137912500),
 }
 
