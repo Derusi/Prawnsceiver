@@ -1380,6 +1380,7 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn,
                     else if (sc.result === 'nothing') st = 'done \u2014 nothing found';
                     else if (sc.result === 'stopped') st = 'stopped at ' + sc.cur_mhz.toFixed(3) + ' MHz';
                     else if (sc.result === 'aborted') st = 'aborted \u2014 satellite pass';
+                    else if (sc.result === 'nodata') st = 'ended \u2014 no data from this dongle';
                 }
                 c.scanTxt.textContent = st;
                 c.scanTxt.title = st;

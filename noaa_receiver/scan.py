@@ -113,23 +113,31 @@ def fit_bw_hz(width_hz):
     bw = int(round(width_hz / 2.0 * 1.3 / 100.0) * 100)
     return max(1000, min(120000, bw))
 
-def _sample(entry, sc, settle=SCAN_SETTLE_SECS, dwell=SCAN_DWELL_SECS):
-    """Average the magnitude rows over one dwell window at the current tune
-    -> (peak/floor ratio of the AVERAGED row, averaged row).
+def _sample(entry, sc, settle=SCAN_SETTLE_SECS, dwell=SCAN_DWELL_SECS, min_rows=5):
+    """Average the magnitude rows at the current tune ->
+    (peak/floor ratio of the AVERAGED row, averaged row).
 
     The time-average is the impulse filter (see module docstring): a
     stationary carrier keeps its level, single-block impulses are
     clipped at 8x their row's median (bounding them however hot they
-    are) and then divided by the number of averaged rows. Returns
-    (0.0, None) when the scan was stopped mid-dwell. Only rows not yet
-    seen are accumulated (the capture thread publishes a new array
-    object per FFT).
+    are) and then divided by the number of averaged rows.
+
+    Rows are collected until the dwell window has elapsed AND at least
+    min_rows have been seen — a short rtl_tcp delivery stall right
+    after a retune command (tuner re-lock, USB hiccup; measured live:
+    one step of the FM-band shakedown got <5 rows in 0.7 s) then merely
+    lengthens the window instead of failing the step. A hard deadline
+    of 4 dwell windows bounds the wait; (0.0, None) is returned only
+    when the scan is stopped or no data ever arrived (dead dongle).
+    Only rows not yet seen are accumulated (the capture thread
+    publishes a new array object per FFT).
     """
     time.sleep(settle)
     rows = []
-    deadline = time.time() + dwell
+    soft_deadline = time.time() + dwell
+    hard_deadline = soft_deadline + 3 * dwell
     last_seen = None
-    while time.time() < deadline:
+    while True:
         if sc.get("stop"):
             return 0.0, None
         with entry["lock"]:
@@ -141,12 +149,12 @@ def _sample(entry, sc, settle=SCAN_SETTLE_SECS, dwell=SCAN_DWELL_SECS):
             if med > 0.0:
                 np.clip(r, 0.0, 8.0 * med, out=r)
             rows.append(r)
+        if rows and time.time() >= soft_deadline and len(rows) >= min_rows:
+            break
+        if time.time() >= hard_deadline:
+            break
         time.sleep(SCAN_SAMPLE_EVERY)
-    if not rows:
-        return 0.0, None
-    if len(rows) < 5:
-        # Too few rows to average impulses away (dongle just started,
-        # FFT stalled) — not a trustworthy measurement, treat as silence
+    if len(rows) < min_rows:
         return 0.0, None
     mean_row = np.mean(rows, axis=0)
     _, ratio, _ = _measure(mean_row)
@@ -222,8 +230,8 @@ def scan_dongle_thread(serial):
             with state.status_lock:
                 state.manual_dongle_freq[serial] = freq
             ratio, avg_row = _sample(entry, sc)
-            if avg_row is None:   # stopped mid-dwell
-                sc["result"] = "stopped"
+            if avg_row is None:   # stopped, or no IQ/FFT data at all
+                sc["result"] = "stopped" if sc["stop"] else "nodata"
                 break
             # Someone (card Tune/Sync, another scan) took the override over:
             # the scan no longer controls this dongle — leave it to them
@@ -266,9 +274,9 @@ def scan_dongle_thread(serial):
                                   f"(+{db} dB over the floor) — parked")
         elif sc["result"] == "stopped":
             state.log_console(f"🔍 Scan stopped (dongle {serial}) — parked at {sc['cur_hz']/1e6:.4f} MHz")
-        elif sc["result"] in ("nothing", "aborted"):
-            # Nothing found (or a pass needs the dongle): restore whatever
-            # override state the dongle had before the scan
+        elif sc["result"] in ("nothing", "aborted", "nodata"):
+            # Nothing found (or a pass needs the dongle / it stopped
+            # delivering): restore whatever override state it had before
             with state.status_lock:
                 if saved_override is None:
                     state.manual_dongle_freq.pop(serial, None)
@@ -277,6 +285,9 @@ def scan_dongle_thread(serial):
             if sc["result"] == "nothing":
                 state.log_console(f"🔍 Scan done (dongle {serial}): nothing above "
                                   f"+{round(20*math.log10(sc['ratio']))} dB in {sc['from_hz']/1e6:g}-{sc['to_hz']/1e6:g} MHz")
+            elif sc["result"] == "nodata":
+                state.log_console(f"Scan ended (dongle {serial}): no spectrum data from the capture "
+                                  f"thread — dongle stalled or restarting?", "warn")
 
 def fit_bandwidth(serial):
     """Measure the live signal at the dongle's CURRENT tune and fit the
