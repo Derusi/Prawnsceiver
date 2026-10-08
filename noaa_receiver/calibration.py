@@ -73,8 +73,16 @@ def correction_info(freq_hz, serial=None):
     """(correction_hz, source) describing the tuning correction applied to a
     dongle at a frequency (see SDR_DONGLE_CORRECTIONS). The source labels
     where the value comes from: an exact measured frequency, the FM-band
-    rule, a scaled ppm fallback, or nothing."""
-    d = SDR_DONGLE_CORRECTIONS.get(serial) or SDR_DONGLE_CORRECTIONS.get(PRIMARY_DONGLE_SN, {})
+    rule, a scaled ppm fallback, or nothing.
+
+    An UNKNOWN serial gets a zero correction marked 'unmeasured dongle':
+    inheriting the primary's table would mis-tune a modern TCXO dongle
+    (e.g. a NESDR SMArt v5 at 0.5 ppm) by ~11 kHz on first use. The dongle
+    cards' tuning infobox shows the marker until the dongle gets measured
+    and its own entry."""
+    d = SDR_DONGLE_CORRECTIONS.get(serial)
+    if d is None:
+        return 0, "unmeasured dongle"
     freqs = d.get("freqs", {})
     if freq_hz in freqs:
         return freqs[freq_hz], "measured"
