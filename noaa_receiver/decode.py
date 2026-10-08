@@ -9,7 +9,9 @@ import time
 
 from . import state
 from .calibration import PRIMARY_DONGLE_SN, tuning_correction
-from .config import NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE, SAT_DSB_FREQ, SDR_OFFSET_HZ, SDR_RATE, TRACKED_SATS
+from .config import (NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE,
+                     SAT_DSB_FREQ, SDR_OFFSET_HZ, SDR_RATE, TLE_CACHE_FILE,
+                     TRACKED_SATS)
 from .dsp import frequency_shift, iq_to_complex, new_state
 
 # Recording names are '<sat>_<YYYYMMDD>_<HHMMSS>[-<n>][_<serial>].wav', written by
@@ -185,6 +187,27 @@ def _measure_signal_offset(iq_path):
     return offset
 
 
+def _seed_satdump_tles():
+    """Keep SatDump's TLE file fed from the receiver's own TLE cache —
+    SatDump cannot fetch Celestrak from this network, and with no TLEs it
+    cannot geo-reference Meteor images."""
+    try:
+        import json
+        cache = json.load(open(TLE_CACHE_FILE))
+        lines = []
+        for catnr, trio in cache.items():
+            if isinstance(trio, list) and len(trio) == 3:
+                lines.extend(l.strip() for l in trio)
+        if not lines:
+            return
+        path = os.path.expanduser('~/.config/satdump/satdump_tles.txt')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+    except Exception:
+        pass   # best effort — SatDump runs without TLEs, just without maps
+
+
 def _satdump_decode(pipeline, iq_path, out_dir, label, shift_hz=None):
     """Decode a raw IQ recording with SatDump (runs minutes on the Pi — the
     caller spawns this detached so the scheduler never blocks on it). The
@@ -200,6 +223,7 @@ def _satdump_decode(pipeline, iq_path, out_dir, label, shift_hz=None):
         state.log_console(f"SatDump is not installed - cannot decode {label}", "warn")
         return
     os.makedirs(out_dir, exist_ok=True)
+    _seed_satdump_tles()
     baseband, fmt = iq_path, 'cu8'
     tmp = None
     try:
@@ -207,8 +231,16 @@ def _satdump_decode(pipeline, iq_path, out_dir, label, shift_hz=None):
             state.log_console(f"Centering baseband for {label}: rotating {shift_hz} Hz")
             tmp = _centered_cf32(iq_path, shift_hz)
             baseband, fmt = tmp, 'cf32'
-        cmd = [exe, pipeline, 'baseband', baseband, out_dir,
-               '--samplerate', str(SDR_RATE), '--baseband_format', fmt]
+        # Run in an isolated network namespace when available: SatDump
+        # retries its Celestrak TLE fetch, and while that host is
+        # unreachable each retry blocks for the full 134 s TCP timeout
+        # before the demodulation even starts (observed live). The TLEs
+        # come from _seed_satdump_tles instead.
+        argv = [exe, pipeline, 'baseband', baseband, out_dir,
+                '--samplerate', str(SDR_RATE), '--baseband_format', fmt]
+        if shutil.which('unshare'):
+            argv = ['unshare', '-rn'] + argv
+        cmd = argv
         state.log_console(f"🛰 SatDump decode started ({label}): {pipeline}")
         subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
     except subprocess.TimeoutExpired:
