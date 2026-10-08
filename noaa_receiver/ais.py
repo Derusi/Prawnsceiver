@@ -47,7 +47,7 @@ from datetime import datetime
 import numpy as np
 
 from . import state
-from .calibration import SDR_DONGLE_GAIN, tuning_correction
+from .calibration import SDR_DONGLE_GAIN, correction_info, tuning_correction
 from .config import (AIS_CENTER_HZ, AIS_CHANNEL_HZ, AIS_LOG_FILE,
                      AIS_SHIP_TTL_SECS,
                      LOGDIR, SDR_GAIN, SDR_OFFSET_HZ, SDR_RATE,
@@ -623,6 +623,9 @@ def ais_capture_thread(serial):
         try:
             correction = tuning_correction(AIS_CENTER_HZ, serial)
             tune = AIS_CENTER_HZ + SDR_OFFSET_HZ + correction
+            # shown in the dongle card's tuning infobox, like the satellite
+            # capture threads (the ppm fallback applies ~+13 kHz here)
+            entry["correction"], entry["correction_src"] = correction_info(AIS_CENTER_HZ, serial)
             if _port_in_use(entry["port"]):
                 raise RuntimeError(f'port {entry["port"]} in use (stale rtl_tcp?) — not starting AIS rtl_tcp')
             rtl_log_f.seek(0)

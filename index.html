@@ -1249,7 +1249,7 @@
             const eff = curDongleMHz(d.id);
             // What this frequency is normally used for (band allocation)
             if (d.ais) {
-                c.bandTxt.innerHTML = '🚢 AIS — Danube ship traffic · 161.975 / 162.025 MHz · <a href="/ais.json" target="_blank" rel="noopener" style="color:#4da6ff;text-decoration:none;">ais.json</a>';
+                c.bandTxt.innerHTML = '🚢 AIS — Danube ship traffic · 161.975 / 162.025 MHz · <a href="/ais" style="color:#4da6ff;text-decoration:none;">→ full log</a> · <a href="/ais.json" target="_blank" rel="noopener" style="color:#4da6ff;text-decoration:none;">ais.json</a>';
             } else {
                 c.bandTxt.innerHTML = eff !== null
                     ? '📶 ' + bandLabel(bandFor(eff))
