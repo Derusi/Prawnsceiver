@@ -418,3 +418,49 @@ quality, history attribution — no operator action all night).
   67.4° (decisive LRPT test), 11:12 NOAA 18 DSB 20°, then the 11:35
   cron evaluation (gain A/B + LRPT verdict). NESDR SMArt v5 arriving
   today — runbook in the 10:15 entry.
+
+### 2026-10-08 11:40 CEST — gain A/B verdict + 11:10 LRPT test (contaminated)
+(1) GAIN A/B — 29.7 dB IS TOO LOW. The audio comparison was a wash:
+    on the 10:45 NOAA 15 pass both dongles produce statistically
+    identical audio (RMS -16.0 vs -16.4 dBFS, 2.4 kHz band SNR -0.1 dB
+    both — pure noise at 10.6° with a degraded transmitter), and the
+    10:19 ISS noise floors are also identical. The FM demod path
+    normalizes output level, so audio can NOT distinguish front-end
+    drive. The IQ tells the real story:
+      primary AGC (04:29/09:31): IQ rms 9.4-15.5 u8-units
+      primary fixed 29.7 (11:10): IQ rms 1.29  => ~17-22 dB under AGC
+      secondary FC0013 AGC: 2.1 before, 1.05 at 11:10 (also dropped)
+    1.29/127.5 = 1% of ADC range: quantization eats ~3 of the 8 bits —
+    fatal for weak digital (LRPT) decodes. The 22.4/31.3 pass peaks
+    were the same effect (strength metric scales with front-end gain).
+    VERDICT: AGC wins; if we want manual gain it must sit near the
+    R820T max (~42-49.6 dB), not 29.7. Recommend reverting the
+    primary to AGC (user decision; needs a restart in an idle window)
+    or retrying fixed ~42 dB on a good NOAA 15 pass. The NESDR v5 will
+    redo this experiment properly on a TCXO device.
+(2) 11:10 METEOR-M 2-3 67.4° LRPT: NO PRODUCTS (0-byte CADU both
+    dongles, empty MSU-MR) — but the test is CONTAMINATED by the
+    under-driven primary. My independent IQ re-measure (5 windows,
+    4096-pt FFTs, elevated-power scan on the negative side):
+      primary (fixed 29.7): no clean plateau; broad +2..+3 dB
+        humps only, peak excess 18 dB = narrow spur (the -55 kHz
+        interferer), no LRPT-shaped band.
+      secondary (AGC): no elevated power above 6 dB anywhere.
+    So no strong LRPT signal at 67.4° on either dongle — leaning
+    "Meteor-M 2-3's LRPT is quiet too" (same family as M2-4), but the
+    primary's quantization under-drive weakens the evidence. Repeat
+    the test with proper gain on the next high M2-3 pass.
+(3) CONSOLE RING DESTROYED BY RE-PREDICT SPIN: at 11:30:06-11:30:10
+    the 30-min re-prediction loop filled all 100 console lines
+    ("Predicted 31 passes in next 24h" + per-pass lines every tick),
+    evicting ALL evidence of the 10:45/11:10 passes including the
+    "Baseband centering ... measured at" line. The backlog quirk is
+    worse than assumed: every half hour the ring loses its last
+    30 min of pass history. Escalate: re-predict should log once, not
+    per tick, or the ring should be larger / re-predict lines filtered.
+(4) 11:12 NOAA 18 DSB pass: never happened — no recordings, no
+    history entry; current predictions list NOAA 18 next at 12:52
+    (70°). The 10:05 plan line was stale (prediction moved).
+- Passes at 11:35: NOAA 19 53° at 11:38 (active during this check),
+  ISS 58° 11:56, NOAA 18 70° 12:52 (good DSB test), Meteor-M 2-3 13°
+  12:52 (too low to matter).
