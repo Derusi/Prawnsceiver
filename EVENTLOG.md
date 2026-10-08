@@ -279,3 +279,28 @@ NO SatDump products. Root-caused through the whole chain:
   NOAA 15 pass at 54 deg gives much better data to continue this.
 - Memory: server 152 MB (creep continues: 47->92->108->140->152;
   decodes + quality analyses add up — still 10x under the flag).
+
+### 2026-10-08 09:25 CEST — 09:02 NOAA 15 + honest image-quality verdict
+- Both passes clean: 08:45 ISS recorded, auto-decode failed correctly
+  ("No SSTV transmission found" — markers written, no decode storm; no
+  ARISS event, expected). 09:02 NOAA 15: WAVs (71 MB) + PNGs (12.2 MB)
+  on both dongles, peak 474 (curiously LOWER than 07:23's 1132 at
+  half the elevation — the strength window likely caught the constant
+  interferer on 07:23).
+- IMAGE VERDICT (deep dive): NOAA 15's decoded images are NOT useful
+  weather imagery. Adjacent-ROW corr ~0.2 for every NOAA 15 image of
+  the last two days INCLUDING yesterday's 86.9-degree pass — and
+  adjacent-PIXEL corr (0.25) is indistinguishable from the dark
+  transmitter snowstorms (0.23-0.26). The row correlation that looked
+  like "real signal content" is mostly the periodic sync bars
+  noaa-apt renders every row. Carrier + sync alive, video modulation
+  weak/noisy. Consistent across days => NOT a regression from
+  tonight's changes; NOAA 15's APT video is degraded (old satellite).
+  The 07:23 entry's "real but weak image" verdict was too optimistic.
+- The flat-audio anomaly fits this story: no 2400 Hz subcarrier hump
+  because the video modulation is mostly noise; the quality scorer's
+  0% is honest after all.
+- Memory: 204 MB (creep: 47->...->204 over 8 passes — worth a
+  tracemalloc look in the morning; maybe quality-analysis buffers).
+- Remaining: 09:31 Meteor-M 2-3 LRPT (decisive pipeline test) and the
+  10:40 wrap-up.
