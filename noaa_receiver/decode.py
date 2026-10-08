@@ -292,10 +292,20 @@ def _decode_iq(wav_path, pipeline, suffix):
     # LRPT is a ~72 kHz wide QPSK stream, the DSB telemetry ~6 kHz —
     # the width makes the offset measurement robust against spurs
     measured = _measure_signal_offset(iq_path, 72_000 if 'lrpt' in pipeline else 6_000)
-    shift_hz = measured if measured is not None else SDR_OFFSET_HZ
+    # _measure_signal_offset returns the signal's POSITION in the baseband
+    # (negative Hz, e.g. -71425 for a satellite 71.4 kHz below center);
+    # frequency_shift rotates BY its argument (signal at f -> f + shift),
+    # so centering the signal at 0 needs the NEGATIVE of the position.
+    # The SDR_OFFSET_HZ fallback is already a rotation amount (+60 kHz
+    # centers a signal at -60 kHz). Passing the raw position rotated the
+    # signal to 2x its offset — every decode whose measurement succeeded
+    # (i.e. every strong pass) demodulated empty spectrum: the whole
+    # 0-byte-CADU LRPT streak and the empty DSB products.
+    shift_hz = -measured if measured is not None else SDR_OFFSET_HZ
     state.log_console(f"Baseband centering for {os.path.basename(wav_path)}: "
                       f"signal {'measured at' if measured is not None else 'NOT FOUND, assuming'} "
-                      f"{shift_hz / 1000:.1f} kHz")
+                      f"{(measured if measured is not None else -SDR_OFFSET_HZ) / 1000:.1f} kHz, "
+                      f"rotating {shift_hz / 1000:.1f} kHz")
     threading.Thread(target=_satdump_decode,
                      args=(pipeline, iq_path, out_dir, label, shift_hz),
                      daemon=True, name='satdump').start()
