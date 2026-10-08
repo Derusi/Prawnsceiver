@@ -144,3 +144,19 @@ Changes made while the user is asleep (all pushed, Pi restarted at
 - Receiver restarted again (idle), endpoints fast. Note: earlier
   timestamps in this log were corrected — the Pi clock runs CEST and
   the console log stamps are CEST as well.
+
+### 2026-10-08 03:08 CEST — 02:51 Meteor-M 2-4 LRPT pass: pipeline works
+- Pass 02:50:30-02:57:10 (12.7°). Both dongles recorded WAV + raw IQ
+  simultaneously; PASS END closed all 4 files; auto-decode started two
+  detached SatDump meteor_m2-x_lrpt runs at 02:57 (decode markers
+  written with "started in the background" — the new marker flow works).
+- Files: Meteor-M_2-4_20261008_025030{,_00000991}.wav 38 MB each,
+  .iq.u8 192 MB each (~400 s at 480 kB/s — correct).
+- Products: both _lrpt dirs empty at 03:07; satdumps still running
+  (9 min in, 50 MB RSS each). At 12.7° no lock is expected; the 1 h
+  timeout bounds the noise-chewing worst case.
+- History: single entry, peak 350.7, wav correctly attributed to the
+  pass satellite (satellite-aware attribution works), 39 entries —
+  no duplicate.
+- Memory: server RSS 92 MB (up from 47 MB during recording —
+  buffers, fine), no satdump blowup. No OOM risk.
