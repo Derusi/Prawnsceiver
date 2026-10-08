@@ -737,6 +737,17 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(f.read())
         else:
             super().do_GET()
+    def send_header(self, keyword, value):
+        # The dashboard and its sub-pages are single evolving HTML files
+        # served with Last-Modified but no Cache-Control — browsers then
+        # heuristic-cache them and miss updates on normal refreshes (seen
+        # live: a deployed dashboard change stayed invisible until a hard
+        # refresh). no-cache keeps revalidation cheap (304 via If-Modified-
+        # Since) while the page always follows the deployed file.
+        if keyword.lower() == 'content-type' and 'text/html' in str(value):
+            super().send_header('Cache-Control', 'no-cache')
+        super().send_header(keyword, value)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEBDIR, **kwargs)
     def log_message(self, *args): pass
