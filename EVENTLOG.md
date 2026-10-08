@@ -700,3 +700,44 @@ comparison dongle) for AIS. AIS_DONGLE_SN is set; consequences:
   should still decode). To verify after the next restart: console shows
   'AIS receiver on dongle 77771111153705700', waterfall shows two faint
   carriers +/-25 kHz around center.
+
+### 2026-10-08 16:50 CEST — AIS deployed to the Pi; two deploy bugs fixed; Pi hard-crashed once; v5 off USB (replug needed)
+
+Deploy via SSH (eugene@192.168.3.245, repo clone = /home/eugene/aprs_website,
+start via crontab @reboot noaa_receiver.sh). Timeline and findings:
+
+- 16:22 first start: satellite capture threads ALL died with NameError —
+  the AIS wiring edit had dropped SDR_DONGLE_GAIN from radio.py's
+  calibration import (test_dsp/test_ais didn't exercise radio's runtime
+  namespace; test_radio's identical-looking pre-existing failure on the
+  Windows box masked it). Fixed (9da7166), added a namespace guard at
+  the top of tests/test_radio.py, restarted 16:25: clean.
+- Dashboard was broken by a syntax error in the new AIS panel
+  (fetchAIS): a heredoc-escaping accident wrote a RAW NEWLINE inside
+  the .join() string literal -> the whole <script> block failed to
+  parse, blanking the entire dashboard (user reported index:2237:101).
+  Fixed byte-verified, whole script block now checked with
+  node --check (236a237).
+- 16:36-16:38 the Pi hard-crashed mid-diagnostic (was briefly parked on
+  161.975 via /tune_dongle for a spectrum comparison; command timed
+  out, machine stopped answering ping AND the public site went down,
+  then rebooted itself at 16:38:14). No journal survives (volatile
+  journald), no undervoltage flag in the new boot. Cause unknown —
+  power brownout or USB cascade are the candidates (known flaky-USB
+  history). Watch for recurrence; if it crashes again under AIS load,
+  suspect the PSU.
+- After the reboot the v5 (48263793) is OFF the USB bus (lsusb shows
+  only the R820T) -> satellite tracking/recording is DOWN until it is
+  physically replugged (sdr_thread re-enumerates every 10 s, no restart
+  needed). The R820T auto-became primary per the fallback rule, so the
+  main waterfall currently shows the AIS band. NOAA 15 pass 17:11 will
+  be missed unless the v5 is back before rise.
+- AIS side runs fine: rtl_tcp tuned 162,072,960 Hz (center+60k offset
+  +12960 ppm fallback), both channels demodulating, floor ~2-6 u8
+  units, no errors. BUT the AIS spectrum is FLAT at both channels
+  (peaks == noise floor): the R820T hears nothing yet. What antenna is
+  it on? If it shares the 137 MHz antenna it should still show close
+  traffic; zero carriers plus zero decoded frames suggests a poor/
+  disconnected antenna path. Next on-site: replug the v5, check the
+  R820T antenna, watch the waterfall for two faint carriers +/-25 kHz
+  around center.
