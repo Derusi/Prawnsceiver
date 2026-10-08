@@ -14,7 +14,7 @@ from .config import (AUDIO_RATE, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS, SAT_DSB_FRE
 from . import ais
 from .decode import decode_recording
 from .history import get_recordings, quality_map, set_recording_quality
-from .pages import CONSOLE_HTML, HISTORY_HTML
+from .pages import AIS_HTML, CONSOLE_HTML, HISTORY_HTML
 from .thumbs import THUMB_SUFFIX, ensure_thumb
 from .passes import HAS_SKYFIELD, load, passes_to_json, wgs84
 from .satnogs import satellite_info
@@ -242,6 +242,24 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(CONSOLE_HTML.encode())
+        elif self.path == '/ais' or self.path == '/ais.html':
+            # AIS tracking page: every received frame, persistent log
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(AIS_HTML.encode())
+        elif self.path.startswith('/aislog.json'):
+            # Tail of the persistent AIS message log (?count=N, max 2000)
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                count = int((query.get('count') or ['200'])[0])
+            except ValueError:
+                count = 200
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(ais.ais_log(count)).encode())
         elif self.path == '/history' or self.path == '/history.html':
             self.send_response(200)
             self.send_header('Content-type', 'text/html; charset=utf-8')

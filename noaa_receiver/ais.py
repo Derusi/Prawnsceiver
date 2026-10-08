@@ -36,6 +36,7 @@ so bursts are separated by quiet gaps: the capture thread tracks the
 noise floor per channel, buffers 48 kHz discriminator samples while a
 channel is active and decodes each closed burst offline.
 """
+import json
 import os
 import subprocess
 import threading
@@ -47,7 +48,8 @@ import numpy as np
 
 from . import state
 from .calibration import SDR_DONGLE_GAIN, tuning_correction
-from .config import (AIS_CENTER_HZ, AIS_CHANNEL_HZ, AIS_SHIP_TTL_SECS,
+from .config import (AIS_CENTER_HZ, AIS_CHANNEL_HZ, AIS_LOG_FILE,
+                     AIS_SHIP_TTL_SECS,
                      LOGDIR, SDR_GAIN, SDR_OFFSET_HZ, SDR_RATE,
                      WATERFALL_ROWS)
 
@@ -461,7 +463,8 @@ def collect_bursts(freq48, energy, st, max_blocks=48):
 # ---------- ship table ----------
 
 def handle_frames(payloads, channel, ch_st):
-    """Decode payload vectors and merge them into state.ais_ships."""
+    """Decode payload vectors, merge them into state.ais_ships, append
+    each frame to the persistent message log and the raw NMEA ring."""
     now = time.time()
     for p in payloads:
         d = parse_payload(p)
@@ -476,11 +479,80 @@ def handle_frames(payloads, channel, ch_st):
             ship["msgs"] += 1
             ship["last_seen"] = now
             ship["last_channel"] = channel
+            seq = ship["msgs"] % 10
         ch_st["frames"] += 1
         ch_st["last_frame"] = now
-        for sentence in payload_to_aivdm(p, channel, ship["msgs"] % 10):
-            with state.ais_lock:
+        sentences = payload_to_aivdm(p, channel, seq)
+        with state.ais_lock:
+            for sentence in sentences:
                 state.ais_nmea.append(sentence)
+        log_message(d, channel, sentences)
+
+# ---------- persistent message log (JSONL, one line per frame) ----------
+
+_log_lock = threading.Lock()
+_log_appends = 0
+
+def log_message(d, channel, sentences):
+    """Append one decoded frame to AIS_LOG_FILE (jsonl, newest last).
+
+    Survives restarts; bounded: when it outgrows 4 MB the oldest half is
+    dropped (checked every 256 appends — cheap at AIS message rates).
+    Log write failures (disk full, permissions) warn but never take the
+    capture thread down.
+    """
+    global _log_appends
+    entry = {
+        "ts": round(time.time(), 2),
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "ch": channel,
+        "msg": d["msg"],
+        "mmsi": d["mmsi"],
+        "cls": d.get("cls"),
+        "name": d.get("name"),
+        "callsign": d.get("callsign"),
+        "lat": d.get("lat"),
+        "lon": d.get("lon"),
+        "sog": d.get("sog"),
+        "cog": d.get("cog"),
+        "hdg": d.get("heading"),
+        "status": d.get("status"),
+        "nmea": " ".join(sentences),
+    }
+    with _log_lock:
+        try:
+            os.makedirs(os.path.dirname(AIS_LOG_FILE), exist_ok=True)
+            with open(AIS_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+            _log_appends += 1
+            if _log_appends % 256 == 0 and os.path.getsize(AIS_LOG_FILE) > 4 << 20:
+                with open(AIS_LOG_FILE, encoding="utf-8") as f:
+                    lines = f.readlines()
+                with open(AIS_LOG_FILE, "w", encoding="utf-8") as f:
+                    f.writelines(lines[len(lines) // 2:])
+        except (OSError, ValueError) as e:
+            state.log_console(f"AIS log write failed: {e}", "warn")
+
+def ais_log(count=200):
+    """Newest-first tail of the persistent message log for /aislog.json."""
+    try:
+        count = max(1, min(int(count), 2000))
+    except ValueError:
+        count = 200
+    with _log_lock:
+        try:
+            with open(AIS_LOG_FILE, encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            return []
+    out = []
+    for line in lines[-count:]:
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    out.reverse()   # newest first
+    return out
 
 def prune_ships():
     """Drop ships not heard for AIS_SHIP_TTL_SECS (called on read paths)."""

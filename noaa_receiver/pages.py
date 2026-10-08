@@ -16,3 +16,4 @@ def _load_page(name):
 
 CONSOLE_HTML = _load_page('console.html')
 HISTORY_HTML = _load_page('history.html')
+AIS_HTML = _load_page('ais.html')

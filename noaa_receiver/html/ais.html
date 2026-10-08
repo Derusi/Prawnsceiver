@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOAAh's CrabArk — AIS Tracking Log</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: monospace; font-size: 16px; background: #1a1a2e; color: #e0e0e0; padding: 12px 15px; }
+h1 { font-size: 1.2em; color: #53d769; margin-bottom: 4px; }
+.sub { font-size: 1em; color: #888; margin-bottom: 12px; }
+.sub a { color: #53d769; }
+#toolbar { display: flex; gap: 15px; font-size: 0.85em; color: #888; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+#toolbar label { cursor: pointer; }
+#toolbar select { background: #0f3460; color: #e0e0e0; border: 1px solid #53d769; border-radius: 3px; font-family: monospace; padding: 1px 4px; }
+#stats { color: #4da6ff; font-size: 0.9em; margin-bottom: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+th { text-align: left; color: #888; border-bottom: 1px solid #0f3460; padding: 4px 6px; position: sticky; top: 0; background: #1a1a2e; }
+td { padding: 3px 6px; border-bottom: 1px solid #16213e; white-space: nowrap; }
+tr:hover td { background: #16213e; }
+tr.cls-B td:first-child { border-left: 2px solid #4da6ff; }
+tr.cls-A td:first-child { border-left: 2px solid #53d769; }
+tr.cls-BASE td:first-child, tr.cls-ATON td:first-child, tr.cls-SAR td:first-child, tr.cls-LR td:first-child { border-left: 2px solid #f39c12; }
+.t { color: #666; }
+.ch { color: #4da6ff; }
+.type { color: #888; }
+.mmsi { color: #e0e0e0; }
+.name { color: #53d769; font-weight: bold; }
+.pos a { color: #4da6ff; text-decoration: none; }
+.pos a:hover { text-decoration: underline; }
+.na { color: #555; }
+.nmea { color: #555; font-size: 0.75em; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.muted { color: #666; padding: 10px; }
+</style>
+</head>
+<body>
+<h1>🚢 AIS Tracking Log — Danube Ship Traffic</h1>
+<div class="sub"><a href="/">&#8592; dashboard</a> &nbsp;|&nbsp; <a href="/ais.json">live ship table (JSON)</a> &nbsp;|&nbsp; 161.975 / 162.025 MHz</div>
+<div id="toolbar">
+    <label><input type="checkbox" id="autorefresh" checked> auto-refresh (10 s)</label>
+    <span>show last</span>
+    <select id="count">
+        <option value="100">100</option>
+        <option value="200" selected>200</option>
+        <option value="500">500</option>
+        <option value="2000">2000</option>
+    </select>
+    <span>frames</span>
+    <span id="loadinfo"></span>
+</div>
+<div id="stats">Loading...</div>
+<table>
+<thead><tr>
+    <th>time</th><th>ch</th><th>type</th><th>MMSI</th><th>name</th>
+    <th>position</th><th>sog</th><th>cog</th><th>hdg</th><th>status</th><th>raw NMEA</th>
+</tr></thead>
+<tbody id="rows"><tr><td colspan="11" class="muted">Loading AIS log...</td></tr></tbody>
+</table>
+<script>
+const MSG_NAMES = {
+    1: 'position (A)', 2: 'position (A)', 3: 'position (A)',
+    4: 'base station', 5: 'static/voyage', 9: 'SAR aircraft',
+    11: 'UTC response', 18: 'position (B)', 19: 'position ext (B)',
+    21: 'aid to nav', 24: 'static (B)', 27: 'long range'
+};
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function cell(v, cls, dash) { return '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + (v === null || v === undefined ? '<span class="na">' + (dash || '—') + '</span>' : v) + '</td>'; }
+
+async function load() {
+    try {
+        const n = document.getElementById('count').value;
+        const res = await fetch('/aislog.json?count=' + n);
+        const log = await res.json();
+        const sres = await fetch('/ais.json');
+        const s = await sres.json();
+        const ch = s.channels || {};
+        const chA = ch.A ? ch.A.frames : 0, chB = ch.B ? ch.B.frames : 0;
+        document.getElementById('stats').textContent =
+            (s.enabled ? 'Receiver live on dongle ' + s.dongle
+                        : 'AIS disabled (AIS_DONGLE_SN not set) — showing the persisted log')
+            + ' · frames decoded: ch A ' + chA + ' + ch B ' + chB
+            + ' (' + (chA + chB) + ' this run) · ships tracked: ' + s.ships.length;
+        document.getElementById('loadinfo').textContent = ' · showing ' + log.length + ' log lines';
+        const rows = document.getElementById('rows');
+        if (!log.length) {
+            rows.innerHTML = '<tr><td colspan="11" class="muted">No AIS frames decoded yet — the log fills as ships come into range.</td></tr>';
+            return;
+        }
+        let html = '';
+        for (const e of log) {
+            const pos = (e.lat !== null && e.lat !== undefined)
+                ? '<a href="https://www.google.com/maps?q=' + e.lat + ',' + e.lon + '" target="_blank" rel="noopener">' + e.lat.toFixed(4) + ', ' + e.lon.toFixed(4) + '</a>'
+                : null;
+            html += '<tr class="cls-' + esc(e.cls || '') + '" title="' + esc(e.nmea || '') + '">'
+                + cell(esc(e.time), 't')
+                + cell(esc(e.ch), 'ch')
+                + cell(esc(e.msg + ' ' + (MSG_NAMES[e.msg] || '?')), 'type')
+                + cell(esc(e.mmsi), 'mmsi')
+                + cell(esc(e.name || ''), 'name')
+                + cell(pos, 'pos')
+                + cell(e.sog !== null && e.sog !== undefined ? e.sog + ' kn' : null)
+                + cell(e.cog !== null && e.cog !== undefined ? e.cog + '\u00b0' : null)
+                + cell(e.hdg !== null && e.hdg !== undefined ? e.hdg + '\u00b0' : null)
+                + cell(esc(e.status || e.callsign || ''))
+                + cell(esc(e.nmea || ''), 'nmea')
+                + '</tr>';
+        }
+        rows.innerHTML = html;
+    } catch (err) {
+        console.error('AIS log load failed:', err);
+    }
+}
+
+document.getElementById('count').addEventListener('change', load);
+let timer = null;
+function setTimer() {
+    if (timer) clearInterval(timer);
+    if (document.getElementById('autorefresh').checked) timer = setInterval(load, 10000);
+}
+document.getElementById('autorefresh').addEventListener('change', setTimer);
+load();
+setTimer();
+</script>
+</body>
+</html>

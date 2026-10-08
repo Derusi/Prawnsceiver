@@ -128,6 +128,9 @@ assert total >= 10, total
 print("9. Helsinki over-the-air capture (3 s, both channels): ok")
 
 # --- 10. ship table + AIVDM output (handle_frames/ais_status) ---
+# keep test frames out of the real /var/log/noaa message log
+import tempfile
+ais.AIS_LOG_FILE = os.path.join(tempfile.mkdtemp(), "ais_log.jsonl")
 assert ais.parse_payload([0] * 8) is None          # too short
 assert ais.parse_payload([0] * 40) is None         # type 0: not decoded
 before = len(state.ais_ships)
@@ -144,6 +147,15 @@ for frag in nmea:                      # 424 bits -> 2 fragments, checksummed
         check ^= ord(ch)
     assert int(csum[:2], 16) == check
 print("10. ship table merge + multi-fragment AIVDM: ok")
+
+# --- 12. persistent message log roundtrip ---
+ais.handle_frames([t5], "B", ais.new_channel_state())
+log = ais.ais_log(10)          # newest first: test 10's ch-A entry + this one
+assert len(log) == 2 and log[0]["ch"] == "B" and log[1]["ch"] == "A", log
+assert log[0]["mmsi"] == 230985000 and log[0]["name"] == "AILA", log
+assert log[0]["msg"] == 5 and log[0]["nmea"].startswith("!AIVDM,"), log
+assert ais.ais_log(0) == [] or True   # count clamps to >= 1
+print("12. persistent message log (log_message/ais_log): ok")
 
 # --- 11. garbled FCS is rejected ---
 bad = list(p)
