@@ -189,3 +189,49 @@ Changes made while the user is asleep (all pushed, Pi restarted at
   orphan — the 02:51 pair and the 04:41 primary therefore have no
   completion console lines; watch orphans manually and kill them if
   they run absurdly long (> 1 h).
+
+### 2026-10-08 06:40 CEST — LRPT decode engineering + a dead end
+The 04:29 headline pass: signal captured perfectly (349 MB IQ), but
+NO SatDump products. Root-caused through the whole chain:
+
+1. RAW IQ decode can never work: SatDump baseband pipelines demodulate
+   around 0 Hz, our raw stream has the satellite at ~-(SDR_OFFSET_HZ) —
+   centered decode required (commit 9bd4592).
+2. SatDump's Celestrak TLE fetch: each retry blocks 134 s on this
+   network before the demod even starts. Fixed: decodes now run under
+   `unshare -rn` (instant connection failure) and the receiver seeds
+   `~/.config/satdump/satdump_tles.txt` from its own TLE cache
+   (commit c07f341).
+3. Static centering is untrustworthy: corrections are modeled, and
+   transmitters can be off-frequency. Now the decode MEASURES the
+   signal position in the IQ: width-matched sliding window (72 kHz for
+   LRPT, 6 kHz for DSB), negative-side only (satellite is always below
+   center), window selection by total elevated power. Synthetic tests:
+   plateau/narrow-carrier/noise all measured correctly (commits
+   19bd932, 6bd08e9... see git log). Validated on the real 04:29 file:
+   measures -71.4 kHz, my independent spectrogram says the plateau is
+   centered ~-75 kHz, 62 kHz wide.
+4. THE DEAD END: with the signal correctly centered, a fine sweep of
+   satdump pipelines (meteor_m2_lrpt qpsk-72k, meteor_m2-x_lrpt
+   oqpsk-72k, meteor_m2-x_lrpt_80k oqpsk-80k) x 8 rotation offsets
+   (66..80 kHz, 60 s culmination slices) produced ZERO frames in
+   every combination. The plateau is pass-synced (Doppler-drifts with
+   the satellite) but its 62 kHz width does not match LRPT-72k
+   (108 kHz occupied) or LRPT-80k (120 kHz).
+5. RF position: the plateau sits ~16 kHz below where the model puts
+   137.9125 MHz — either Meteor-M 2-4 transmits at ~137.8965 MHz in a
+   nonstandard mode, or the dongle's correction at 137.9125 is wrong by
+   ~90 ppm (which would contradict NOAA 15's in-window peaks at
+   137.62). DECISIVE TEST: Meteor-M 2-3's 09:31 pass at 137.1 MHz —
+   if its LRPT decodes with the new pipeline, the station is fine and
+   M2-4's transmitter is the anomaly.
+- Also found: a CONSTANT narrowband interferer at raw ~-55 kHz
+  (post-shift +5 kHz, INSIDE the ±4.7 kHz signal-strength window!) —
+  present outside passes too; it may be inflating "signal peak"
+  numbers on Meteor passes. Worth excluding from the strength window
+  in a future change.
+- The 06:10 Meteor pass ran the complete new pipeline cleanly:
+  record → measure (-71.4 kHz, consistent) → rotate → decode →
+  no products (same anomalous signal). Automation works.
+- NEXT MAJOR TEST: 07:23 NOAA 15 APT (transmitter believed alive) —
+  the audio-path image chance; then 09:31 Meteor-M 2-3.
