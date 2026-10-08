@@ -10,6 +10,15 @@ Run: python3 -u tests/test_radio.py (needs numpy; ~20 s; uses TCP port 1299)
 import glob, socket, struct, subprocess, tempfile, threading, time, wave
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+
+# Regression guard (2026-10-08: an import-line edit dropped SDR_DONGLE_GAIN and
+# killed every satellite capture thread at runtime, unnoticed until deploy):
+# every name the capture threads reference at module level must resolve.
+import noaa_receiver.radio as _radio
+for _n in ("AIS_DONGLE_SN", "FM_BAND", "PRIMARY_DONGLE_SN", "SDR_DONGLE_GAIN",
+            "correction_info", "tuning_correction"):
+    assert hasattr(_radio, _n), f"radio.py is missing {_n} — check the calibration import"
+print("radio namespace guard: ok")
 import numpy as np
 from collections import deque
 from noaa_receiver import radio, state

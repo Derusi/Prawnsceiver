@@ -26,7 +26,7 @@ from datetime import datetime
 
 from . import state
 from .calibration import (AIS_DONGLE_SN, FM_BAND, PRIMARY_DONGLE_SN,
-                          correction_info, tuning_correction)
+                          SDR_DONGLE_GAIN, correction_info, tuning_correction)
 from .config import (AUDIO_RATE, DOPPLER_APPLY_RANGE_HZ, DECIMATION, FFT_SIZE,
                      IQ_BLOCK, IQ_RECORD_FREQS, LOGDIR, RECORD_DIR, RTL_LOG,
                      SAT_DSB_DEMOD_BW_HZ, SAT_DSB_FREQ, SDR_GAIN,
