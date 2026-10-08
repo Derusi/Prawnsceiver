@@ -617,3 +617,12 @@ PAUSED now. Leftover truncated NOAA_18_20261008_143738*.{wav,iq.u8}
 (both dongles, ~0.8 MB / 3.9 MB each) from the restart window — left on
 disk for now. The 15:55 M2-4 LRPT outlook pass will not be recorded
 while paused (16:08 watch moot unless resumed).
+
+### 2026-10-08 14:41 CEST — all recordings wiped (user request: "not a good one yet")
+User confirmed none of the recordings so far were usable. Wiped
+/var/log/noaa/recordings/ entirely (291 entries, 11 GB: NOAA 15/18/19,
+Meteor-M 2-3/2-4, ISS; WAV, IQ, PNGs, thumbs, decode markers, SatDump
+product dirs). Recordings were paused at the time (nothing in-flight);
+recordings.json now lists 0, 48 GB free. pass_history.json KEPT — its
+signal-peak-per-pass data is diagnostic value for the reception-quality
+work, but its wav/png links now dangle (decode/delete buttons will 404).
