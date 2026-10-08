@@ -451,7 +451,8 @@
             let b = wfBlocks[idx];
             if (b) {
                 b.title.textContent = `Dongle ${meta.index}${meta.primary ? ' ★' : ''} — ${meta.label} (${meta.tuner}, SN ${meta.serial})`
-                    + (meta.manual_frequency_mhz ? ` — ${meta.manual_frequency_mhz.toFixed(4)} MHz` : '');
+                    + (meta.ais ? ' — 🚢 AIS 161.975/162.025 MHz (Danube ships)'
+                        : (meta.manual_frequency_mhz ? ` — ${meta.manual_frequency_mhz.toFixed(4)} MHz` : ''));
                 b.led.className = 'indicator ' + (meta.running ? 'green' : 'red');
                 b.sig.textContent = 'signal ' + (meta.signal ? meta.signal.toFixed(1) : '—');
                 return b;
@@ -972,8 +973,11 @@
                     const b = ensureWfBlock(d);
                     // Frequency axis center for hover/click: the dongle's
                     // manual override if set, else the shared tune frequency
-                    b.centerMHz = (d.manual_frequency_mhz !== null && d.manual_frequency_mhz !== undefined)
-                        ? d.manual_frequency_mhz : lastSharedMHz;
+                    // The AIS dongle is parked on 162.000 MHz (both ship
+                    // channels at +/-25 kHz) and never follows the shared
+                    // satellite tune
+                    b.centerMHz = d.ais ? 162.0 : ((d.manual_frequency_mhz !== null && d.manual_frequency_mhz !== undefined)
+                        ? d.manual_frequency_mhz : lastSharedMHz);
                     updateDongleCard(d);
                     try {
                         // last=1: only the newest row — the waterfall scrolls
@@ -1011,6 +1015,7 @@
         function curDongleMHz(serial) {
             const c = dongleCards[serial];
             if (!c || !c.lastD) return null;
+            if (c.lastD.ais) return 162.0;   // AIS dongle never follows the shared tune
             if (c.lastD.manual_frequency_mhz !== null && c.lastD.manual_frequency_mhz !== undefined)
                 return c.lastD.manual_frequency_mhz;
             return lastSharedMHz;
@@ -1181,8 +1186,17 @@
                 cardEl: card,
                 sigVal, sigFill, tlCtx: tl.getContext('2d'),
                 hist: [], recLed, recTxt, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
-                bandTxt, bwInput,
+                bandTxt, bwInput, tuneRow, nudgeRow, bwRow,
             };
+            // The dedicated AIS dongle is pinned to 162 MHz and rejected by
+            // /tune_dongle — tuning controls and live audio (never fed by
+            // the AIS thread) are hidden on its card
+            if (d.ais) {
+                tuneRow.style.display = 'none';
+                nudgeRow.style.display = 'none';
+                bwRow.style.display = 'none';
+                listenBtn.style.display = 'none';
+            }
             return c;
         }
 
@@ -1234,9 +1248,13 @@
             c.lastD = d;
             const eff = curDongleMHz(d.id);
             // What this frequency is normally used for (band allocation)
-            c.bandTxt.innerHTML = eff !== null
-                ? '📶 ' + bandLabel(bandFor(eff))
-                : '📶 <span style="color:#666;">—</span>';
+            if (d.ais) {
+                c.bandTxt.innerHTML = '🚢 AIS — Danube ship traffic · 161.975 / 162.025 MHz · <a href="/ais.json" target="_blank" rel="noopener" style="color:#4da6ff;text-decoration:none;">ais.json</a>';
+            } else {
+                c.bandTxt.innerHTML = eff !== null
+                    ? '📶 ' + bandLabel(bandFor(eff))
+                    : '📶 <span style="color:#666;">—</span>';
+            }
             if (document.activeElement !== c.dinput && eff !== null
                     && Date.now() - (c.dinput._typedAt || 0) > 3000) {
                 c.dinput.value = eff.toFixed(4);
