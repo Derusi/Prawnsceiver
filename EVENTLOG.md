@@ -304,3 +304,15 @@ NO SatDump products. Root-caused through the whole chain:
   tracemalloc look in the morning; maybe quality-analysis buffers).
 - Remaining: 09:31 Meteor-M 2-3 LRPT (decisive pipeline test) and the
   10:40 wrap-up.
+
+### 2026-10-08 09:45 CEST — 09:31 Meteor-M 2-3: inconclusive at 19.9°
+- Pass recorded cleanly (182 MB IQ + 37 MB WAV per dongle), decode
+  ran automatically — but the signal measurement found NOTHING above
+  threshold on either dongle ("NOT FOUND, assuming 60.0 kHz"), and the
+  fallback-position decodes produced 0-byte CADUs.
+- At 19.9° this is inconclusive (weak elevation + V-dipole geometry).
+  The decisive test moves to the 11:10 Meteor-M 2-3 pass at 67.4°:
+  a strong LRPT there proves the pipeline; nothing found at that
+  elevation points at the transmitter.
+- Memory at 09:37: 260 MB (night creep 47 -> 260 MB across 9 passes —
+  tracemalloc investigation recommended today).
