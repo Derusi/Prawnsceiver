@@ -25,8 +25,8 @@ from collections import deque
 from datetime import datetime
 
 from . import state
-from .calibration import (FM_BAND, PRIMARY_DONGLE_SN, correction_info,
-                          tuning_correction)
+from .calibration import (FM_BAND, PRIMARY_DONGLE_SN, SDR_DONGLE_GAIN,
+                          correction_info, tuning_correction)
 from .config import (AUDIO_RATE, DOPPLER_APPLY_RANGE_HZ, DECIMATION, FFT_SIZE,
                      IQ_BLOCK, IQ_RECORD_FREQS, LOGDIR, RECORD_DIR, RTL_LOG,
                      SAT_DSB_DEMOD_BW_HZ, SAT_DSB_FREQ, SDR_GAIN,
@@ -79,6 +79,8 @@ PLL_CHECK_AFTER_SECS = 3.0
 # changes apply while the stream keeps flowing, so a retune is one socket
 # write instead of the old kill-restart-sleep cycle (~8 s of dead air).
 RTL_TCP_SET_FREQ = 0x01
+RTL_TCP_SET_GAIN_MODE = 0x03   # 0 = tuner AGC, 1 = manual
+RTL_TCP_SET_GAIN = 0x04        # value = gain in tenths of dB
 
 def _rtl_tcp_set(sock, cmd, value):
     """Send one rtl_tcp control command: 1 byte command + uint32 big-endian
@@ -402,9 +404,18 @@ def sdr_capture_thread(serial):
                 # stream; restart loudly instead.
                 raise RuntimeError('rtl_tcp exited immediately (port conflict? device busy?)')
             tuner_type, gain_count = struct.unpack('!II', header[4:12])
+            # Fixed tuner gain (per dongle, see calibration.SDR_DONGLE_GAIN):
+            # manual gain mode + gain in tenths of dB over the control
+            # protocol — the rtl_tcp CLI parses -g as an int, so fractional
+            # gain steps like the R820T's 29.7 dB must go through the socket
+            gain_db = SDR_DONGLE_GAIN.get(serial, SDR_GAIN)
+            if gain_db:
+                _rtl_tcp_set(sock, RTL_TCP_SET_GAIN_MODE, 1)
+                _rtl_tcp_set(sock, RTL_TCP_SET_GAIN, int(round(gain_db * 10)))
+                state.log_console(f"Tuner gain set (dongle {serial}): {gain_db} dB manual")
             if primary:
                 state.rtl_sdr_proc = proc
-                state.log_console(f"rtl_tcp started (pid {proc.pid}, primary dongle {serial}, tuner type {tuner_type}, {gain_count} gain steps), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ + correction}Hz, DC spike displaced), gain={SDR_GAIN}dB")
+                state.log_console(f"rtl_tcp started (pid {proc.pid}, primary dongle {serial}, tuner type {tuner_type}, {gain_count} gain steps), tuned {freq_str}Hz (offset +{SDR_OFFSET_HZ + correction}Hz, DC spike displaced), gain={SDR_DONGLE_GAIN.get(serial, SDR_GAIN) or 'auto'}dB")
             else:
                 state.log_console(f"rtl_tcp started (pid {proc.pid}, dongle {serial}, tuner type {tuner_type}), tuned {freq_str}Hz")
             pll_check_at = None if pll_warned else time.time() + PLL_CHECK_AFTER_SECS

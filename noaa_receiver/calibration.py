@@ -59,6 +59,16 @@ SDR_DONGLE_CORRECTIONS = {
     },
 }
 
+# Per-dongle fixed tuner gain in dB. Absent serial -> SDR_GAIN from config
+# (0 = the tuner's AGC). Fixed gain gives a stable noise floor: AGC pumps the
+# gain down as a satellite rises, which shifts the whole waterfall during a
+# pass and makes pass-to-pass comparisons unreliable. 29.7 dB is a native
+# R820T gain step and the value the apbouwens NOAA guide found optimal; the
+# FC0013 stays on AGC as the A/B reference (its gain table differs).
+SDR_DONGLE_GAIN = {
+    "77771111153705700": 29.7,
+}
+
 def correction_info(freq_hz, serial=None):
     """(correction_hz, source) describing the tuning correction applied to a
     dongle at a frequency (see SDR_DONGLE_CORRECTIONS). The source labels
