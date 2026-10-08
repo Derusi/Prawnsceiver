@@ -503,18 +503,14 @@ def sdr_capture_thread(serial):
                                     if now_ts - last_history_append >= 1.0:
                                         last_history_append = now_ts
                                         state.signal_history.append(band)
-                            # The DC spike at +SDR_OFFSET_HZ is a fixed tuner
-                            # artifact (the FC0013's saturates at 7x its
-                            # strongest signal). Blank it to the noise level
-                            # before display normalization: it carries no
-                            # information, would otherwise dominate the row
-                            # max on spike-heavy dongles (crushing the real
-                            # content), and the feature overlay already
-                            # marks its position.
-                            bin_hz = SDR_RATE / FFT_SIZE
-                            spike = center + int(SDR_OFFSET_HZ / bin_hz)
-                            lo, hi = max(spike - 8, 0), min(spike + 9, len(magnitude))
-                            magnitude[lo:hi] = np.median(magnitude)
+                            # Display normalization by the row max. The DC
+                            # spike at +SDR_OFFSET_HZ is a mild artifact on
+                            # both current dongles (~2x the noise floor,
+                            # never the row max - measured 2026-10-08 from
+                            # raw IQ), so it needs no special-casing; the
+                            # blanking that used to live here existed for
+                            # the removed FC0013, whose spike saturated at
+                            # 7x its strongest signal.
                             peak = magnitude.max()
                             if peak > 0:
                                 magnitude *= 255.0 / peak
