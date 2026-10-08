@@ -334,3 +334,35 @@ NO SatDump products. Root-caused through the whole chain:
   experiment tests station SNR, not the satellite.
 - Next passes: 10:19 ISS 53.7°, 10:45 NOAA 15 10.6° (gain smoke test),
   11:10 Meteor-M 2-3 67.4° (decisive LRPT test), 11:12 NOAA 18 20°.
+
+### 2026-10-08 10:15 CEST — prep for a third dongle (NESDR SMArt v5)
+User receives a NooElec NESDR SMArt v5 today (R820T2 + 0.5 ppm TCXO).
+Changes deployed:
+- calibration.py: unknown serials now get (0, "unmeasured dongle")
+  instead of inheriting the primary's -11 kHz correction — a TCXO dongle
+  would have been mis-tuned on first use. Verified live: both existing
+  dongles unchanged; deployed with a restart at 10:13 (idle window).
+RUNBOOK for when the dongle arrives (see also the 11:10 LRPT test first):
+1. USB: 3 dongles on a Pi 4 is at the power-budget edge (~300 mA
+   each) — a POWERED USB HUB is strongly recommended; watch for
+   brownouts (rtl_tcp restart loops in the console).
+2. Connector: the v5 is SMA — get an SMA cable/adapter for whichever
+   antenna it should feed.
+3. Serial: plug in, check `rtl_sdr -d 99` output for a UNIQUE serial
+   vs 77771111153705700 / 00000991. If it clashes or is generic,
+   set one in an idle window (rtl_eeprom needs exclusive access):
+   stop receiver, `rtl_eeprom -d <idx> -s <new-serial>`, restart.
+4. Enumeration is automatic: the receiver picks it up within 10 s,
+   assigns the next rtl_tcp port (1237), a waterfall card, per-dongle
+   recordings — no restart needed just for detection.
+5. Calibration: its tuning infobox will show "unmeasured dongle".
+   Measure the actual ppm (FM pilot method or rtl_test -p) and add a
+   SDR_DONGLE_CORRECTIONS entry for its serial; expect near 0
+   (TCXO). Until then it records ~correctly (0 correction is much
+   closer than the old generics' -11 kHz).
+6. Primary role (recommended): the v5 (R820T2, TCXO, better thermal)
+   should replace the ancient R820T as PRIMARY_DONGLE_SN — one-line
+   change in calibration.py + restart; the V-dipole then moves to it.
+   Add its serial to SDR_DONGLE_GAIN (measure best fixed gain first).
+7. CPU: a third capture thread adds ~50% DSP load; FFT_EVERY was
+   budgeted for two dongles — watch demod stalls / load average.
