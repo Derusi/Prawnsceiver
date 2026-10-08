@@ -20,7 +20,14 @@ PRIMARY_DONGLE_SN = "48263793"
 # excluded from satellite tracking and never becomes the primary. Plug in
 # any spare dongle, read its serial from the /console dongle enumeration
 # line (or rtl_sdr -d 99), and set it here to enable AIS. None = off.
-AIS_DONGLE_SN = None
+# 2026-10-08: the old generic R820T (77771111153705700) is dedicated to
+# AIS. Its ~+80 ppm crystal error is covered by the ppm fallback below
+# (~+13 kHz correction at 162 MHz); the AIS demod tolerates any residual
+# (per-burst DC removal, 14 kHz channel filter). If channels sit visibly
+# off-center in the waterfall (+/-25 kHz around center), measure the
+# offset and add 162000000 to this dongle's 'freqs' table like the other
+# bands.
+AIS_DONGLE_SN = "77771111153705700"
 
 # FM broadcast band (VHF2) range definition
 FM_BAND = (87_500_000, 108_000_000)

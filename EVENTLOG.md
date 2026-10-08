@@ -678,3 +678,25 @@ dependencies, mirroring the existing rtl_tcp architecture:
   console for the rtl_tcp start line, and check the waterfall for two
   faint carriers at +/-25 kHz of center; ships should appear on any
   Danube movement.
+
+### 2026-10-08 16:30 CEST — AIS dongle assigned: the old R820T (77771111153705700)
+
+User picked the generic R820T (the previous primary, currently the
+comparison dongle) for AIS. AIS_DONGLE_SN is set; consequences:
+- The R820T leaves satellite duty: satellite passes are now received by
+  the v5 alone, and the dashboard's per-dongle receive comparison is
+  down to one satellite dongle (dongle-comparison features degrade
+  gracefully — the AIS dongle still shows as a card with its 162 MHz
+  waterfall).
+- Tuning correction at 162.000 MHz comes from the R820T's 80 ppm
+  fallback: +12960 Hz. Its measured band corrections were all in the
+  +72..82 ppm range, so the residual after the fallback should be well
+  under 1 kHz — harmless for the demod (per-burst DC removal, 14 kHz
+  channel filter). If the two AIS carriers sit visibly off +/-25 kHz in
+  the waterfall, measure and pin 162000000 in the 'freqs' table.
+- Antenna: dedicated 162 MHz vertical recommended (AIS is vertical
+  pol); until one is mounted, the dongle can test-decode through the
+  137 MHz antenna (mismatch costs a few dB but close Danube traffic
+  should still decode). To verify after the next restart: console shows
+  'AIS receiver on dongle 77771111153705700', waterfall shows two faint
+  carriers +/-25 kHz around center.

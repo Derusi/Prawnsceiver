@@ -442,8 +442,8 @@ def collect_bursts(freq48, energy, st, max_blocks=48):
     active = energy > 1.6 * st["floor"]
     if not active:   # EMA tracks the quiet floor, never the bursts themselves
         st["floor"] += 0.05 * (energy - st["floor"])
+        active = energy > 1.6 * st["floor"]
     closed = []
-    active = energy > 1.6 * st["floor"]
     if active:
         st["burst"].append(freq48)
         st["burst_open"] = True
