@@ -817,3 +817,48 @@ from being too wide or too narrow. Implemented:
 
 State: feature complete locally; deploy + restart pending (avoid
 mid-pass windows).
+
+### 2026-10-08 ~18:00 CEST - scan shakedown: three live hardening rounds, validated
+
+The scanner's first two live FM-band runs parked on PHANTOMS (87.5408,
+98.403, 88.42 MHz - nothing at center once parked, widths 1-15 kHz
+instead of broadcast FM's 150+). Three root causes, each fixed and
+regression-tested (tests/test_scan.py 4d/4e/4f):
+
+1. Site impulse noise: every 34 ms FFT row carries a saturating bin at
+   a WANDERING offset (visible in any waterfall batch - each row is
+   peak-normalized to 255, so the row max tells nothing; the OFFSET
+   wandering is the tell). Per-row peak/floor detection hit on it at
+   every tune. Fix: detection runs on the TIME-AVERAGED row (0.7 s
+   dwell, ~40 rows), each row clipped at 8x its median first - a
+   stationary carrier keeps its level, impulses are bounded and
+   diluted. This matches how the +34 dB 99.59 MHz station was measured
+   (1 s averaged FFTs).
+2. rtl_tcp delivery stall right after a retune (<5 rows in one dwell)
+   ended a scan as 'stopped'. Fix: _sample extends the window until
+   the dwell elapsed AND >=5 rows arrived (hard bound 4 dwells); only
+   a dead stream ends the scan, as 'nodata' (override restored).
+3. Tune-relative artifacts (spurs that follow the tuner, e.g. +40.8
+   kHz - just outside the DC-spike mask): passed the confirm because
+   the confirm only re-checked the ratio. Fix: after re-centering, the
+   confirm requires the peak within +/-5 kHz of 0 Hz - a real signal
+   stays put when the dongle tunes onto it, a spur moves away.
+   (Watch: repeated hit-recenter-reject cycles double the step time in
+   spur-infested bands - cosmetic, the sweep keeps going.)
+
+FINAL LIVE VALIDATION (v5 primary, FM band 87.5-108, 200 kHz steps):
+scan parked at 92.0212 MHz, +10 dB, card center-band signal 1255 (vs
+~150 floor - a real, persistent, strong carrier), fitted BW 35 kHz;
+/fit_bw at the parked tune measured 68.4 kHz wide / +16.9 dB and set
+the demod to +/-44.5 kHz (FM broadcast modulation makes the
+instantaneous peak wander ~10 kHz, so re-fitting after parking gives a
+better width estimate - that is what the Fit button is for). Sync
+released the dongle afterwards; tracking resumed, NOAA 15 18:46 pass
+unaffected.
+
+Tooling notes for this repo (Windows dev box): Git Bash heredocs
+mangle \uXXXX sequences into U+FFFD - patches touching JS escapes must
+go through write_file'd Python scripts, not heredocs; the edit tool
+cannot match CRLF files (normalize to LF first); test_decode/test_radio
+fail on Windows identically with and without changes (POSIX fakes /
+chmod), they pass on the Pi.
