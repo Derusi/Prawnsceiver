@@ -2234,8 +2234,7 @@
                 });
                 document.getElementById('ais-list').innerHTML = html ||
                     '<div style="color:#666;padding:10px;">No ships heard yet.</div>';
-                document.getElementById('ais-nmea').textContent = (data.nmea || []).slice(-20).join('
-');
+                document.getElementById('ais-nmea').textContent = (data.nmea || []).slice(-20).join('\n');
             } catch (e) { console.error('Error fetching AIS:', e); }
         }
 
