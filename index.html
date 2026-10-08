@@ -1336,18 +1336,21 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn,
                 drawCardTimeline(c);
             }
             c.recLed.className = 'indicator ' + (d.recording ? 'green' : 'red');
-            c.recTxt.textContent = d.recording ? (d.wav || 'Recording…') : 'Idle';
+            const rec = d.recording ? (d.wav || 'Recording…') : 'Idle';
+            if (c.recTxt._last !== rec) { c.recTxt._last = rec; c.recTxt.textContent = rec; }
             // Manual tuner state: show the effective frequency, highlight
             // the input while this dongle overrides the shared frequency
             c.lastD = d;
             const eff = curDongleMHz(d.id);
             // What this frequency is normally used for (band allocation)
-            if (d.ais) {
-                c.bandTxt.innerHTML = '🚢 AIS — Danube ship traffic · 161.975 / 162.025 MHz · <a href="/ais" style="color:#4da6ff;text-decoration:none;">→ full log</a> · <a href="/ais.json" target="_blank" rel="noopener" style="color:#4da6ff;text-decoration:none;">ais.json</a>';
-            } else {
-                c.bandTxt.innerHTML = eff !== null
+            const bandHtml = d.ais
+                ? '🚢 AIS — Danube ship traffic · 161.975 / 162.025 MHz · <a href="/ais" style="color:#4da6ff;text-decoration:none;">→ full log</a> · <a href="/ais.json" target="_blank" rel="noopener" style="color:#4da6ff;text-decoration:none;">ais.json</a>'
+                : (eff !== null
                     ? '📶 ' + bandLabel(bandFor(eff))
-                    : '📶 <span style="color:#666;">—</span>';
+                    : '📶 <span style="color:#666;">—</span>');
+            if (c.bandTxt._last !== bandHtml) {
+                c.bandTxt._last = bandHtml;
+                c.bandTxt.innerHTML = bandHtml;
             }
             if (document.activeElement !== c.dinput && eff !== null
                     && Date.now() - (c.dinput._typedAt || 0) > 3000) {
@@ -1366,7 +1369,8 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn,
             if (!d.ais) {
                 const sc = d.scan;
                 const active = !!(sc && sc.active);
-                c.scanBtn.textContent = active ? '\u23F9 Stop' : '\uD83D\uDD0D Scan';
+                const btnTxt = active ? '\u23F9 Stop' : '\uD83D\uDD0D Scan';
+                if (c.scanBtn._last !== btnTxt) { c.scanBtn._last = btnTxt; c.scanBtn.textContent = btnTxt; }
                 c.scanBtn.style.background = active ? '#f39c12' : '#53d769';
                 if (eff !== null) {
                     if (c.scanFrom.value === '' && Date.now() - (c.scanFrom._typedAt || 0) > 3000) c.scanFrom.value = eff.toFixed(3);
@@ -1382,8 +1386,7 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn,
                     else if (sc.result === 'aborted') st = 'aborted \u2014 satellite pass';
                     else if (sc.result === 'nodata') st = 'ended \u2014 no data from this dongle';
                 }
-                c.scanTxt.textContent = st;
-                c.scanTxt.title = st;
+                if (c.scanTxt._last !== st) { c.scanTxt._last = st; c.scanTxt.textContent = st; c.scanTxt.title = st; }
             }
             // Selected-range band on the waterfall: visible while a manual
             // frequency or bandwidth selection is active; width = the
@@ -1437,10 +1440,15 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn,
             // Tuning infobox: this dongle's correction (value + source), the
             // settings shared by all dongles, and any manual override
             const cor = (d.correction_hz || 0) / 1000;
-            c.info.innerHTML = `⚙ tune ${cor >= 0 ? '+' : ''}${cor.toFixed(1)} kHz <span style="color:#666">(${d.correction_src || 'n/a'})</span><br>` +
+            const infoHtml = `⚙ tune ${cor >= 0 ? '+' : ''}${cor.toFixed(1)} kHz <span style="color:#666">(${d.correction_src || 'n/a'})</span><br>` +
                                `IF offset +60 kHz · gain auto` +
                                (d.manual_frequency_mhz ? `<br>🎛 manual override ${d.manual_frequency_mhz.toFixed(4)} MHz` : '');
-            c.listenBtn.textContent = (liveAudioOn === d.id) ? '⏹ Stop Listening' : '🔊 Listen';
+            if (c.info._last !== infoHtml) {
+                c.info._last = infoHtml;
+                c.info.innerHTML = infoHtml;
+            }
+            const listenTxt = (liveAudioOn === d.id) ? '⏹ Stop Listening' : '🔊 Listen';
+            if (c.listenBtn._last !== listenTxt) { c.listenBtn._last = listenTxt; c.listenBtn.textContent = listenTxt; }
             c.listenBtn.style.background = (liveAudioOn === d.id) ? '#53d769' : '#0f3460';
             c.listenBtn.style.color = (liveAudioOn === d.id) ? '#1a1a2e' : '#53d769';
         }
