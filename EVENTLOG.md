@@ -316,3 +316,21 @@ NO SatDump products. Root-caused through the whole chain:
   elevation points at the transmitter.
 - Memory at 09:37: 260 MB (night creep 47 -> 260 MB across 9 passes —
   tracemalloc investigation recommended today).
+
+### 2026-10-08 10:05 CEST — fixed-gain experiment deployed (user-approved)
+- Following both NOAA guides' advice (no AGC, fixed RF gain — see the
+  morning comparison against apbouwens' guide), the primary R820T now
+  runs 29.7 dB MANUAL gain; the FC0013 secondary stays on AGC as the
+  A/B reference (its gain table differs).
+- Implementation: calibration.SDR_DONGLE_GAIN = {"77771111153705700":
+  29.7}; the capture thread sends manual-gain-mode (0x03) + gain in
+  tenths of dB (0x04) over the rtl_tcp control protocol right after
+  the handshake — the rtl_tcp CLI parses -g as an int, so the
+  R820T's fractional gain steps would be mangled on the command line.
+- Console confirms both dongles up, primary at 29.7 dB manual.
+- EVALUATION: compare both dongles' audio on the same NOAA 15 passes
+  (subcarrier SNR around 2.4 kHz + waterfall noise floor stability).
+  Note: NOAA 15's video modulation is degraded regardless — the
+  experiment tests station SNR, not the satellite.
+- Next passes: 10:19 ISS 53.7°, 10:45 NOAA 15 10.6° (gain smoke test),
+  11:10 Meteor-M 2-3 67.4° (decisive LRPT test), 11:12 NOAA 18 20°.
