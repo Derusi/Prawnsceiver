@@ -464,3 +464,33 @@ quality, history attribution — no operator action all night).
 - Passes at 11:35: NOAA 19 53° at 11:38 (active during this check),
   ISS 58° 11:56, NOAA 18 70° 12:52 (good DSB test), Meteor-M 2-3 13°
   12:52 (too low to matter).
+
+### 2026-10-08 12:35 CEST — NESDR SMArt v5 is the new primary
+User removed the FC0013 (00000991) and connected the NESDR SMArt v5.
+Enumeration at 12:24 was automatic: SN 48263793, "Nooelec NESDR
+SMArt v5", rtl_tcp up, waterfall card, no restart needed. A brief
+"Connection reset by peer" storm at 12:23 (replug) self-healed; the
+stale FC0013 retry loop cleared on the restart below.
+- Deployed (commit 325ccee): PRIMARY_DONGLE_SN = 48263793; the old
+  R820T (77771111153705700) demoted to secondary. SDR_DONGLE_GAIN
+  emptied — both dongles on AGC per the 11:40 A/B verdict (29.7 dB
+  under-drove the ADC ~17-22 dB).
+- v5 correction: 0 Hz "unmeasured dongle" — near-correct for a 0.5
+  ppm TCXO (±69 Hz at 137 MHz). To measure properly: FM pilot method
+  (103.0 MHz pilot) or rtl_test -p in an idle window; add a
+  SDR_DONGLE_CORRECTIONS entry for 48263793 then. A fixed-gain value
+  for the v5 also needs MEASURING (sweep gain, find the knee), not a
+  guide number — see the 29.7 dB lesson.
+- Test suite on the Pi: all 5 test scripts pass STANDALONE
+  (test_radio: "ALL RADIO TESTS PASSED"). NOTE: `unittest discover`
+  breaks test_radio (shared-process state — the rtl_tcp stand-in
+  'sleep' spawn fails) — run the scripts individually, the docstring
+  way: python3 -u tests/<name>.py.
+- Receiver restarted 12:32 (idle window before the 12:52 NOAA 18
+  pass). Both dongles up: v5 primary AGC (signal 524 idle — notably
+  above the R820T's 145 noise floor; waterfall shows whether that is
+  antenna gain, AGC drive, or local RF — watch), R820T secondary AGC
+  at its normal 145.
+- v5'S FIRST PASS as primary: NOAA 18 70° at 12:52 (DSB mode, IQ +
+  SatDump noaa_dsb) — the shakedown. Meteor-M 2-4 32° at 14:15 gives
+  the v5's first LRPT attempt with a TCXO.
