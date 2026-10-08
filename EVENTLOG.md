@@ -751,3 +751,35 @@ v5 (48263793) is still off the USB bus after the move — replug pending;
 satellite tracking stays down until then. AIS runs on the R820T as
 before (0 frames so far; antenna situation after the move to be
 re-checked — see next entry when the dongles/antennas are settled).
+
+### 2026-10-08 18:15 CEST — AIS field measurements: system healthy, antenna is the bottleneck
+
+Station moved indoors ahead of rain; each dongle has its own antenna (v5:
+the 137 MHz V-dipole; R820T: a generic vertical whip). Measured with raw
+rtl_sdr captures + the production decode chain offline:
+
+- Tuning spot-on: AIS ch A/B land 0-37 Hz from expected (the 80 ppm
+  fallback correction is right for this dongle at 162 MHz).
+- RF path verified: strong FM station at 99.59 MHz received at +34 dB
+  over the floor through the same dongle+antenna — antenna, coax and
+  dongle all work.
+- AIS signals PRESENT but FAINT: ch A +6.2 dB, ch B +8.5 dB over the
+  noise floor (1-s FFT peaks exactly at the channel frequencies). No
+  burst exceeded 1.9x the burst-gate floor in 90+90 s outside — ships
+  in current range are too far/too few for the demod (~+13 dB needed).
+  One strong +22 dB burst was seen earlier (indoor position), so closer
+  ships will be decodable.
+- Gain experiments: the R820T's manual gain table tops out ~9 dB BELOW
+  what its AGC achieves (AGC floor 62 dB vs manual-max 53 dB in the
+  same 1-Hz FFT units) — AGC (SDR_GAIN=0) stays the right choice for
+  weak-signal AIS here; fixed gain only makes sense for strong-signal
+  sites. rtl_sdr -g sweeps 29.3..49.6 dB all showed rms ~0.9 (the
+  floor barely moves — ADC/post-tuner noise dominates at low RF input).
+- CONCLUSION: everything except the antenna is proven (decoder
+  validated on the real Helsinki capture; live pipeline healthy; both
+  dongles running after the rain move). The generic whip is not
+  resonant at 162 MHz and loses >10 dB — exactly the gap between the
+  measured +6..9 dB carriers and the ~+13 dB decode threshold. Next
+  hardware step: 46.3 cm quarter-wave ground plane (or a commercial AIS
+  whip) outside in the clear. Expected: distant Danube traffic becomes
+  decodable; close ships decode today's setup only when they pass.
