@@ -257,3 +257,25 @@ NO SatDump products. Root-caused through the whole chain:
   watch the slow creep (47 -> 92 -> 108 -> 140 over the night);
   nowhere near the 1.5 GB flag.
 - Receiver healthy, no restart performed; next: NOAA 15 APT 07:23.
+
+### 2026-10-08 07:50 CEST — 07:23 NOAA 15 APT: transmitter ALIVE, image decoded
+- Pass recorded cleanly on both dongles (60.5 MB WAVs, closed 07:32:50),
+  auto-decode produced PNGs on BOTH (10.4 MB each — 1258x2080 proper
+  APT geometry, noaa-apt found sync, sync-strip bars present).
+- Image content verified numerically: adjacent-row correlation 0.21
+  (whole image) / 0.15-0.26 per third — 4-6x the 0.03-0.05 of the
+  dark-transmitter snowstorms, but well below a crisp pass's 0.7+:
+  a REAL but weak image, consistent with 24.7 deg max elevation.
+- Peak 1132 — strongest signal of the night. NOAA 15's APT transmitter
+  is definitively alive and the analog path (retune, demod, noaa-apt,
+  markers, attribution) works end to end.
+- ANOMALY OPEN (quality scorer): estimate_quality scored 0% on this
+  recording, and the audio spectrum at mid-pass is unexpectedly FLAT
+  (2400 Hz subcarrier band only +0.7 dB over neighboring bands, no
+  hump) despite strong reception and a decoded image. Only 0.06% of
+  samples clip, so overdrive is not the explanation. The scorer is
+  honest to what it measures; the puzzle is why the real audio lacks
+  the subcarrier hump (signal position/demod subtlety?). The 09:02
+  NOAA 15 pass at 54 deg gives much better data to continue this.
+- Memory: server 152 MB (creep continues: 47->92->108->140->152;
+  decodes + quality analyses add up — still 10x under the flag).
