@@ -74,6 +74,11 @@ manual_dongle_freq = {}
 # the live audio. None/auto = mode default (full band on broadcast FM,
 # 22 kHz on satellite modes). Cleared per dongle.
 manual_dongle_bw = {}
+# Manual recording (dashboard Record button on a dongle card, dongle id ->
+# True): while set, that dongle's capture thread records its current tune
+# to WAV outside passes too. Named after the tune ("Manual_<freq>_MHz"), so
+# the file is never attributed to a satellite pass. Cleared per dongle.
+manual_recording = {}
 # Live Doppler correction for the active pass's satellite: computed by the
 # scheduler (range-rate via skyfield), applied in software by the capture
 # threads. doppler_freq_hz is the satellite's nominal frequency the value

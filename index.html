@@ -233,7 +233,7 @@
                     <span id="rec-pause-state" style="flex:1;font-size:0.85em;color:#888;">—</span>
                     <button id="rec-pause-btn" class="btn-outline" data-paused="0" onclick="toggleRecordPause()">⏸ Pause</button>
                 </div>
-                <div style="font-size:0.75em;color:#888;margin-top:3px;">While paused, passes are still tracked (waterfall, Doppler, live audio) but no WAV/IQ files are written.</div>
+                <div style="font-size:0.75em;color:#888;margin-top:3px;">While paused, passes are still tracked (waterfall, Doppler, live audio) but no WAV/IQ files are written. The ⏺ Record button on a dongle card records manually either way.</div>
             </div>
             <div class="status-item">
                 <div class="status-label">Recordings</div>
@@ -1102,6 +1102,30 @@
             recTxt.style.cssText = 'color:#a8b8d8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
             recTxt.textContent = 'Idle';
             recRow.appendChild(recLed); recRow.appendChild(recTxt);
+            // Manual recording (/record_dongle): records this dongle's
+            // current tune to a WAV outside passes; Stop ends it and the
+            // file is finalized. The recording line above shows the live
+            // file name while it runs.
+            const recBtn = document.createElement('button');
+            recBtn.textContent = '⏺ Record';
+            recBtn.title = 'Record this dongle\'s current tune to WAV until stopped';
+            recBtn.style.cssText = 'flex:0 0 auto;margin-left:auto;padding:2px 8px;background:rgba(231,76,60,0.15);color:#e07890;border:1px solid #e07890;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.85em;';
+            const sn_rec = d.id;
+            recBtn.onclick = () => {
+                const cur = !!(dongleCards[sn_rec] && dongleCards[sn_rec].lastD && dongleCards[sn_rec].lastD.manual_recording);
+                fetch('/record_dongle?d=' + encodeURIComponent(sn_rec) + (cur ? '&stop=1' : ''))
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            toast(cur ? 'Manual recording stopping \u2014 the WAV is finalized within a moment'
+                                      : `Recording dongle ${d.index}${d.primary ? ' \u2605' : ''} \u2014 the current tune is written to a WAV until stopped`);
+                        } else {
+                            toast('Record failed: ' + (data.error || 'unknown error'), true);
+                        }
+                    })
+                    .catch(() => toast('Record failed: receiver unreachable', true));
+            };
+            recRow.appendChild(recBtn);
             // Manual frequency override: 1 kHz steps (input + Tune), quick
             // nudges, and Sync to rejoin the shared frequency
             const tuneRow = document.createElement('div');
@@ -1324,7 +1348,7 @@ card.appendChild(scanRow); card.appendChild(scanRow2);
             c = dongleCards[d.id] = {
                 cardEl: card,
                 sigVal, sigFill, tlCtx: tl.getContext('2d'),
-                hist: [], recLed, recTxt, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
+                hist: [], recLed, recTxt, recBtn, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
 bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn, scanTxt,
             };
             // The dedicated AIS dongle is pinned to 162 MHz and rejected by
@@ -1336,6 +1360,7 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn,
                 bwRow.style.display = 'none';
                 scanRow.style.display = 'none';
                 scanRow2.style.display = 'none';
+                recBtn.style.display = 'none';
                 listenBtn.style.display = 'none';
             }
             return c;
@@ -1385,6 +1410,13 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn,
             c.recLed.className = 'indicator ' + (d.recording ? 'green' : 'red');
             const rec = d.recording ? (d.wav || 'Recording…') : 'Idle';
             if (c.recTxt._last !== rec) { c.recTxt._last = rec; c.recTxt.textContent = rec; }
+            // Record button mirrors the manual flag (a running pass
+            // recording is independent of it)
+            const recOn = !!d.manual_recording;
+            const recBtnTxt = recOn ? '⏹ Stop Rec' : '⏺ Record';
+            if (c.recBtn._last !== recBtnTxt) { c.recBtn._last = recBtnTxt; c.recBtn.textContent = recBtnTxt; }
+            c.recBtn.style.background = recOn ? '#e74c3c' : 'rgba(231,76,60,0.15)';
+            c.recBtn.style.color = recOn ? '#1a1a2e' : '#e07890';
             // Manual tuner state: show the effective frequency, highlight
             // the input while this dongle overrides the shared frequency
             c.lastD = d;

@@ -237,6 +237,7 @@ def remove_dongle(did):
         state.sdrs.pop(did, None)
         state.manual_dongle_freq.pop(did, None)
         state.manual_dongle_bw.pop(did, None)
+        state.manual_recording.pop(did, None)
         state.scans.pop(did, None)
         # Promote the first remaining non-AIS dongle to primary (it takes
         # over the legacy waterfall globals); with no dongle left there is
@@ -420,7 +421,7 @@ def sdr_capture_thread(did):
                 state.log_console(f"Connected to rtl_tcp {did} (dongle, tuner {entry['tuner']}), tuned {freq_str}Hz")
             last_history_append = 0.0
             block_count = 0
-            record_sat = None
+            record_name = None
             reader = _IQReader(sock, IQ_BLOCK)
 
             while True:
@@ -453,6 +454,7 @@ def sdr_capture_thread(did):
                     rec_paused = state.recordings_paused
                     dop_hz, dop_freq = state.doppler_hz, state.doppler_freq_hz
                     bw_hz = state.manual_dongle_bw.get(did)
+                    manual_rec = did in state.manual_recording
 
                 # Offset-shift the baseband once: satellite to 0 Hz, DC spike
                 # displaced to +SDR_OFFSET_HZ. Shared by waterfall FFT and demod.
@@ -524,8 +526,20 @@ def sdr_capture_thread(did):
                 # 137.1, NOAA 18 / Meteor-M 2-4 at 137.9125) needs no
                 # retune, but the WAV is closed and reopened all the same so
                 # one file never spans two passes.
+                # Name for a (re)opened WAV: the tracked satellite during a
+                # pass this dongle actually follows; otherwise — a manual
+                # recording (dashboard Record button) or a dongle parked on
+                # the operator's override frequency — the tune itself, so a
+                # file is never named for a satellite this dongle is not
+                # receiving (and never collides with pass attribution).
+                if pass_active and not override:
+                    rec_name = sat_now
+                elif entry['is_recording'] or manual_rec:
+                    rec_name = f"Manual {freq_now / 1e6:.4f} MHz"
+                else:
+                    rec_name = None
                 switch_band = freq_now != tuned_freq
-                switch_sat = entry['is_recording'] and sat_now != record_sat
+                switch_sat = entry['is_recording'] and rec_name != record_name
                 if switch_band or switch_sat:
                     if entry['is_recording']:
                         close_wav()
@@ -537,22 +551,27 @@ def sdr_capture_thread(did):
                             state.log_console(f"Retuning (live): {tuned_freq} Hz -> {freq_now} Hz ({sat_now})")
                         tuned_freq = freq_now
                     elif primary:
-                        state.log_console(f"Pass switch on the same frequency: {record_sat} -> {sat_now}")
-                    record_sat = None
+                        state.log_console(f"Recording switch on the same frequency: {record_name} -> {rec_name}")
+                    record_name = None
 
                 # Record to WAV during passes — every dongle records its own
                 # file (suffixed with its id); the primary additionally
                 # mirrors its state into the legacy globals used by the
                 # status/handler/scheduler. A dongle with a manual frequency
-                # override is parked on the operator's frequency — recording
-                # it would fill a satellite-named WAV with the wrong band.
-                # The dashboard's global pause (rec_paused) skips the WAV
-                # entirely: mid-pass it closes a running file within one
-                # block, and no new one opens until it is cleared.
-                should_record = pass_active and not override and not rec_paused
+                # override is parked on the operator's frequency — an
+                # automatic pass recording would fill a satellite-named WAV
+                # with the wrong band. The dashboard's global pause
+                # (rec_paused) skips the automatic WAV entirely: mid-pass it
+                # closes a running file within one block, and no new one
+                # opens until it is cleared. The dashboard's manual record
+                # button (manual_rec) records this dongle's current tune
+                # regardless: the operator asked for it by hand, so it also
+                # works while paused and on an overridden frequency (the
+                # file is named after the tune, see rec_name above).
+                should_record = (pass_active and not override and not rec_paused) or manual_rec
                 if should_record and not entry['is_recording']:
-                    if now_ts >= wav_retry_at and open_wav(sat_now):
-                        record_sat = sat_now
+                    if now_ts >= wav_retry_at and open_wav(rec_name):
+                        record_name = rec_name
                 elif not should_record and entry['is_recording']:
                     close_wav()
 

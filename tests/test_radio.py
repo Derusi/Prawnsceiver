@@ -181,6 +181,36 @@ for p in wavs():
     with wave.open(p) as w: assert w.getnframes() > 0, p
 print(f"6 pass end: WAV closed, {len(wavs())} valid WAVs: {[os.path.basename(p) for p in wavs()]}")
 
+# 6b. manual recording (dashboard Record button): records the idle tune,
+# is named for the tune (never the idle satellite, so pass attribution
+# cannot pick it up), survives the global recording pause, and stops on
+# command
+with state.status_lock: state.manual_recording[DID] = True
+wait_for(lambda: entry['is_recording'] and state.is_recording, what='manual recording starts while idle')
+assert 'Manual_137.6200_MHz' in os.path.basename(entry['wav_path'] or ''), entry['wav_path']
+manual_wav = entry['wav_path']
+with state.status_lock: state.recordings_paused = True      # pause must not stop it
+time.sleep(0.5)
+assert entry['is_recording'], "manual recording must survive the global pause"
+with state.status_lock: state.recordings_paused = False
+with state.status_lock: state.manual_recording.pop(DID, None)
+wait_for(lambda: not entry['is_recording'] and state.current_wav_path is None, what='manual recording stops on command')
+with wave.open(manual_wav) as w: assert w.getnframes() > 0 and w.getframerate() == 48000
+print("6b manual record: starts while idle, named for the tune, survives pause, stops OK")
+
+# 6c. manual recording on a frequency override records the override band
+with state.status_lock:
+    state.manual_dongle_freq[DID] = 100000000
+    state.manual_recording[DID] = True
+expect_cmd(100000000)
+wait_for(lambda: 'Manual_100.0000_MHz' in os.path.basename(entry['wav_path'] or ''), what='manual recording on the override band')
+with state.status_lock:
+    state.manual_recording.pop(DID, None)
+    state.manual_dongle_freq.pop(DID, None)
+expect_cmd(137620000)
+wait_for(lambda: not entry['is_recording'], what='manual recording stops after the override is cleared')
+print("6c manual record on a frequency override: records the override band, stops OK")
+
 # 7. WAV open failure must not kill the receiver; retried later
 # (wave.open is monkeypatched to fail while the flag is set: a chmod'd
 # read-only RECORD_DIR only blocks the open on Linux, not on Windows)
@@ -227,9 +257,10 @@ print("9 unique names on fast re-split:", [n for n in names if 'NOAA_19' in n])
 # 10. remove_dongle stops the thread and clears the state
 did_b, _ = radio.add_dongle('127.0.0.1', PORT + 50)   # a second (unreachable) dongle
 assert did_b in state.sdrs
+with state.status_lock: state.manual_recording[DID] = True   # removal must clear it
 assert radio.remove_dongle(DID) is True
 wait_for(lambda: not t.is_alive(), secs=5, what='capture thread exits after remove')
-assert DID not in state.sdrs and DID not in state.manual_dongle_freq
+assert DID not in state.sdrs and DID not in state.manual_dongle_freq and DID not in state.manual_recording
 assert state.primary_dongle == did_b, "second dongle must be promoted to primary"
 assert radio.remove_dongle('nope:1') is False
 radio.remove_dongle(did_b)

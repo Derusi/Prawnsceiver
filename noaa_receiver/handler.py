@@ -44,6 +44,7 @@ def _dongle_list():
                 "signal": round(e["signal"], 2),
                 "connected": bool(e.get("connected")),
                 "recording": e["is_recording"],
+                "manual_recording": did in state.manual_recording,
                 "wav": os.path.basename(e["wav_path"]) if e["wav_path"] else None,
                 "correction_hz": e.get("correction", 0),
                 "correction_src": e.get("correction_src", "none"),
@@ -646,6 +647,43 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps({'success': True, 'from_mhz': start_mhz, 'to_mhz': end_mhz, 'step_khz': step_khz}).encode())
+        elif self.path.split('?')[0] == '/record_dongle':
+            # Manual recording (dashboard Record button on a dongle card):
+            # /record_dongle?d=<id> records this dongle's current tune to a
+            # WAV outside passes (named Manual_<freq>_MHz, so it is never
+            # attributed to a satellite pass); &stop=1 stops it again. An
+            # automatic pass recording is unaffected — the flag only adds.
+            query = parse_qs(urlparse(self.path).query)
+            dev = (query.get('d') or [''])[0]
+            entry = state.sdrs.get(dev)
+            if entry is None:
+                self.send_response(404)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Unknown dongle'}).encode())
+                return
+            if entry.get('ais'):
+                # The dedicated AIS dongle's capture thread does not record
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Dongle is dedicated to AIS'}).encode())
+                return
+            stop = (query.get('stop') or [''])[0].strip().lower() in ('1', 'true', 'on', 'yes')
+            with state.status_lock:
+                if stop:
+                    state.manual_recording.pop(dev, None)
+                else:
+                    state.manual_recording[dev] = True
+            if stop:
+                state.log_console(f"⏹ Manual recording stop requested (dongle {dev})")
+            else:
+                state.log_console(f"⏺ Manual recording requested (dongle {dev}) — records the current tune until stopped")
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': True, 'manual_recording': not stop}).encode())
         elif self.path.split('?')[0] == '/fit_bw':
             # Fit the recorded (demod) bandwidth of one dongle to the signal
             # currently on its tune: measures the live spectrum and sets the
