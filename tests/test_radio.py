@@ -99,7 +99,7 @@ assert did == DID and created, (did, created)
 did2, created2 = radio.add_dongle(HOST, PORT)      # idempotent
 assert did2 == DID and not created2
 assert state.primary_dongle == DID                  # first non-AIS dongle becomes primary
-assert json.load(open(radio.DONGLES_FILE)) == [{"host": HOST, "port": PORT}]
+assert json.load(open(radio.DONGLES_FILE)) == [{"host": HOST, "port": PORT, "ais": False}]
 print("dongle registry: validation, idempotency, primary, persistence OK")
 
 entry = state.sdrs[DID]
@@ -264,6 +264,7 @@ assert radio.set_dongle_ais('nope:1', True) is False    # unknown dongle
 with state.status_lock: state.manual_recording[DID] = True
 wait_for(lambda: entry['is_recording'], what='manual recording before the AIS switch')
 assert radio.set_dongle_ais(DID, True) is True
+assert json.load(open(radio.DONGLES_FILE))[0]["ais"] is True, "the AIS role must persist"
 wait_for(lambda: not t.is_alive(), secs=5, what='satellite thread exits after the AIS switch')
 assert entry['ais'] and not entry['is_recording']
 assert DID not in state.manual_recording, "the manual recording flag must be dropped with the role"
@@ -273,6 +274,7 @@ expect_cmd(AIS_CENTER_HZ)      # explicit 162 MHz tune on connect
 wait_for(lambda: entry['last_data'] > time.time() - 2 and set(state.ais_channels) == {'A', 'B'},
          what='AIS capture streaming both channels')
 assert radio.set_dongle_ais(DID, False) is True
+assert json.load(open(radio.DONGLES_FILE))[0]["ais"] is False
 wait_for(lambda: not t.is_alive(), secs=5, what='AIS thread exits after the switch back')
 assert not state.ais_enabled and state.ais_dongle is None
 t = threading.Thread(target=radio.sdr_capture_thread, args=(DID,), daemon=True); t.start()

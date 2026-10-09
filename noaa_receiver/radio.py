@@ -155,7 +155,8 @@ def _persist_dongles():
     try:
         os.makedirs(os.path.dirname(DONGLES_FILE), exist_ok=True)
         with open(DONGLES_FILE, 'w', encoding='utf-8') as f:
-            json.dump([{'host': e['host'], 'port': e['port']}
+            json.dump([{'host': e['host'], 'port': e['port'],
+                        'ais': bool(e.get('ais'))}
                        for e in state.sdrs.values()], f, indent=1)
     except OSError as e:
         state.log_console(f"Cannot persist dongle list to {DONGLES_FILE}: {e}", "warn")
@@ -286,6 +287,7 @@ def set_dongle_ais(did, on):
         state.log_console(f"🚢 Dongle {did} switched to AIS (161.975/162.025 MHz) — satellite reception on it paused")
     else:
         state.log_console(f"🛰 Dongle {did} switched back to satellite tracking")
+    _persist_dongles()
     sock = entry.get('sock')
     if sock is not None:
         try:
@@ -302,16 +304,25 @@ def load_dongles():
     try:
         with open(DONGLES_FILE, encoding='utf-8') as f:
             entries = json.load(f)
-        entries = [(e['host'], int(e['port'])) for e in entries]
+        entries = [(e['host'], int(e['port']), bool(e.get('ais')))
+                   for e in entries]
     except (OSError, ValueError, KeyError, TypeError):
         pass
     if not entries:
-        entries = list(DEFAULT_DONGLES)
-    for host, port in entries:
+        entries = [(h, p, False) for h, p in DEFAULT_DONGLES]
+    for host, port, was_ais in entries:
         try:
-            add_dongle(host, port)
+            did, _ = add_dongle(host, port)
         except ValueError as e:
             state.log_console(f"Skipping persisted dongle {host}:{port}: {e}", "warn")
+            continue
+        if was_ais:
+            # the AIS switch is persisted too — a restart must not silently
+            # put a dongle the operator dedicated to ship traffic back on
+            # the satellites (capture threads have not started yet)
+            with state.status_lock:
+                state.sdrs[did]['ais'] = True
+            state.log_console(f"Dongle {did} restored to AIS (ship traffic) — persisted role")
     _persist_dongles()
 
 def sdr_thread():
