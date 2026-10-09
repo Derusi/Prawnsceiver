@@ -45,6 +45,14 @@ tr.cls-BASE td:first-child, tr.cls-ATON td:first-child, tr.cls-SAR td:first-chil
 .shipIcon .lbl { position: absolute; top: 26px; left: 50%; transform: translateX(-50%); white-space: nowrap; font: 10px monospace; color: #e0e0e0; text-shadow: 0 1px 2px #000, 0 0 2px #000; pointer-events: none; }
 .shipIcon.stale, .shipIcon.stale .lbl { opacity: 0.55; }
 .shipIcon.stale .lbl { font-style: italic; }
+#regwrap { margin: 16px 0 14px; }
+#regwrap h2 { font-size: 1.05em; color: #53d769; margin-bottom: 6px; font-weight: normal; }
+#regwrap h2 .cnt { color: #4da6ff; }
+#regwrap details { color: #4da6ff; }
+#regwrap summary { cursor: pointer; color: #4da6ff; }
+#regwrap summary:hover { text-decoration: underline; }
+#regwrap .regmsgs { margin: 4px 0 2px 12px; width: auto; }
+#regwrap .regmsgs td { font-size: 0.8em; }
 </style>
 </head>
 <body>
@@ -70,6 +78,16 @@ tr.cls-BASE td:first-child, tr.cls-ATON td:first-child, tr.cls-SAR td:first-chil
     </div>
     <div id="map"></div>
 </div>
+<div id="regwrap">
+    <h2>&#128218; Ship registry — <span class="cnt" id="regcount">&hellip;</span> ships ever received, with their last 10 messages</h2>
+    <table>
+    <thead><tr>
+        <th>name</th><th>MMSI</th><th>class</th><th>first seen</th>
+        <th>last seen</th><th>total msgs</th><th>message history</th>
+    </tr></thead>
+    <tbody id="regrows"><tr><td colspan="7" class="muted">Loading ship registry…</td></tr></tbody>
+    </table>
+</div>
 <table>
 <thead><tr>
     <th>time</th><th>ch</th><th>type</th><th>MMSI</th><th>name</th>
@@ -92,6 +110,57 @@ function fmtTime(ts) {
     return new Date(ts * 1000).toLocaleTimeString([], { hour12: false });
 }
 function cell(v, cls, dash) { return '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + (v === null || v === undefined ? '<span class="na">' + (dash || '—') + '</span>' : v) + '</td>'; }
+
+// ---------- persistent ship registry (all ships ever received) ----------
+const regOpen = new Set();       // MMSIs whose message history is expanded
+function fmtDateTime(ts) {
+    const d = new Date(ts * 1000);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour12: false });
+}
+async function loadRegistry() {
+    try {
+        const res = await fetch('/ais_ships.json');
+        const ships = await res.json();
+        document.getElementById('regcount').textContent = ships.length;
+        const rows = document.getElementById('regrows');
+        if (!ships.length) {
+            rows.innerHTML = '<tr><td colspan="7" class="muted">No ships in the registry yet — it fills as ships come into range.</td></tr>';
+            return;
+        }
+        let html = '';
+        for (const s of ships) {
+            const recent = s.recent || [];
+            let msgs = '';
+            for (const e of recent.slice().reverse()) {   // newest first
+                const t = (e.ts !== undefined && e.ts !== null) ? fmtTime(e.ts) : e.time;
+                msgs += '<tr><td class="t">' + esc(t) + '</td>'
+                    + '<td class="ch">' + esc(e.ch) + '</td>'
+                    + '<td class="type">' + esc(e.msg + ' ' + (MSG_NAMES[e.msg] || '?')) + '</td>'
+                    + '<td class="nmea">' + esc(e.nmea || '') + '</td></tr>';
+            }
+            html += '<tr class="cls-' + esc(s.cls || '') + '">'
+                + '<td class="name">' + esc(s.name || '(unnamed)') + '</td>'
+                + '<td class="mmsi">' + esc(s.mmsi) + '</td>'
+                + '<td class="type">' + esc(s.cls || '') + '</td>'
+                + '<td class="t">' + (s.first_seen ? fmtDateTime(s.first_seen) : '—') + '</td>'
+                + '<td class="t">' + (s.last_seen ? fmtDateTime(s.last_seen) : '—') + '</td>'
+                + '<td>' + (s.msgs || 0) + '</td>'
+                + '<td><details' + (regOpen.has(s.mmsi) ? ' open' : '')
+                + ' ontoggle="regToggle(' + esc(s.mmsi) + ', this.open)">'
+                + '<summary>' + recent.length + ' messages (last 10)</summary>'
+                + '<table class="regmsgs"><tbody>' + msgs + '</tbody></table>'
+                + '</details></td></tr>';
+        }
+        rows.innerHTML = html;
+    } catch (err) {
+        console.error('Ship registry load failed:', err);
+    }
+}
+function regToggle(mmsi, open) {
+    if (open) regOpen.add(mmsi); else regOpen.delete(mmsi);
+}
+setInterval(loadRegistry, 30000);
+loadRegistry();
 
 // ---------- live ship map (Leaflet + OpenStreetMap tiles) ----------
 // Ships are placed by their latest position report and rotated by their

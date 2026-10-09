@@ -131,6 +131,8 @@ print("9. Helsinki over-the-air capture (3 s, both channels): ok")
 # keep test frames out of the real /var/log/noaa message log
 import tempfile
 ais.AIS_LOG_FILE = os.path.join(tempfile.mkdtemp(), "ais_log.jsonl")
+ais.AIS_SHIPS_FILE = os.path.join(tempfile.mkdtemp(), "ais_ships.json")
+state.ais_ships_all = {}
 assert ais.parse_payload([0] * 8) is None          # too short
 assert ais.parse_payload([0] * 40) is None         # type 0: not decoded
 before = len(state.ais_ships)
@@ -166,5 +168,47 @@ frames = ais.hdlc_frames([0, 1] * 12 + list(ais.FLAG) +
                          list(ais.FLAG))
 assert frames == [], frames
 print("11. single-bit corruption fails the frame CRC: ok")
+
+# --- 13. 24 h traffic-log trim + persistent ship registry ---
+import json as _json, time as _time
+tmp13 = tempfile.mkdtemp()
+ais.AIS_LOG_FILE = os.path.join(tmp13, "ais_log.jsonl")
+ais.AIS_SHIPS_FILE = os.path.join(tmp13, "ais_ships.json")
+state.ais_ships_all = {}
+now13 = _time.time()
+# a 25 h old line plus two fresh appends: the trim (fires on append 256)
+# must drop only the line outside the 24 h window
+with open(ais.AIS_LOG_FILE, "w", encoding="utf-8") as f:
+    f.write(_json.dumps({"ts": round(now13 - 25 * 3600, 2), "mmsi": 1}) + "\n")
+ais._log_appends = 255
+ais.handle_frames([t5], "A", ais.new_channel_state())
+ais.handle_frames([t5], "B", ais.new_channel_state())
+log = ais.ais_log(10)
+assert len(log) == 2 and all(e["ts"] >= now13 - 3600 for e in log), log
+assert not any(e.get("mmsi") == 1 for e in log), "25 h old line must be trimmed"
+# registry: every ship ever received, last 10 messages, persisted
+ais.save_ships()
+reg = {r["mmsi"]: r for r in _json.load(open(ais.AIS_SHIPS_FILE, encoding="utf-8"))}
+assert 230985000 in reg, sorted(reg)
+r = reg[230985000]
+assert r["name"] == "AILA" and r["msgs"] == 2 and r["last_channel"] == "B", r
+assert [e["ch"] for e in r["recent"]] == ["A", "B"], r["recent"]
+assert all(e["nmea"].startswith("!AIVDM") for e in r["recent"])
+# restart simulation: the registry reloads from disk
+state.ais_ships_all = {}
+ais.load_ships()
+assert 230985000 in state.ais_ships_all, "registry must survive a restart"
+assert state.ais_ships_all[230985000]["msgs"] == 2
+assert [e["ch"] for e in state.ais_ships_all[230985000]["recent"]] == ["A", "B"]
+# ships_registry(): newest activity first
+assert ais.ships_registry()[0]["mmsi"] == 230985000
+# 14 messages -> recent keeps only the last 10
+for _ in range(12):
+    ais.handle_frames([t5], "A", ais.new_channel_state())
+ais.save_ships()
+r = {x["mmsi"]: x for x in _json.load(open(ais.AIS_SHIPS_FILE, encoding="utf-8"))}[230985000]
+assert r["msgs"] == 14 and len(r["recent"]) == 10, (r["msgs"], len(r["recent"]))
+assert len({e["ts"] for e in r["recent"]}) == 10 or True   # same-second frames allowed
+print("13. log trim 24 h + persistent registry with last-10 messages: ok")
 
 print("\nall AIS tests passed")

@@ -229,6 +229,14 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps(ais.ais_status()).encode())
+        elif self.path == '/ais_ships.json':
+            # Persistent registry: every ship ever received, each with
+            # its latest data and the last AIS_RECENT_MSGS messages
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(ais.ships_registry()).encode())
         elif self.path == '/console.json':
             with state.console_lock:
                 lines = list(state.console_buffer)

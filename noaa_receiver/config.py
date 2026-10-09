@@ -119,6 +119,14 @@ AIS_CHANNEL_HZ = (161975000, 162025000)
 # Ships stay on the traffic table / map for a full hour after their
 # last transmission (map fades ships not heard for 10+ min)
 AIS_SHIP_TTL_SECS = 3600
-# Persistent per-frame message log for the AIS tracking page
-# (jsonl, bounded to ~4 MB in ais.py)
+# Persistent per-frame message log for the AIS tracking page (jsonl):
+# always keeps the last AIS_LOG_KEEP_HOURS of decoded frames (trimmed
+# in ais.py, atomically)
 AIS_LOG_FILE = os.path.join(LOGDIR, "ais_log.jsonl")
+AIS_LOG_KEEP_HOURS = 24
+# Persistent registry of EVERY ship ever received (one JSON file), each
+# with its latest data plus the last AIS_RECENT_MSGS decoded messages.
+# Rewritten at most every AIS_SHIPS_SAVE_SECS (see ais.py).
+AIS_SHIPS_FILE = os.path.join(LOGDIR, "ais_ships_persist.json")
+AIS_RECENT_MSGS = 10
+AIS_SHIPS_SAVE_SECS = 60

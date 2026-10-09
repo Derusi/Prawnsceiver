@@ -116,6 +116,10 @@ status_lock = threading.Lock()
 # position, speed, course, ... last_seen); ais_nmea keeps the most recent
 # raw !AIVDM sentences for the dashboard's raw feed.
 ais_ships = {}
+# Every ship EVER received (persistent across restarts, saved to
+# AIS_SHIPS_FILE by ais.py; each entry carries the last
+# AIS_RECENT_MSGS decoded messages in "recent"). Never pruned.
+ais_ships_all = {}
 ais_lock = threading.Lock()
 ais_nmea = deque(maxlen=60)
 ais_channels = {}    # 'A'/'B' -> per-channel stats (frames, bad, floor)
