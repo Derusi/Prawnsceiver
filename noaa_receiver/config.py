@@ -116,8 +116,9 @@ DOPPLER_UPDATE_SECS = 10  # scheduler tick cadence; steps stay < ~1 kHz on ISS
 # and is excluded from satellite tracking.
 AIS_CENTER_HZ = 162000000
 AIS_CHANNEL_HZ = (161975000, 162025000)
-# Ships drop off the traffic table after 30 min without a transmission
-AIS_SHIP_TTL_SECS = 1800
+# Ships stay on the traffic table / map for a full hour after their
+# last transmission (map fades ships not heard for 10+ min)
+AIS_SHIP_TTL_SECS = 3600
 # Persistent per-frame message log for the AIS tracking page
 # (jsonl, bounded to ~4 MB in ais.py)
 AIS_LOG_FILE = os.path.join(LOGDIR, "ais_log.jsonl")
