@@ -20,13 +20,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 import noaa_receiver.radio as _radio
 for _n in ("AIS_DONGLE", "FM_BAND", "PRIMARY_DONGLE", "DEFAULT_DONGLES",
             "SDR_DONGLE_GAIN", "correction_info", "tuning_correction",
-            "add_dongle", "remove_dongle", "sdr_thread"):
+            "add_dongle", "remove_dongle", "sdr_thread", "set_dongle_ais"):
     assert hasattr(_radio, _n), f"radio.py is missing {_n} — check the calibration/config imports"
 print("radio namespace guard: ok")
 import numpy as np
 from collections import deque
 from noaa_receiver import radio, state
-from noaa_receiver.config import SDR_OFFSET_HZ, WATERFALL_ROWS
+from noaa_receiver.config import AIS_CENTER_HZ, SDR_OFFSET_HZ, WATERFALL_ROWS
 from noaa_receiver.calibration import tuning_correction
 
 tmp = tempfile.mkdtemp(prefix='prawn_')
@@ -132,7 +132,8 @@ def wavs(): return sorted(glob.glob(os.path.join(radio.RECORD_DIR, '*.wav')))
 # 1. idle streaming
 wait_for(lambda: entry['last_data'] > 0 and len(entry['waterfall']) > 3, what='IQ flowing')
 wait_for(lambda: entry['la']['total'] > 10, what='live audio')
-assert entry['connected'] and not entry['is_recording'] and not commands
+assert entry['connected'] and not entry['is_recording']
+expect_cmd(137620000)   # explicit tune on connect (fresh daemons park at 137.68 MHz)
 assert last_doppler['d'] == 0
 print("1 idle: streaming, waterfall rows, live audio, no retune OK")
 
@@ -253,6 +254,32 @@ wait_for(lambda: not entry['is_recording'], what='end')
 names = [os.path.basename(p) for p in wavs()]
 assert len(names) == len(set(names)) and len([n for n in names if n.startswith('NOAA_19_')]) >= 3, names
 print("9 unique names on fast re-split:", [n for n in names if 'NOAA_19' in n])
+
+# 9b. AIS switch (dashboard button): the capture thread role flips — the
+# satellite thread exits, the AIS thread tunes 162 MHz and marks the
+# receiver enabled; a pending manual recording is dropped with the role;
+# switching back restarts satellite capture on the shared frequency.
+from noaa_receiver import ais as _ais
+assert radio.set_dongle_ais('nope:1', True) is False    # unknown dongle
+with state.status_lock: state.manual_recording[DID] = True
+wait_for(lambda: entry['is_recording'], what='manual recording before the AIS switch')
+assert radio.set_dongle_ais(DID, True) is True
+wait_for(lambda: not t.is_alive(), secs=5, what='satellite thread exits after the AIS switch')
+assert entry['ais'] and not entry['is_recording']
+assert DID not in state.manual_recording, "the manual recording flag must be dropped with the role"
+t = threading.Thread(target=_ais.ais_capture_thread, args=(DID,), daemon=True); t.start()
+wait_for(lambda: state.ais_enabled and state.ais_dongle == DID, what='AIS thread marks the receiver enabled')
+expect_cmd(AIS_CENTER_HZ)      # explicit 162 MHz tune on connect
+wait_for(lambda: entry['last_data'] > time.time() - 2 and set(state.ais_channels) == {'A', 'B'},
+         what='AIS capture streaming both channels')
+assert radio.set_dongle_ais(DID, False) is True
+wait_for(lambda: not t.is_alive(), secs=5, what='AIS thread exits after the switch back')
+assert not state.ais_enabled and state.ais_dongle is None
+t = threading.Thread(target=radio.sdr_capture_thread, args=(DID,), daemon=True); t.start()
+entry['last_data'] = 0   # don't be fooled by the AIS thread's last stamp
+wait_for(lambda: entry['last_data'] > 0 and not entry['ais'], what='satellite capture streaming again')
+expect_cmd(137620000)         # back on the shared idle frequency
+print("9b AIS toggle: role flip both ways, 162 MHz tune, recording flag dropped OK")
 
 # 10. remove_dongle stops the thread and clears the state
 did_b, _ = radio.add_dongle('127.0.0.1', PORT + 50)   # a second (unreachable) dongle

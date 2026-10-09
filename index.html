@@ -1063,6 +1063,31 @@
             return lastSharedMHz;
         }
 
+        // AIS mode re-shapes a dongle card at runtime (the mode is
+        // toggled from the card's own button, so both shapes must be
+        // reachable after the card was built): the satellite-only
+        // controls (tuning, bandwidth, scan, record, live audio — the
+        // AIS capture thread feeds none of them) hide, the mode button
+        // flips its label, and a live-audio stream of this dongle is
+        // dropped (the AIS thread never feeds the audio ring).
+        function applyDongleAisMode(c, ais) {
+            const sat = ais ? 'none' : '';
+            c.tuneRow.style.display = sat;
+            c.nudgeRow.style.display = sat;
+            c.bwRow.style.display = sat;
+            c.scanRow.style.display = sat;
+            c.scanRow2.style.display = sat;
+            c.recBtn.style.display = sat;
+            c.listenBtn.style.display = sat;
+            const txt = ais ? '🛰 Back to satellites' : '🚢 Listen for AIS ships';
+            if (c.aisBtn._last !== txt) { c.aisBtn._last = txt; c.aisBtn.textContent = txt; }
+            c.aisBtn.style.background = ais ? '#1a3a2e' : '#0f3460';
+            c.aisBtn.style.color = ais ? '#53d769' : '#4da6ff';
+            c.aisBtn.style.borderColor = ais ? '#53d769' : '#4da6ff';
+            c.aisLast = ais;
+            if (ais && liveAudioOn === c.lastD.id) toggleLiveAudio(c.lastD.id);
+        }
+
         function ensureDongleCard(d) {
             let c = dongleCards[d.id];
             if (c) return c;
@@ -1343,26 +1368,35 @@ card.appendChild(scanRow); card.appendChild(scanRow2);
             removeBtn.textContent = '\u2715 Remove dongle';
             removeBtn.title = 'Unregister this rtl_tcp dongle from the receiver';
             removeBtn.onclick = () => removeDongle(d.id);
-            card.appendChild(info); card.appendChild(listenBtn); card.appendChild(removeBtn);
+            // AIS toggle: dedicates this dongle to the marine AIS channels
+            // and back (the single-dongle way to listen for ships) — the
+            // capture thread restarts in the new role server-side
+            const aisBtn = document.createElement('button');
+            aisBtn.style.cssText = 'width:100%;margin-top:4px;padding:3px 10px;background:#0f3460;color:#4da6ff;border:1px solid #4da6ff;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.85em;';
+            aisBtn.title = 'Tune this dongle to the marine AIS channels (161.975/162.025 MHz) and decode Danube ship traffic — satellite reception on it pauses until you switch back';
+            aisBtn.onclick = () => {
+                const on = !(c.lastD && c.lastD.ais);
+                fetch('/ais_dongle?d=' + encodeURIComponent(d.id) + '&on=' + (on ? 1 : 0))
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            toast(on ? '🚢 Switching this dongle to AIS — ship traffic on 161.975/162.025 MHz'
+                                     : '🛰 Dongle back to satellite tracking');
+                        } else {
+                            toast('AIS switch failed: ' + (data.error || 'unknown error'), true);
+                        }
+                    })
+                    .catch(() => toast('AIS switch failed: receiver unreachable', true));
+            };
+            card.appendChild(info); card.appendChild(listenBtn); card.appendChild(aisBtn); card.appendChild(removeBtn);
             col.appendChild(card);
             c = dongleCards[d.id] = {
                 cardEl: card,
                 sigVal, sigFill, tlCtx: tl.getContext('2d'),
-                hist: [], recLed, recTxt, recBtn, info, listenBtn, dinput, lastD: d, lastHistTs: 0,
+                hist: [], recLed, recTxt, recBtn, info, listenBtn, aisBtn, dinput, lastD: d, lastHistTs: 0,
 bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn, scanTxt,
             };
-            // The dedicated AIS dongle is pinned to 162 MHz and rejected by
-            // /tune_dongle — tuning controls and live audio (never fed by
-            // the AIS thread) are hidden on its card
-            if (d.ais) {
-                tuneRow.style.display = 'none';
-                nudgeRow.style.display = 'none';
-                bwRow.style.display = 'none';
-                scanRow.style.display = 'none';
-                scanRow2.style.display = 'none';
-                recBtn.style.display = 'none';
-                listenBtn.style.display = 'none';
-            }
+            applyDongleAisMode(c, !!d.ais);
             return c;
         }
 
@@ -1394,6 +1428,8 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn,
 
         function updateDongleCard(d) {
             const c = ensureDongleCard(d);
+            // mode flips arrive through dongles.json (ais flag)
+            if (c.aisLast !== !!d.ais) applyDongleAisMode(c, !!d.ais);
             c.sigVal.textContent = d.signal ? d.signal.toFixed(1) : '—';
             // Signal metric: ~150 = silence floor, 800+ = strong APT carrier
             // with auto-gain — map that range onto the bar so idle noise

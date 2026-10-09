@@ -20,7 +20,7 @@ from .thumbs import THUMB_SUFFIX, ensure_thumb
 from .passes import HAS_SKYFIELD, load, passes_to_json, wgs84
 from .satnogs import satellite_info
 from .quality import estimate_quality
-from .radio import add_dongle, remove_dongle
+from .radio import add_dongle, remove_dongle, set_dongle_ais
 
 def _dongle_list():
     """Dongle descriptors for status/dongles.json: primary first, then stable
@@ -354,6 +354,29 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps({'success': removed}).encode())
+        elif self.path.split('?')[0] == '/ais_dongle':
+            # Switch one dongle between satellite tracking and AIS ship
+            # traffic (dashboard button on the dongle card — with a single
+            # dongle this is how it listens for AIS): /ais_dongle?d=<id>&on=1
+            # dedicates it to 161.975/162.025 MHz, on=0 returns it to the
+            # satellites. The capture thread restarts in the new role.
+            query = parse_qs(urlparse(self.path).query)
+            dev = (query.get('d') or [''])[0].strip()
+            on = (query.get('on') or [''])[0].strip().lower() not in ('', '0', 'false', 'off', 'no')
+            entry = state.sdrs.get(dev)
+            if entry is None:
+                self.send_response(404)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Unknown dongle'}).encode())
+                return
+            set_dongle_ais(dev, on)
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': True, 'ais': bool(entry.get('ais'))}).encode())
         elif self.path.split('?')[0] == '/tune':
             # Manual tune (dongle reception test, e.g. FM broadcast radio):
             # /tune?f=89.7 parks the dongle on a frequency and pauses the

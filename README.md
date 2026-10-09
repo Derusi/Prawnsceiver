@@ -25,11 +25,13 @@ Live at: https://prawnceiver.derusi.de
 - 📚 Pass history — every pass and recording is kept in a browsable history
   with decoded images
 - 🦀 Crabs caught — every successfully decoded satellite image counts as a crab
-- 🚢 AIS ship traffic — a dedicated dongle decodes Danube vessels on
+- 🚢 AIS ship traffic — the dongle decodes Danube vessels on
   the marine AIS channels (161.975/162.025 MHz, GMSK 9600 baud) in software:
   name, position, speed and course of every ship within VHF range show up
-  live on the dashboard (`AIS_DONGLE` in calibration.py pins the dongle's
-  rtl_tcp address; none of the satellite work is affected)
+  live on the dashboard. Any dongle can be switched to AIS and back from
+  its own dashboard card (`🚢 Listen for AIS ships`) — with a single dongle
+  the satellites pause while it listens for ships; a second dongle pinned
+  via `AIS_DONGLE` in calibration.py keeps both running at the same time
 - 🖥️ Network dongles — the SDR dongles are decoupled from the
   receiver: each dongle is served by an `rtl_tcp` daemon on the machine it
   is plugged into, the receiver connects over the network, and dongles

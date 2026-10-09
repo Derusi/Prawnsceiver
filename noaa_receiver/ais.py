@@ -597,13 +597,23 @@ def ais_capture_thread(did):
     """
     from .dsp import iq_to_complex, frequency_shift
     from .radio import (_IQReader, _get_fft_window, _rtl_tcp_connect,
-                        TUNER_NAMES)
+                        RTL_TCP_SET_FREQ, TUNER_NAMES, _rtl_tcp_set)
     from .config import FFT_SIZE, IQ_BLOCK
 
     entry = state.sdrs[did]
     channel_names = ["A", "B"]
     shifts = _ais_shifts()
     st = [new_channel_state() for _ in shifts]
+
+    def ais_reception_off():
+        """Clear the global AIS markers when this thread stops (dongle
+        removed, or AIS switched off from the dashboard and the satellite
+        capture thread takes over): /ais.json then reports the receiver
+        as disabled. The ship table and message log are kept."""
+        with state.ais_lock:
+            state.ais_enabled = False
+            state.ais_dongle = None
+
     with state.ais_lock:
         state.ais_enabled = True
         state.ais_dongle = did
@@ -613,7 +623,8 @@ def ais_capture_thread(did):
     restart_backoff = 5.0
     block_count = 0
     while True:
-        if entry.get("closed"):
+        if entry.get("closed") or not entry.get("ais"):
+            ais_reception_off()
             return
         run_started = time.time()
         sock = None
@@ -625,6 +636,12 @@ def ais_capture_thread(did):
             entry["correction"], entry["correction_src"] = correction_info(AIS_CENTER_HZ, did)
             gain_db = SDR_DONGLE_GAIN.get(did, SDR_GAIN)
             sock, tuner_type, _gain_count = _rtl_tcp_connect(entry["host"], entry["port"], gain_db)
+            # Explicit tune on every connect: rtl_tcp serves whatever
+            # frequency its daemon last held (the startup script parks
+            # new daemons on 137.68 MHz) — and with the dashboard AIS
+            # button one dongle alternates between the roles, so its
+            # daemon can be on a satellite frequency right now
+            _rtl_tcp_set(sock, RTL_TCP_SET_FREQ, tune)
             entry["sock"] = sock
             entry["connected"] = True
             entry["tuner"] = TUNER_NAMES.get(tuner_type, f"rtl_tcp type {tuner_type}")
@@ -633,6 +650,10 @@ def ais_capture_thread(did):
                                f"(offset +{SDR_OFFSET_HZ + correction}Hz, correction {correction:+d}Hz)")
             reader = _IQReader(sock, IQ_BLOCK)
             while True:
+                # see sdr_capture_thread: catch a remove/role-switch
+                # that landed during the reconnect backoff
+                if entry.get("closed") or not entry.get("ais"):
+                    break
                 raw = reader.read_block()
                 if raw is None:
                     state.log_console(f"rtl_tcp stream ended (AIS dongle {did}), reconnecting...", "warn")
@@ -673,7 +694,7 @@ def ais_capture_thread(did):
                             "floor": round(ch_st["floor"] or 0.0, 2),
                         }
         except Exception as e:
-            if not entry.get("closed"):   # a removed dongle's socket is
+            if not entry.get("closed") and entry.get("ais"):   # a removed/AIS-switched dongle's socket is
                 state.log_console(f"AIS thread error (dongle {did}): {e}", "error")  # closed under the thread — not an error
         entry["connected"] = False
         entry["sock"] = None
@@ -682,7 +703,8 @@ def ais_capture_thread(did):
                 sock.close()
             except Exception:
                 pass
-        if entry.get("closed"):
+        if entry.get("closed") or not entry.get("ais"):
+            ais_reception_off()
             return
         if time.time() - run_started >= 30:
             restart_backoff = 5.0

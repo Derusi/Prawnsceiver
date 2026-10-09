@@ -256,6 +256,44 @@ def remove_dongle(did):
     _persist_dongles()
     return True
 
+def set_dongle_ais(did, on):
+    """Switch one dongle between satellite tracking and AIS reception
+    (dashboard button — with a single dongle this is how it listens for
+    ship traffic without a dedicated second receiver).
+
+    Flips the registry flag and closes the running capture thread's
+    socket under it: the thread leaves its read loop, notices the flag no
+    longer matches its role and exits; the supervisor loop (sdr_thread)
+    then starts the capture thread for the new role within ~2 s. The
+    dongle stays registered — its id, waterfall and card survive the
+    switch. Unknown id: False; a no-op request still succeeds.
+    """
+    entry = state.sdrs.get(did)
+    if entry is None:
+        return False
+    on = bool(on)
+    if bool(entry.get('ais')) == on:
+        return True
+    with state.status_lock:
+        entry['ais'] = on
+        if on:
+            # An AIS capture thread neither records nor demodulates FM —
+            # a manual recording left over from satellite mode would sit
+            # as a dangling flag and resume the moment the dongle is
+            # switched back, so it is dropped here instead
+            state.manual_recording.pop(did, None)
+    if on:
+        state.log_console(f"🚢 Dongle {did} switched to AIS (161.975/162.025 MHz) — satellite reception on it paused")
+    else:
+        state.log_console(f"🛰 Dongle {did} switched back to satellite tracking")
+    sock = entry.get('sock')
+    if sock is not None:
+        try:
+            sock.close()
+        except OSError:
+            pass
+    return True
+
 def load_dongles():
     """Register the startup dongle set: the persisted DONGLES_FILE when it
     exists, else calibration.DEFAULT_DONGLES (persisted right away, so
@@ -396,6 +434,11 @@ def sdr_capture_thread(did):
         if entry.get('closed'):
             close_wav()
             return
+        if entry.get('ais'):
+            # AIS was switched on from the dashboard after this thread
+            # started: hand the dongle over to the supervisor's AIS thread
+            close_wav()
+            return
         run_started = time.time()
         sock = None
         try:
@@ -411,6 +454,12 @@ def sdr_capture_thread(did):
             # gain steps like the R820T's 29.7 dB must go through the socket
             gain_db = SDR_DONGLE_GAIN.get(did, SDR_GAIN)
             sock, tuner_type, gain_count = _rtl_tcp_connect(entry['host'], entry['port'], gain_db)
+            # Explicit tune on connect: the rtl_tcp daemon serves
+            # whatever frequency it last held — normally this
+            # dongle's previous session (a plain reconnect), but
+            # after a role switch (dashboard AIS button) the AIS
+            # thread left it on the 162 MHz AIS band
+            _rtl_tcp_set(sock, RTL_TCP_SET_FREQ, tuned_freq + SDR_OFFSET_HZ + correction)
             entry['sock'] = sock
             entry['connected'] = True
             entry['tuner'] = TUNER_NAMES.get(tuner_type, f'rtl_tcp type {tuner_type}')
@@ -425,6 +474,12 @@ def sdr_capture_thread(did):
             reader = _IQReader(sock, IQ_BLOCK)
 
             while True:
+                # A remove/role-switch can land while this thread was
+                # in its reconnect backoff (the socket close missed it)
+                # — without this check the thread would reconnect as
+                # a ghost and hold the dongle forever
+                if entry.get('closed') or entry.get('ais'):
+                    break
                 raw = reader.read_block()
                 if entry['iq'] is not None:
                     try:
@@ -610,7 +665,7 @@ def sdr_capture_thread(did):
                             wav_retry_at = now_ts + WAV_RETRY_SECS
 
         except Exception as e:
-            if not entry.get('closed'):   # a removed dongle's socket is
+            if not entry.get('closed') and not entry.get('ais'):   # a removed/AIS-switched dongle's socket is
                 state.log_console(f"SDR thread error (dongle {did}): {e}", "error")  # closed under the thread — not an error
         entry['connected'] = False
         entry['sock'] = None
@@ -618,7 +673,7 @@ def sdr_capture_thread(did):
             try: sock.close()
             except Exception: pass
         close_wav()
-        if entry.get('closed'):
+        if entry.get('closed') or entry.get('ais'):
             return
         # Backoff when the rtl_tcp server stays unreachable (daemon down,
         # host off, network drop): 5 s doubling up to 60 s; reset after a
