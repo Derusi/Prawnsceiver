@@ -25,11 +25,15 @@ Live at: https://prawnceiver.derusi.de
 - 📚 Pass history — every pass and recording is kept in a browsable history
   with decoded images
 - 🦀 Crabs caught — every successfully decoded satellite image counts as a crab
-- 🚢 AIS ship traffic — a dedicated dongle decodes Danube vessels on the
-  marine AIS channels (161.975/162.025 MHz, GMSK 9600 baud) in software:
+- 🚢 AIS ship traffic — a dedicated dongle decodes Danube vessels on
+  the marine AIS channels (161.975/162.025 MHz, GMSK 9600 baud) in software:
   name, position, speed and course of every ship within VHF range show up
-  live on the dashboard (`AIS_DONGLE_SN` in calibration.py pins the dongle;
-  none of the satellite work is affected)
+  live on the dashboard (`AIS_DONGLE` in calibration.py pins the dongle's
+  rtl_tcp address; none of the satellite work is affected)
+- 🖥️ Network dongles — the SDR dongles are decoupled from the
+  receiver: each dongle is served by an `rtl_tcp` daemon on the machine it
+  is plugged into, the receiver connects over the network, and dongles
+  are added/removed at runtime from the dashboard by IP address + port
 
 
 ## Hardware
@@ -43,8 +47,9 @@ Live at: https://prawnceiver.derusi.de
 
 ## Software Stack
 
-- rtl_sdr — raw IQ capture from the dongle (offset-tuned +60 kHz to dodge the
-  center DC spike)
+- rtl_tcp — one daemon per dongle, running on the machine the dongle is
+  plugged into: raw IQ stream + tuning commands over TCP, offset-tuned
+  +60 kHz to dodge the center DC spike
 - Python 3 + NumPy — FFT waterfall and software FM demodulation
 - Skyfield — TLE-based pass prediction (TLEs refreshed from SatNOGS with a
   Celestrak fallback every 3 h, plus a local cache)
@@ -56,17 +61,24 @@ Live at: https://prawnceiver.derusi.de
 
 ## Architecture
 
-Everything runs in a single Python process (`server_noaa.py` → the
+The dongles are decoupled from the receiver: each one is served by an
+`rtl_tcp` daemon on the machine it is plugged into (see Setup below), and
+the receiver is just a network client. Dongles are identified by their
+`host:port` address and can be added and removed at runtime from the
+dashboard (persisted across restarts in `dongles.json`).
+
+The receiver itself runs in a single Python process (`server_noaa.py` → the
 `noaa_receiver/` package) with three threads:
 
 - `scheduler_thread` — TLE refresh + pass prediction + frequency switching
-- `sdr_thread` — rtl_sdr IQ capture → FFT waterfall + FM demodulated audio
+- `sdr_thread` — one capture thread per dongle: rtl_tcp IQ stream → FFT
+  waterfall + FM demodulated audio (retunes in-band while streaming)
 - HTTP server — dashboard, JSON API, recordings, decode/delete endpoints
 
 ```
-rtl_sdr ──IQ──▶ FFT ──▶ /waterfall.json ──▶ live waterfall
-   │
-   └──────────▶ FM demod ──▶ live audio + WAV recording ──▶ noaa-apt ──▶ weather PNG
+rtl_tcp (dongle host) ──TCP IQ──▶ capture thread ──▶ FFT ──▶ live waterfall
+                                        │
+                                        └─▶ FM demod ──▶ live audio + WAV recording ──▶ noaa-apt ──▶ weather PNG
 ```
 
 The scheduler tunes the dongle to the next satellite 60 s before each pass
@@ -93,12 +105,33 @@ python3 server_noaa.py
 
 Then open http://your-pi:8085 in your browser.
 
-For unattended operation, start it at boot (this is how the Pi is set up):
+### Dongle host: rtl_tcp daemons
+
+The dongles live on a separate machine (a Raspberry Pi in this station).
+Install the RTL tools, keep the kernel from claiming the dongles for DVB-T,
+and run one persistent `rtl_tcp` per dongle, bound to the LAN:
+
+```bash
+sudo apt install rtl-sdr
+echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf
+
+# ~/rtl_tcp_daemon.sh: map each dongle serial to a port (see the repo's
+# dongle-host/rtl_tcp_daemon.sh for the template), then:
+# ~/.config/systemd/user/rtl-tcp@.service runs it with Restart=always.
+systemctl --user enable --now rtl-tcp@48263793          # serial → port 1234
+loginctl enable-linger                                   # start at boot
+```
+
+The receiver picks dongles up by address: open the dashboard and use
+the **Add** field under "SDR Dongles (rtl_tcp)" (IP + port), or start
+with a default list in `calibration.py` (`DEFAULT_DONGLES`).
+
+For unattended operation, start the receiver at boot:
 
 ```bash
 crontab -e
 # add:
-@reboot /home/eugene/noaa_receiver.sh
+@reboot /path/to/noaa_receiver.sh
 ```
 
 Put nginx with a proxy_pass to 127.0.0.1:8085 in front for HTTPS.

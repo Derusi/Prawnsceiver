@@ -244,8 +244,14 @@
                 <div class="status-value" id="uptime">—</div>
             </div>
             <div class="status-item">
-                <div class="status-label">RTL-SDR Log</div>
-                <div class="status-value" id="rtl-log" style="font-size:0.8em;max-height:100px;overflow-y:auto;">—</div>
+                <div class="status-label">SDR Dongles (rtl_tcp)</div>
+                <div class="status-value" id="dongle-status" style="font-size:0.8em;">—</div>
+                <div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap;">
+                    <input id="add-dongle-host" type="text" placeholder="192.168.3.245" class="num-input" style="flex:1;min-width:0;">
+                    <input id="add-dongle-port" type="number" placeholder="1234" min="1" max="65535" class="num-input" style="width:70px;">
+                    <button class="btn-solid" onclick="addDongle()">➕ Add</button>
+                </div>
+                <div style="font-size:0.75em;color:#888;margin-top:3px;">Dongles are rtl_tcp servers (IP + port): run one rtl_tcp daemon per dongle on the machine it is plugged into.</div>
                 <div style="font-size:0.85em;margin-top:4px;"><a href="/console" target="_blank" style="color:#53d769;">Full debug console →</a></div>
             </div>
             <div class="status-item">
@@ -276,8 +282,9 @@
         let tleSyncWasActive = false;
         const WF_WIDTH = 512, WF_HEIGHT = 300, SPEC_HEIGHT = 25;
         // One waterfall block per dongle, built dynamically from /dongles.json.
-        // Blocks are keyed by dongle SERIAL (id) — USB indices shift on
-        // replug. The primary dongle (live audio, recording) carries the
+        // Blocks are keyed by dongle id ("host:port" of its rtl_tcp
+        // server; dongles are added/removed at runtime via /add_dongle).
+        // The primary dongle (live audio, recording) carries the
         // recording-band highlight (wf-highlight) and a ★ badge.
         const wfBlocks = {};   // dongle serial -> {wfCtx, specCtx, overlay, title, led, sig}
 
@@ -450,10 +457,10 @@
             const idx = meta.id;
             let b = wfBlocks[idx];
             if (b) {
-                b.title.textContent = `Dongle ${meta.index}${meta.primary ? ' ★' : ''} — ${meta.label} (${meta.tuner}, SN ${meta.serial})`
+                b.title.textContent = `Dongle ${meta.index}${meta.primary ? ' ★' : ''} — ${meta.label} (${meta.tuner})`
                     + (meta.ais ? ' — 🚢 AIS 161.975/162.025 MHz (Danube ships)'
                         : (meta.manual_frequency_mhz ? ` — ${meta.manual_frequency_mhz.toFixed(4)} MHz` : ''));
-                b.led.className = 'indicator ' + (meta.running ? 'green' : 'red');
+                b.led.className = 'indicator ' + (meta.connected ? 'green' : 'red');
                 b.sig.textContent = 'signal ' + (meta.signal ? meta.signal.toFixed(1) : '—');
                 return b;
             }
@@ -762,6 +769,32 @@
             wrap.title = 'Click to tune this dongle; drag to set frequency (center) and recorded bandwidth (width)';
         }
 
+        async function addDongle() {
+            const host = document.getElementById('add-dongle-host').value.trim();
+            const port = document.getElementById('add-dongle-port').value.trim();
+            if (!host || !port) { toast('Enter the rtl_tcp server IP and port (e.g. 192.168.3.245:1234)', true); return; }
+            try {
+                const res = await fetch('/add_dongle?host=' + encodeURIComponent(host) + '&port=' + encodeURIComponent(port));
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('add-dongle-host').value = '';
+                    document.getElementById('add-dongle-port').value = '';
+                    toast(data.created ? ('Dongle ' + data.id + ' added — connecting...') : ('Dongle ' + data.id + ' is already registered'));
+                } else {
+                    toast('Add failed: ' + (data.error || 'unknown error'), true);
+                }
+            } catch (e) { toast('Add failed: receiver unreachable', true); }
+        }
+        async function removeDongle(id) {
+            if (!confirm('Remove dongle ' + id + ' from the receiver? (The rtl_tcp daemon keeps running — re-add the address anytime.)')) return;
+            try {
+                const res = await fetch('/remove_dongle?d=' + encodeURIComponent(id));
+                const data = await res.json();
+                if (data.success) toast('Dongle ' + id + ' removed');
+                else toast('Remove failed: unknown dongle', true);
+            } catch (e) { toast('Remove failed: receiver unreachable', true); }
+        }
+
         function toast(msg, isError) {
             const t = document.getElementById('toast');
             t.textContent = msg;
@@ -969,6 +1002,15 @@
             try {
                 const res = await fetch('/dongles.json');
                 const dongles = await res.json();
+                // prune blocks/cards of dongles removed at runtime
+                for (const rid of Object.keys(wfBlocks)) {
+                    if (!dongles.some(d => d.id === rid)) {
+                        const rb = wfBlocks[rid];
+                        if (rb.block && rb.block.parentNode) rb.block.parentNode.removeChild(rb.block);
+                        delete wfBlocks[rid];
+                        delete dongleCards[rid];
+                    }
+                }
                 for (const d of dongles) {
                     const b = ensureWfBlock(d);
                     // Frequency axis center for hover/click: the dongle's
@@ -1272,7 +1314,12 @@
             card.appendChild(tuneRow); card.appendChild(nudgeRow);
 card.appendChild(bwRow);
 card.appendChild(scanRow); card.appendChild(scanRow2);
-            card.appendChild(info); card.appendChild(listenBtn);
+            const removeBtn = document.createElement('button');
+            removeBtn.style.cssText = 'width:100%;margin-top:4px;padding:3px 10px;background:rgba(231,76,60,0.15);color:#e07890;border:1px solid #e07890;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.85em;';
+            removeBtn.textContent = '\u2715 Remove dongle';
+            removeBtn.title = 'Unregister this rtl_tcp dongle from the receiver';
+            removeBtn.onclick = () => removeDongle(d.id);
+            card.appendChild(info); card.appendChild(listenBtn); card.appendChild(removeBtn);
             col.appendChild(card);
             c = dongleCards[d.id] = {
                 cardEl: card,
@@ -1510,7 +1557,16 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanFrom, scanTo, scanStep, scanBtn,
                 statusFails = 0;
                 document.getElementById('rec-count').textContent = data.recording_count || 0;
                 renderRecordPause(!!data.recordings_paused);
-                document.getElementById('rtl-log').textContent = data.rtl_log || '—';
+                const dsEl = document.getElementById('dongle-status');
+                if (dsEl) {
+                    const dl = data.dongles || [];
+                    const up = dl.filter(d => d.connected).length;
+                    dsEl.textContent = dl.length
+                        ? (up + '/' + dl.length + ' connected — ' + dl.map(d =>
+                            d.label + (d.primary ? ' ★' : '') + (d.ais ? ' (AIS)' : '')
+                            + ': ' + (d.connected ? 'live' : 'offline')).join(' · '))
+                        : 'no dongles — add one below';
+                }
                 document.getElementById('sat-current').textContent = data.satellite;
                 tleInfo = data.tle || null;
                 renderTleBar();

@@ -862,3 +862,18 @@ go through write_file'd Python scripts, not heredocs; the edit tool
 cannot match CRLF files (normalize to LF first); test_decode/test_radio
 fail on Windows identically with and without changes (POSIX fakes /
 chmod), they pass on the Pi.
+
+## 2026-10-09 — dongles decoupled: network rtl_tcp servers
+
+The receiver no longer owns USB dongles. Each dongle is now served by a
+persistent `rtl_tcp` daemon on the machine it is plugged into (the Pi
+"Krabstral", 192.168.3.245: `rtl-tcp@<serial>.service` user units bound to
+0.0.0.0, serial→port map in `~/rtl_tcp_daemon.sh`), and the receiver
+(now on 192.168.2.73) connects over the network. Dongles are keyed by
+`host:port`, added/removed at runtime from the dashboard
+(`/add_dongle`, `/remove_dongle`; persisted in `dongles.json`), and the
+primary/AIS/correction tables in calibration.py moved from serials to
+addresses. Removed: local rtl_tcp spawning, serial enumeration
+(rtl_sdr -d 99 probing), stale-process killing, port-conflict checks,
+PLL log checking. The old receiver on the Pi was stopped and its
+@reboot entry removed; the Pi now runs only the daemons.

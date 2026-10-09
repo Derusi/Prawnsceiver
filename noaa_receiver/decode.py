@@ -8,7 +8,7 @@ import threading
 import time
 
 from . import state
-from .calibration import PRIMARY_DONGLE_SN, tuning_correction
+
 from .config import (NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE,
                      SAT_DSB_FREQ, SDR_OFFSET_HZ, SDR_RATE, TLE_CACHE_FILE,
                      TRACKED_SATS)

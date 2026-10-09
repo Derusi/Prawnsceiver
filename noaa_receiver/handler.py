@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import state
 from .config import (AUDIO_RATE, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS, SAT_DSB_FREQ,
-                   PASS_HISTORY_FILE, RECORD_DIR, RTL_LOG, UTC_OFFSET, WEBDIR)
+                   PASS_HISTORY_FILE, RECORD_DIR, UTC_OFFSET, WEBDIR)
 
 from . import ais
 from . import scan
@@ -20,34 +20,36 @@ from .thumbs import THUMB_SUFFIX, ensure_thumb
 from .passes import HAS_SKYFIELD, load, passes_to_json, wgs84
 from .satnogs import satellite_info
 from .quality import estimate_quality
+from .radio import add_dongle, remove_dongle
 
 def _dongle_list():
     """Dongle descriptors for status/dongles.json: primary first, then stable
-    display indices (USB indices are not stable, so dongles are keyed by
-    serial everywhere else)."""
+    display order. Dongles are remote rtl_tcp servers keyed by their
+    "host:port" id everywhere (add/remove via /add_dongle, /remove_dongle)."""
     keys = list(state.sdrs)
-    keys.sort(key=lambda s: (s != state.primary_serial, s))
+    keys.sort(key=lambda s: (s != state.primary_dongle, s))
     dongles = []
-    for i, sn in enumerate(keys):
-        e = state.sdrs[sn]
+    for i, did in enumerate(keys):
+        e = state.sdrs[did]
         with e['lock']:
             dongles.append({
                 "index": i,
-                "id": sn,
+                "id": did,
+                "host": e["host"],
+                "port": e["port"],
                 "label": e["label"],
                 "tuner": e["tuner"],
-                "serial": sn,
                 "primary": e["primary"],
                 "ais": bool(e.get("ais")),
                 "signal": round(e["signal"], 2),
-                "running": e["proc"] is not None and e["proc"].poll() is None,
+                "connected": bool(e.get("connected")),
                 "recording": e["is_recording"],
                 "wav": os.path.basename(e["wav_path"]) if e["wav_path"] else None,
                 "correction_hz": e.get("correction", 0),
                 "correction_src": e.get("correction_src", "none"),
-                "manual_frequency_mhz": round(state.manual_dongle_freq[sn] / 1e6, 4) if sn in state.manual_dongle_freq else None,
-                "manual_bw_khz": round(state.manual_dongle_bw[sn] / 1000.0, 3) if sn in state.manual_dongle_bw else None,
-                "scan": scan.scan_snapshot(sn),
+                "manual_frequency_mhz": round(state.manual_dongle_freq[did] / 1e6, 4) if did in state.manual_dongle_freq else None,
+                "manual_bw_khz": round(state.manual_dongle_bw[did] / 1000.0, 3) if did in state.manual_dongle_bw else None,
+                "scan": scan.scan_snapshot(did),
             })
     return dongles
 
@@ -64,7 +66,8 @@ def get_status():
     
     dongles = _dongle_list()
     status = {
-        "rtl_sdr_running": state.rtl_sdr_proc is not None and state.rtl_sdr_proc.poll() is None,
+        # aggregate liveness: True while at least one dongle streams
+        "rtl_sdr_running": any(d.get("connected") for d in dongles),
         "frequency_mhz": round(freq / 1e6, 4),
         "doppler_hz": state.doppler_hz,
         "manual_frequency_mhz": round(manual / 1e6, 4) if manual else None,
@@ -110,12 +113,6 @@ def get_status():
             }
             break
     
-    for log_file, key in [(RTL_LOG, "rtl_log")]:
-        try:
-            if os.path.exists(log_file):
-                with open(log_file, 'r', errors='replace') as f:
-                    status[key] = ''.join(f.readlines()[-8:]).strip()
-        except: pass
     return status
 
 
@@ -131,7 +128,7 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             # Optional ?d=<dongle serial> (default: primary) and last=1 for
             # the newest row only (the dashboard scrolls client-side)
             query = parse_qs(urlparse(self.path).query)
-            dev = (query.get('d') or [''])[0] or (state.primary_serial or '')
+            dev = (query.get('d') or [''])[0] or (state.primary_dongle or '')
             entry = state.sdrs.get(dev)
             if entry is None:
                 data = []
@@ -325,6 +322,37 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                         break
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
+        elif self.path.split('?')[0] == '/add_dongle':
+            # Register a dongle by its rtl_tcp server address (the daemon
+            # runs on the machine the dongle is plugged into):
+            # /add_dongle?host=192.168.3.245&port=1234
+            query = parse_qs(urlparse(self.path).query)
+            host = (query.get('host') or query.get('ip') or [''])[0].strip()
+            port = (query.get('port') or [''])[0].strip()
+            try:
+                did, created = add_dongle(host, port)
+            except ValueError as e:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode())
+                return
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': True, 'id': did, 'created': created}).encode())
+        elif self.path.split('?')[0] == '/remove_dongle':
+            # Unregister a dongle: /remove_dongle?d=192.168.3.245:1234
+            query = parse_qs(urlparse(self.path).query)
+            dev = (query.get('d') or [''])[0].strip()
+            removed = remove_dongle(dev)
+            self.send_response(200 if removed else 404)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': removed}).encode())
         elif self.path.split('?')[0] == '/tune':
             # Manual tune (dongle reception test, e.g. FM broadcast radio):
             # /tune?f=89.7 parks the dongle on a frequency and pauses the
@@ -648,7 +676,7 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             # dongle (default: the primary). WAV header with a maxed-out
             # size; browsers play it progressively.
             query = parse_qs(urlparse(self.path).query)
-            dev = (query.get('d') or [''])[0] or (state.primary_serial or '')
+            dev = (query.get('d') or [''])[0] or (state.primary_dongle or '')
             entry = state.sdrs.get(dev)
             if entry is None:
                 self.send_response(404)

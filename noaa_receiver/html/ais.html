@@ -77,7 +77,7 @@ async function load() {
         const chA = ch.A ? ch.A.frames : 0, chB = ch.B ? ch.B.frames : 0;
         document.getElementById('stats').textContent =
             (s.enabled ? 'Receiver live on dongle ' + s.dongle
-                        : 'AIS disabled (AIS_DONGLE_SN not set) — showing the persisted log')
+                        : 'AIS disabled (AIS dongle not added) — showing the persisted log')
             + ' · frames decoded: ch A ' + chA + ' + ch B ' + chB
             + ' (' + (chA + chB) + ' this run) · ships tracked: ' + s.ships.length;
         document.getElementById('loadinfo').textContent = ' · showing ' + log.length + ' log lines';

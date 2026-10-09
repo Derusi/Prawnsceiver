@@ -1,7 +1,8 @@
 """AIS receiver: Danube ship traffic on 161.975 / 162.025 MHz.
 
-A dongle pinned by calibration.AIS_DONGLE_SN is dedicated to AIS (it does
-not join the satellite tracking). rtl_tcp is tuned to 162.000 MHz — the
+The dongle at calibration.AIS_DONGLE (a remote rtl_tcp server) is
+dedicated to AIS (it does not join the satellite tracking). It is tuned
+to 162.000 MHz — the
 midpoint of the two AIS channels — so both channels land at +/-25 kHz
 inside one 240 kHz capture, and each is demodulated from the same IQ
 stream: per-channel offset rotation -> 14 kHz low-pass -> FM
@@ -38,7 +39,6 @@ channel is active and decodes each closed burst offline.
 """
 import json
 import os
-import subprocess
 import threading
 import time
 from collections import deque
@@ -571,7 +571,7 @@ def ais_status():
         nmea = list(state.ais_nmea)
         stats = {k: dict(v) for k, v in state.ais_channels.items()}
         enabled = state.ais_enabled
-        serial = state.ais_serial
+        serial = state.ais_dongle
     return {"enabled": enabled, "dongle": serial, "channels": stats,
             "ships": ships, "nmea": nmea}
 
@@ -586,92 +586,58 @@ def _ais_shifts():
     a signal at -x."""
     return [int(SDR_OFFSET_HZ + (AIS_CENTER_HZ - f)) for f in AIS_CHANNEL_HZ]
 
-def ais_capture_thread(serial):
-    """rtl_tcp lifecycle + per-block demod for the dedicated AIS dongle.
+def ais_capture_thread(did):
+    """rtl_tcp connection + per-block demod for the dedicated AIS dongle.
 
-    Mirrors radio.sdr_capture_thread's process management (port check,
-    handshake, gain via the control protocol, liveness check, backoff)
-    but tunes to AIS_CENTER_HZ and demodulates both AIS channels instead
-    of tracking satellites. Waterfall/signal update the same state.sdrs
-    entry, so the dongle card shows the AIS spectrum like any other.
+    Mirrors radio.sdr_capture_thread's connection lifecycle (handshake,
+    gain via the control protocol, reconnect with backoff) but tunes to
+    AIS_CENTER_HZ and demodulates both AIS channels instead of tracking
+    satellites. Waterfall/signal update the same state.sdrs entry, so
+    the dongle card shows the AIS spectrum like any other.
     """
-    import socket
     from .dsp import iq_to_complex, frequency_shift
-    from .radio import (_IQReader, _get_fft_window, _port_in_use, _recv_exact,
-                        _rtl_tcp_set, RTL_TCP_SET_GAIN, RTL_TCP_SET_GAIN_MODE)
+    from .radio import (_IQReader, _get_fft_window, _rtl_tcp_connect,
+                        TUNER_NAMES)
     from .config import FFT_SIZE, IQ_BLOCK
 
-    entry = state.sdrs[serial]
+    entry = state.sdrs[did]
     channel_names = ["A", "B"]
     shifts = _ais_shifts()
     st = [new_channel_state() for _ in shifts]
-    rtl_log_path = os.path.join(LOGDIR, f"rtl_sdr_{serial}.log")
-    os.makedirs(LOGDIR, exist_ok=True)
-    rtl_log_f = open(rtl_log_path, "w")
     with state.ais_lock:
         state.ais_enabled = True
-        state.ais_serial = serial
+        state.ais_dongle = did
         state.ais_channels = {}
-    state.log_console(f"📡 AIS receiver on dongle {serial}: "
+    state.log_console(f"📡 AIS receiver on dongle {did}: "
                       f"{AIS_CHANNEL_HZ[0]/1e6:.3f} + {AIS_CHANNEL_HZ[1]/1e6:.3f} MHz")
     restart_backoff = 5.0
     block_count = 0
     while True:
+        if entry.get("closed"):
+            return
         run_started = time.time()
-        proc = None
         sock = None
         try:
-            correction = tuning_correction(AIS_CENTER_HZ, serial)
+            correction = tuning_correction(AIS_CENTER_HZ, did)
             tune = AIS_CENTER_HZ + SDR_OFFSET_HZ + correction
             # shown in the dongle card's tuning infobox, like the satellite
             # capture threads (the ppm fallback applies ~+13 kHz here)
-            entry["correction"], entry["correction_src"] = correction_info(AIS_CENTER_HZ, serial)
-            if _port_in_use(entry["port"]):
-                raise RuntimeError(f'port {entry["port"]} in use (stale rtl_tcp?) — not starting AIS rtl_tcp')
-            rtl_log_f.seek(0)
-            rtl_log_f.truncate()
-            proc = subprocess.Popen(
-                ["rtl_tcp", "-a", "127.0.0.1", "-p", str(entry["port"]), "-d", serial,
-                 "-f", str(tune), "-s", str(SDR_RATE), "-g", str(SDR_GAIN)],
-                stdout=subprocess.DEVNULL, stderr=rtl_log_f)
-            entry["proc"] = proc
+            entry["correction"], entry["correction_src"] = correction_info(AIS_CENTER_HZ, did)
+            gain_db = SDR_DONGLE_GAIN.get(did, SDR_GAIN)
+            sock, tuner_type, _gain_count = _rtl_tcp_connect(entry["host"], entry["port"], gain_db)
+            entry["sock"] = sock
+            entry["connected"] = True
+            entry["tuner"] = TUNER_NAMES.get(tuner_type, f"rtl_tcp type {tuner_type}")
             entry["last_data"] = time.time()
-            deadline = time.time() + 10
-            while time.time() < deadline:
-                try:
-                    sock = socket.create_connection(("127.0.0.1", entry["port"]), timeout=2)
-                    break
-                except OSError:
-                    if proc.poll() is not None:
-                        break
-                    time.sleep(0.2)
-            if sock is None:
-                raise RuntimeError(f"rtl_tcp did not open port {entry['port']}")
-            sock.settimeout(30)
-            header = _recv_exact(sock, 12)
-            if header is None or header[:4] != b"RTL0":
-                raise RuntimeError("bad rtl_tcp handshake")
-            if proc.poll() is not None:
-                raise RuntimeError("rtl_tcp exited immediately (port conflict? device busy?)")
-            gain_db = SDR_DONGLE_GAIN.get(serial, SDR_GAIN)
-            if gain_db:
-                _rtl_tcp_set(sock, RTL_TCP_SET_GAIN_MODE, 1)
-                _rtl_tcp_set(sock, RTL_TCP_SET_GAIN, int(round(gain_db * 10)))
-            state.log_console(f"rtl_tcp started for AIS (pid {proc.pid}, dongle {serial}), tuned {tune}Hz "
+            state.log_console(f"Connected to AIS rtl_tcp {did}, tuned {tune}Hz "
                                f"(offset +{SDR_OFFSET_HZ + correction}Hz, correction {correction:+d}Hz)")
-            last_proc_check = time.time()
             reader = _IQReader(sock, IQ_BLOCK)
             while True:
                 raw = reader.read_block()
                 if raw is None:
-                    state.log_console(f"rtl_tcp stream ended (AIS dongle {serial}), restarting...", "warn")
+                    state.log_console(f"rtl_tcp stream ended (AIS dongle {did}), reconnecting...", "warn")
                     break
                 entry["last_data"] = time.time()
-                now_ts = time.time()
-                if now_ts - last_proc_check >= 1.0:
-                    last_proc_check = now_ts
-                    if proc.poll() is not None:
-                        raise RuntimeError(f"rtl_tcp (pid {proc.pid}) exited but port still streams")
                 c = iq_to_complex(raw)
                 # Waterfall + signal for the dongle card (raw band)
                 block_count += 1
@@ -707,18 +673,17 @@ def ais_capture_thread(serial):
                             "floor": round(ch_st["floor"] or 0.0, 2),
                         }
         except Exception as e:
-            state.log_console(f"AIS thread error (dongle {serial}): {e}", "error")
-        if proc is not None:
-            try:
-                proc.kill()
-                proc.wait(timeout=5)
-            except Exception:
-                pass
+            if not entry.get("closed"):   # a removed dongle's socket is
+                state.log_console(f"AIS thread error (dongle {did}): {e}", "error")  # closed under the thread — not an error
+        entry["connected"] = False
+        entry["sock"] = None
         if sock is not None:
             try:
                 sock.close()
             except Exception:
                 pass
+        if entry.get("closed"):
+            return
         if time.time() - run_started >= 30:
             restart_backoff = 5.0
         else:

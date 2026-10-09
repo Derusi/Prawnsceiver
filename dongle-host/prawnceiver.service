@@ -1,0 +1,12 @@
+[Unit]
+Description=Prawnsceiver NOAA weather-satellite receiver (web dashboard)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/prawnceiver
+ExecStart=%h/prawnceiver/.venv/bin/python -u %h/prawnceiver/server_noaa.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,23 +1,27 @@
 """Integration test: the real sdr_capture_thread against a fake rtl_tcp server.
 
 Drives the recording state machine (pass start/end, same-frequency pass
-switch, band switch mid-pass, per-dongle override, WAV open failure, foreign
-stream detection) and checks the rtl_tcp commands and WAV files it produces.
-rtl_tcp itself is replaced by a stand-in child process ('sleep').
+switch, band switch mid-pass, per-dongle override, WAV open failure,
+reconnect after a dropped stream) and checks the rtl_tcp commands and WAV
+files it produces. The fake server speaks the real rtl_tcp protocol: a
+12-byte RTL0 handshake followed by an endless IQ stream, recording the
+5-byte control commands it receives.
 
 Run: python3 -u tests/test_radio.py (needs numpy; ~20 s; uses TCP port 1299)
 """
-import glob, socket, struct, subprocess, tempfile, threading, time, wave
+import glob, json, socket, struct, tempfile, threading, time, wave
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
-# Regression guard (2026-10-08: an import-line edit dropped SDR_DONGLE_GAIN and
-# killed every satellite capture thread at runtime, unnoticed until deploy):
-# every name the capture threads reference at module level must resolve.
+# Regression guard (2026-10-08: an import-line edit dropped SDR_DONGLE_GAIN
+# and killed every satellite capture thread at runtime, unnoticed until
+# deploy): every name the capture threads reference at module level must
+# resolve. Updated 2026-10-09 for the network-dongle architecture.
 import noaa_receiver.radio as _radio
-for _n in ("AIS_DONGLE_SN", "FM_BAND", "PRIMARY_DONGLE_SN", "SDR_DONGLE_GAIN",
-            "correction_info", "tuning_correction"):
-    assert hasattr(_radio, _n), f"radio.py is missing {_n} — check the calibration import"
+for _n in ("AIS_DONGLE", "FM_BAND", "PRIMARY_DONGLE", "DEFAULT_DONGLES",
+            "SDR_DONGLE_GAIN", "correction_info", "tuning_correction",
+            "add_dongle", "remove_dongle", "sdr_thread"):
+    assert hasattr(_radio, _n), f"radio.py is missing {_n} — check the calibration/config imports"
 print("radio namespace guard: ok")
 import numpy as np
 from collections import deque
@@ -27,11 +31,10 @@ from noaa_receiver.calibration import tuning_correction
 
 tmp = tempfile.mkdtemp(prefix='prawn_')
 radio.LOGDIR = os.path.join(tmp, 'log'); radio.RECORD_DIR = os.path.join(tmp, 'rec')
-radio.RTL_LOG = os.path.join(radio.LOGDIR, 'rtl_sdr.log')
+radio.DONGLES_FILE = os.path.join(tmp, 'dongles.json')   # keep the real registry untouched
 radio.WAV_RETRY_SECS = 0.5
-radio.PLL_CHECK_AFTER_SECS = 0.5
-SERIAL = 'TESTSN'
-PORT = 1299
+HOST, PORT = '127.0.0.1', 1299
+DID = f'{HOST}:{PORT}'
 
 # ---- fake rtl_tcp: header + endless IQ, records control commands ----
 commands = []
@@ -39,7 +42,7 @@ class FakeRtlTcp(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True)
         self.srv = socket.socket(); self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.srv.bind(('127.0.0.1', PORT)); self.srv.listen(1)
+        self.srv.bind((HOST, PORT)); self.srv.listen(1)
         self.conn = None; self.sessions = 0
     def run(self):
         rng = np.random.default_rng(0)
@@ -67,43 +70,46 @@ class FakeRtlTcp(threading.Thread):
                 pass
             finally:
                 conn.close(); self.conn = None
+    def drop_client(self):
+        """Close the current client connection (simulate a network drop)."""
+        if self.conn is not None:
+            try: self.conn.close()
+            except OSError: pass
 srv = FakeRtlTcp(); srv.start()
 
 import traceback
 def _hook(*a):
     traceback.print_exception(*a)
-    for c in children: c.kill()
     os._exit(1)
 sys.excepthook = _hook
-# ---- unit: port probe + command framing ----
-assert radio._port_in_use(PORT) is True, "probe must see the fake listener"
-assert radio._port_in_use(PORT + 50) is False
-assert struct.pack('!BI', 1, 437610000) == b'\x01' + (437610000).to_bytes(4, 'big')
-print("port probe + command framing OK")
-radio._port_in_use = lambda port: False   # the fake server legitimately owns the port from here on
 
-# ---- stand-in child process + doppler spy ----
-children = []
-real_popen = subprocess.Popen
-def fake_popen(args, **kw):
-    p = real_popen(['sleep', '1000']); children.append(p); return p
-radio.subprocess.Popen = fake_popen
+# ---- unit: dongle registry ----
+try:
+    radio.add_dongle('', 0)
+    raise AssertionError('empty host must raise')
+except ValueError:
+    pass
+try:
+    radio.add_dongle('10.0.0.1', 'notaport')
+    raise AssertionError('bad port must raise')
+except ValueError:
+    pass
+did, created = radio.add_dongle(HOST, PORT)
+assert did == DID and created, (did, created)
+did2, created2 = radio.add_dongle(HOST, PORT)      # idempotent
+assert did2 == DID and not created2
+assert state.primary_dongle == DID                  # first non-AIS dongle becomes primary
+assert json.load(open(radio.DONGLES_FILE)) == [{"host": HOST, "port": PORT}]
+print("dongle registry: validation, idempotency, primary, persistence OK")
+
+entry = state.sdrs[DID]
 last_doppler = {'d': None}
 real_doppler = radio.doppler_shift
 def spy_doppler(c, d, fs, st):
     last_doppler['d'] = d; return real_doppler(c, d, fs, st)
 radio.doppler_shift = spy_doppler
 
-state.primary_serial = SERIAL
-state.sdrs[SERIAL] = {
-    'label': 'fake', 'tuner': 'R820T', 'serial': SERIAL, 'primary': True,
-    'waterfall': state.waterfall_buffer, 'lock': state.waterfall_lock,
-    'signal': 0.0, 'proc': None, 'last_data': 0.0, 'port': PORT,
-    'la': {'data': [], 'base': 0, 'total': 0, 'cond': threading.Condition()},
-    'is_recording': False, 'wav': None, 'wav_path': None, 'iq': None,
-}
-entry = state.sdrs[SERIAL]
-t = threading.Thread(target=radio.sdr_capture_thread, args=(SERIAL,), daemon=True); t.start()
+t = threading.Thread(target=radio.sdr_capture_thread, args=(DID,), daemon=True); t.start()
 
 def wait_for(cond, secs=4.0, what=''):
     end = time.time() + secs
@@ -117,7 +123,7 @@ def set_sched(freq, sat, active):
         state.current_frequency = freq; state.current_sat_name = sat; state.is_pass_active = active
 
 def expect_cmd(freq):
-    want = (1, freq + SDR_OFFSET_HZ + tuning_correction(freq, SERIAL))
+    want = (1, freq + SDR_OFFSET_HZ + tuning_correction(freq, DID))
     wait_for(lambda: want in commands, what=f'retune command {want}')
     commands.remove(want)
 
@@ -126,7 +132,7 @@ def wavs(): return sorted(glob.glob(os.path.join(radio.RECORD_DIR, '*.wav')))
 # 1. idle streaming
 wait_for(lambda: entry['last_data'] > 0 and len(entry['waterfall']) > 3, what='IQ flowing')
 wait_for(lambda: entry['la']['total'] > 10, what='live audio')
-assert not entry['is_recording'] and not commands
+assert entry['connected'] and not entry['is_recording'] and not commands
 assert last_doppler['d'] == 0
 print("1 idle: streaming, waterfall rows, live audio, no retune OK")
 
@@ -158,11 +164,11 @@ wait_for(lambda: last_doppler['d'] == -9000, what='ISS doppler')
 print("4 band switch mid-pass: WAV closed/reopened, retune, Doppler follows OK")
 
 # 5. manual dongle override set and cleared during the pass
-with state.status_lock: state.manual_dongle_freq[SERIAL] = 100000000
+with state.status_lock: state.manual_dongle_freq[DID] = 100000000
 expect_cmd(100000000)
 wait_for(lambda: not entry['is_recording'], what='override stops recording')
 wait_for(lambda: last_doppler['d'] == 0, what='doppler off on the override band')
-with state.status_lock: state.manual_dongle_freq.pop(SERIAL)
+with state.status_lock: state.manual_dongle_freq.pop(DID)
 expect_cmd(437550000)
 wait_for(lambda: entry['is_recording'], what='recording resumes after override cleared')
 print("5 dongle override: retune out/in, recording paused/resumed OK")
@@ -176,25 +182,35 @@ for p in wavs():
 print(f"6 pass end: WAV closed, {len(wavs())} valid WAVs: {[os.path.basename(p) for p in wavs()]}")
 
 # 7. WAV open failure must not kill the receiver; retried later
-os.chmod(radio.RECORD_DIR, 0o500)
-sessions_before = srv.sessions; child = children[-1]
+# (wave.open is monkeypatched to fail while the flag is set: a chmod'd
+# read-only RECORD_DIR only blocks the open on Linux, not on Windows)
+fail_wav_open = {'fail': True}
+real_wave_open = wave.open
+def failing_wave_open(path, mode='rb'):
+    if mode == 'wb' and fail_wav_open['fail']:
+        raise OSError('simulated disk full')
+    return real_wave_open(path, mode)
+wave.open = failing_wave_open
+sessions_before = srv.sessions
 set_sched(137912500, "NOAA 18", True)
 expect_cmd(137912500)
 time.sleep(1.5)
-print("   7 diag: recording=", entry['is_recording'], "child alive=", child.poll() is None, "sessions", sessions_before, "->", srv.sessions, "wav_path", entry['wav_path'])
-assert not entry['is_recording'] and child.poll() is None and srv.sessions == sessions_before, "receiver restarted on a WAV open failure"
-os.chmod(radio.RECORD_DIR, 0o700)
+print("   7 diag: recording=", entry['is_recording'], "connected=", entry['connected'],
+      "sessions", sessions_before, "->", srv.sessions, "wav_path", entry['wav_path'])
+assert not entry['is_recording'] and entry['connected'] and srv.sessions == sessions_before, "receiver reconnected on a WAV open failure"
+fail_wav_open['fail'] = False
 wait_for(lambda: entry['is_recording'], secs=3, what='WAV open retried')
 set_sched(137620000, "NOAA 15 (idle)", False); expect_cmd(137620000)
 wait_for(lambda: not entry['is_recording'], what='pass end')
-print("7 WAV open failure: no restart, retried after WAV_RETRY_SECS OK")
+print("7 WAV open failure: no reconnect, retried after WAV_RETRY_SECS OK")
 
-# 8. foreign stream: our child dies while the port keeps streaming -> restart, not silent use
+# 8. network drop: the server closes the connection -> the thread reconnects
 sessions_before = srv.sessions
-children[-1].kill()
-wait_for(lambda: srv.sessions > sessions_before, secs=15, what='capture thread abandoned the foreign stream and reconnected')
+srv.drop_client()
+wait_for(lambda: srv.sessions > sessions_before, secs=15, what='capture thread reconnected after the drop')
 wait_for(lambda: entry['last_data'] > time.time() - 1, what='streaming again')
-print("8 child death with live port: stream abandoned and restarted OK")
+print("8 network drop mid-stream: reconnected and streaming again OK")
+
 # 9. same satellite reopened within one second must not overwrite
 set_sched(137100000, "NOAA 19", True); expect_cmd(137100000)
 wait_for(lambda: entry['is_recording'], what='rec')
@@ -207,6 +223,17 @@ wait_for(lambda: not entry['is_recording'], what='end')
 names = [os.path.basename(p) for p in wavs()]
 assert len(names) == len(set(names)) and len([n for n in names if n.startswith('NOAA_19_')]) >= 3, names
 print("9 unique names on fast re-split:", [n for n in names if 'NOAA_19' in n])
+
+# 10. remove_dongle stops the thread and clears the state
+did_b, _ = radio.add_dongle('127.0.0.1', PORT + 50)   # a second (unreachable) dongle
+assert did_b in state.sdrs
+assert radio.remove_dongle(DID) is True
+wait_for(lambda: not t.is_alive(), secs=5, what='capture thread exits after remove')
+assert DID not in state.sdrs and DID not in state.manual_dongle_freq
+assert state.primary_dongle == did_b, "second dongle must be promoted to primary"
+assert radio.remove_dongle('nope:1') is False
+radio.remove_dongle(did_b)
+assert state.primary_dongle is None
+print("10 remove_dongle: thread exit, state cleared, primary promotion OK")
 print("ALL RADIO TESTS PASSED")
-for c in children: c.kill()
 os._exit(0)

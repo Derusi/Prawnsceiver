@@ -9,7 +9,9 @@ PORT = 8085
 LOGDIR = "/var/log/noaa"
 RECORD_DIR = "/var/log/noaa/recordings"
 PASS_HISTORY_FILE = os.path.join(LOGDIR, "pass_history.json")
-RTL_LOG = os.path.join(LOGDIR, "rtl_sdr.log")
+# Dongles added at runtime (dashboard "Add dongle") persist across restarts
+# as a JSON list of {"host": ..., "port": ...} entries
+DONGLES_FILE = os.path.join(LOGDIR, "dongles.json")
 # noaa-apt (APT image decoder): install directory (its res/ folder must be
 # the working directory), per-decode timeout, and the TLE file the
 # scheduler writes for its map overlay (3-line format, refreshed with the
@@ -17,7 +19,9 @@ RTL_LOG = os.path.join(LOGDIR, "rtl_sdr.log")
 NOAA_APT_DIR = "/opt/noaa-apt"
 NOAA_APT_TIMEOUT_SECS = 120
 NOAA_APT_TLE_FILE = os.path.join(LOGDIR, "weather.txt")
-WEBDIR = "/home/eugene/aprs_website"
+# The dashboard (index.html, images) is served straight from the project
+# directory - the receiver is no longer tied to one deployment host
+WEBDIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FFT_SIZE = 512
 WATERFALL_ROWS = 120
 # Gain: 0 = auto (RTL-SDR AGC), or fixed dB like 35. Auto adapts to signal
@@ -108,7 +112,7 @@ DOPPLER_UPDATE_SECS = 10  # scheduler tick cadence; steps stay < ~1 kHz on ISS
 # AIS (ship traffic on the Danube; see noaa_receiver/ais.py): both AIS
 # channels (A: 161.975 MHz, B: 162.025 MHz) sit at +/-25 kHz around this
 # center, inside one 240 kHz capture - a dongle dedicated to AIS (pinned
-# by calibration.AIS_DONGLE_SN) demodulates both from the same IQ stream
+# by calibration.AIS_DONGLE) demodulates both from the same IQ stream
 # and is excluded from satellite tracking.
 AIS_CENTER_HZ = 162000000
 AIS_CHANNEL_HZ = (161975000, 162025000)
