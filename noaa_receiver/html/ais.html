@@ -86,6 +86,11 @@ const MSG_NAMES = {
     21: 'aid to nav', 24: 'static (B)', 27: 'long range'
 };
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+// The server logs in ITS timezone (the container runs UTC) — every
+// entry also carries unix ts, so the list shows browser-local time
+function fmtTime(ts) {
+    return new Date(ts * 1000).toLocaleTimeString([], { hour12: false });
+}
 function cell(v, cls, dash) { return '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + (v === null || v === undefined ? '<span class="na">' + (dash || '—') + '</span>' : v) + '</td>'; }
 
 // ---------- live ship map (Leaflet + OpenStreetMap tiles) ----------
@@ -203,11 +208,12 @@ async function load() {
         }
         let html = '';
         for (const e of log) {
+            const t = (e.ts !== undefined && e.ts !== null) ? fmtTime(e.ts) : e.time;
             const pos = (e.lat !== null && e.lat !== undefined)
                 ? '<a href="https://www.google.com/maps?q=' + e.lat + ',' + e.lon + '" target="_blank" rel="noopener">' + e.lat.toFixed(4) + ', ' + e.lon.toFixed(4) + '</a>'
                 : null;
             html += '<tr class="cls-' + esc(e.cls || '') + '" title="' + esc(e.nmea || '') + '">'
-                + cell(esc(e.time), 't')
+                + cell(esc(t), 't')
                 + cell(esc(e.ch), 'ch')
                 + cell(esc(e.msg + ' ' + (MSG_NAMES[e.msg] || '?')), 'type')
                 + cell(esc(e.mmsi), 'mmsi')
