@@ -48,8 +48,10 @@ UTC_OFFSET = 2  # Germany UTC+2
 # 137.1 — ~800 kHz below its LRPT, so every M2-3 recording tuned dead
 # spectrum. A tune anywhere in 137.86-137.96 captures the LRPT band:
 # the recording spans +/-120 kHz and the decode measures the actual
-# signal position). Not decodable by the APT pipeline — tracked for
-# the pass list, recordings and reception history.
+# signal position). Decoded from the raw IQ with SatDump (meteor_m2-x_lrpt,
+# see decode.py) - noaa-apt cannot. Both Meteor LRPT transmitters have been
+# dark in every pass received so far (verified 2026-10-10: no satellite
+# signal in any Meteor IQ recording, just local land-mobile carriers).
 TRACKED_SATS = {
     25338: ("NOAA 15", 137620000),
     28654: ("NOAA 18", 137912500),

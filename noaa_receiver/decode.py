@@ -1,4 +1,4 @@
-"""Recording decoding: noaa-apt for NOAA APT, sstv for ISS Robot 36."""
+"""Recording decoding: noaa-apt (APT), sstv (ISS), SatDump (LRPT/DSB IQ)."""
 import json
 import os
 import re
@@ -128,39 +128,63 @@ def _centered_cf32(iq_path, shift_hz):
     return tmp
 
 
-def _measure_signal_offset(iq_path, signal_bw_hz=50_000):
+def _measure_signal_offset(iq_path, signal_bw_hz=120_000):
     """Where the satellite actually sits in a raw IQ capture (Hz from
     baseband center), measured from the recording itself.
 
     Static models are not trustworthy here: the dongle's tuning error is
     only approximated by the calibration ppm, transmitters can be off
-    their nominal frequency (measured live: Meteor-M 2-4's LRPT sits
-    ~13 kHz below the configured 137.9125 MHz), and Doppler adds a few
-    kHz. So the decode centering measures the signal's spectral centroid
-    instead of trusting any of that.
+    their nominal frequency, and Doppler adds a few kHz. So the decode
+    centering measures the signal's spectral position instead of
+    trusting any of that.
 
-    The search is restricted to the negative-frequency side: the tuner
-    is always SDR_OFFSET_HZ above the satellite (and Doppler plus tuning
-    error stay far below that), so the satellite MUST sit below center —
-    this excludes the +SDR_OFFSET_HZ DC spike and the R820T spurs that
-    otherwise win a naive peak search (a spur at +24 kHz and the band-edge
-    noise rise at -110 kHz each fooled an earlier version). A
-    signal-width-matched sliding window (72 kHz for LRPT, ~6 kHz for DSB)
-    finds where the mean power peaks — wide plateaus win over narrow
-    spurs, and spurs cannot drag a centroid through the tuner's
-    edge-noise rise.
+    The search is a signal-width-matched sliding window (mean power per
+    window, satellite side of the tuner only, so the +SDR_OFFSET_HZ DC
+    spike and the R820T spurs cannot win a naive peak search).
 
-    Returns None when nothing stands out."""
+    But a plain window search is fooled by LOCAL transmitters: this
+    site has a persistent ~11 kHz carrier around 137.905 MHz (Region-1
+    land mobile, ~7.5 kHz below the Meteor LRPT downlink) measuring
+    20-40x the noise floor, which captured the measurement live
+    (2026-10-10: -47.6 kHz "measured" from that carrier while a real
+    LRPT signal would sit near -60 kHz; the demodulator then centered
+    empty spectrum). A LEO downlink differs from local junk in exactly
+    two measurable ways: it DRIFTS with Doppler (several hundred Hz
+    between the first and last thirds of a recording, +/-3.4 kHz over
+    a pass at 137.9 MHz) and the wide digital modes fill tens of kHz.
+    The winning window's excess-power region is therefore gated:
+
+      - width >= 45% of signal_bw_hz -> a broadband satellite signal
+        (low passes drift little, so width must be able to carry them)
+      - else centroid drift between the recording's first and last
+        thirds >= 300 Hz -> a moving carrier: the satellite
+      - otherwise the feature is stationary and narrow: a local
+        transmitter -> None, and the caller falls back to the
+        tuner-offset rotation (correct whenever the correction is)
+
+    Returns None when nothing passes the gates.
+    """
     import numpy as np
     n_fft = 4096
     bin_hz = SDR_RATE / n_fft
+    # Hann-window the segments: a strong carrier under a boxcar FFT
+    # splatters a sinc skirt above the noise test across tens of kHz,
+    # which pins the centroid/drift tests onto a stationary spike
+    hann = np.hanning(n_fft).astype(np.float32)
     # window centers to try (satellite side only)
     center_lo, center_hi = -105_000, -25_000
-    best = None
+    slices = []
     with open(iq_path, 'rb') as f:
         size = os.path.getsize(iq_path)
-        span = max(0, size // 2 - SDR_RATE * 8)   # bytes; stay inside
-        for t in range(5):
+        # Slice starts in BYTES spread across the WHOLE file (the six
+        # 4-s slices must cover it: the drift test compares the first
+        # and last thirds of the recording). The margin keeps the last
+        # slice's read inside the file. An earlier version halved the
+        # span by mixing sample and byte units - its slices covered
+        # only the first quarter of the recording, so the drift test
+        # saw almost no Doppler at all.
+        span = max(0, size - SDR_RATE * 8 * 2)
+        for t in range(6):
             f.seek(int(span * t / 5) if span else 0)
             raw = f.read(SDR_RATE * 4 * 2)
             if len(raw) < SDR_RATE * 2 * 2:
@@ -169,36 +193,99 @@ def _measure_signal_offset(iq_path, signal_bw_hz=50_000):
             segs = c[:len(c) // n_fft * n_fft].reshape(-1, n_fft)
             psd = np.zeros(n_fft)
             for s_ in segs:
-                psd += np.abs(np.fft.fftshift(np.fft.fft(s_))) ** 2
+                psd += np.abs(np.fft.fftshift(np.fft.fft(s_ * hann))) ** 2
             psd /= len(segs)
-            freqs = np.fft.fftshift(np.fft.fftfreq(n_fft, 1.0 / SDR_RATE))
-            med = float(np.median(psd))
-            sm = np.convolve(psd, np.ones(5) / 5, 'same')
-            half = max(1, int(signal_bw_hz / 2 / bin_hz))
-            acc = np.concatenate(([0.0], np.cumsum(sm)))
-            # sliding mean power per window center (integer bins;
-            # fftshifted axis: index 0 = -fs/2)
-            best_c, best_p = None, -1.0
-            lo_bin = n_fft // 2 + int(center_lo / bin_hz)
-            hi_bin = n_fft // 2 + int(center_hi / bin_hz)
-            for center_bin in range(lo_bin, hi_bin):
-                a, b = center_bin - half, center_bin + half
-                if a < 0 or b >= len(sm):
-                    continue
-                mean_p = (acc[b + 1] - acc[a]) / (b - a)
-                if mean_p > best_p:
-                    best_p, best_c = mean_p, center_bin
-            if best_c is None:
-                continue
-            score = best_p / (med or 1.0)
-            if best is None or score > best[0]:
-                best = (score, freqs[best_c])
-    if best is None:
+            slices.append(np.convolve(psd, np.ones(5) / 5, 'same'))
+    if not slices:
         return None
-    score, offset = best
-    if score < 2.0:
-        return None   # nothing clearly above the noise floor
-    return float(offset)
+    freqs = np.fft.fftshift(np.fft.fftfreq(n_fft, 1.0 / SDR_RATE))
+    avg = np.mean(slices, axis=0)
+    # Noise reference: the POSITIVE-frequency half. The satellite is
+    # always on the negative side (offset tuning), so the positive half
+    # is receiver noise (the +SDR_OFFSET_HZ DC spike is a few bins and
+    # cannot move a median). The full-spectrum median would sit ON a
+    # plateau that fills half the capture - exactly the LRPT geometry
+    # (a 120 kHz signal in a 240 kHz recording) - and the score gate
+    # would reject the satellite it just found.
+    med = float(np.median(avg[n_fft // 2:]))
+    half = max(1, int(signal_bw_hz / 2 / bin_hz))
+    acc = np.concatenate(([0.0], np.cumsum(avg)))
+    best_c, best_p = None, -1.0
+    lo_bin = n_fft // 2 + int(center_lo / bin_hz)
+    hi_bin = n_fft // 2 + int(center_hi / bin_hz)
+    for center_bin in range(lo_bin, hi_bin):
+        a, b = center_bin - half, center_bin + half
+        if a < 0 or b >= len(avg):
+            continue
+        mean_p = (acc[b + 1] - acc[a]) / (b - a)
+        if mean_p > best_p:
+            best_p, best_c = mean_p, center_bin
+    if best_c is None or best_p < 4.0 * (med or 1.0):
+        # Nothing CONFIDENTLY above the floor. The tuner-offset fallback
+        # rotation is the safer center on a calibrated dongle, so only a
+        # clear detection may override it: a satellite-less recording's
+        # AGC/tuner-shape hump measured 3.0x here and would have won at
+        # the old 2.0x threshold
+        return None
+    # Excess-power region inside the winning window (above 3x the
+    # spectrum median) and its drift across the recording
+    a, b = best_c - half, best_c + half
+    region = np.arange(a, b)[avg[a:b] > 3.0 * med]
+    if not len(region):
+        return None
+
+    def _centroid(psd):
+        # Excess power capped at 24 dB over the floor: a strong narrow
+        # carrier out-powers a whole broadband plateau bin-for-bin and
+        # pins the centroid (and the drift test) onto itself; the cap
+        # keeps satellite plateaus and local spikes on one scale
+        excess = np.minimum(np.maximum(psd[region] - med, 0.0), 16.0 * med)
+        total = float(excess.sum())
+        if total <= 0.0:
+            return None
+        return float((freqs[region] * excess).sum() / total)
+
+    # Wide-signal test: the -18 dB width of the window's peak. A strong
+    # narrow carrier drags its sinc skirt above the noise test across
+    # the whole window (a stationary land-mobile carrier measured
+    # 6 kHz 'wide' at the DSB window size), so the width gate cuts at
+    # max(3x median, peak/64) as well: a flat digital plateau keeps
+    # nearly all its bins, a carrier collapses to its few-bin core.
+    win = avg[a:b]
+    width_hz = int((win > max(3.0 * med, float(win.max()) / 64.0)).sum()) * bin_hz
+    drift_hz = 0.0
+    third = max(1, len(slices) // 3)
+    if len(slices) >= 2 * third:
+        # Normalize each slice to the global floor first: the tuner's
+        # AGC pumps the noise floor between slices (+/-30% measured on
+        # a satellite-less recording), and that wander otherwise fakes
+        # a Doppler drift on low-SNR humps
+        norm = [s_ / (float(np.median(s_[n_fft // 2:])) or 1.0) for s_ in slices]
+        c_first = _centroid(np.mean(norm[:third], axis=0) * med)
+        c_last = _centroid(np.mean(norm[-third:], axis=0) * med)
+        if c_first is not None and c_last is not None:
+            drift_hz = abs(c_last - c_first)
+    if width_hz >= 0.45 * signal_bw_hz or drift_hz >= 300.0:
+        center = _centroid(avg)
+        return float(center if center is not None else freqs[best_c])
+    return None
+
+
+def _pick_product_png(out_dir):
+    """The composite image from a SatDump product directory, or None.
+
+    The dashboard and history serve decoded recordings as ONE flat PNG
+    next to the WAV and never list product subdirectories, so a finished
+    decode reduces to its largest PNG: the full composite (RGB/IR)
+    outputs are the biggest files, single channels and metadata lose."""
+    best, best_size = None, 0
+    for name in os.listdir(out_dir):
+        p = os.path.join(out_dir, name)
+        if name.lower().endswith('.png') and os.path.isfile(p):
+            size = os.path.getsize(p)
+            if size > best_size:
+                best, best_size = p, size
+    return best
 
 
 def _seed_satdump_tles():
@@ -270,12 +357,28 @@ def _satdump_decode(pipeline, iq_path, out_dir, label, shift_hz=None):
             except OSError:
                 pass
     products = [f for f in os.listdir(out_dir) if os.path.isfile(os.path.join(out_dir, f))]
-    if products:
-        state.log_console(f"🛰 SatDump decode done ({label}): {len(products)} product file(s) in {os.path.basename(out_dir)}/")
+    # Rewrite the decode marker with the real outcome: decode_recording
+    # marked the recording 'success' when it spawned this background
+    # job, but the truth is known only here (products or not). A
+    # 'no products' marker keeps later auto-decodes from re-running a
+    # permanently dark transmitter; Retry still can, with force.
+    wav_path = iq_path[:-len('.iq.u8')] + '.wav'
+    image = _pick_product_png(out_dir)
+    if image is not None:
+        # Copy the composite into the flat <recording>.png slot: the
+        # dashboard/history list decoded images as one PNG next to the
+        # WAV and never look inside the product directory.
+        shutil.copyfile(image, iq_path[:-len('.iq.u8')] + '.png')
+        state.log_console(f"🛰 SatDump decode done ({label}): {len(products)} product file(s), composite {os.path.basename(image)}")
+        _write_decode_marker(wav_path, True, f"SatDump: {len(products)} products, composite {os.path.basename(image)}")
+    elif products:
+        state.log_console(f"🛰 SatDump decode done ({label}): {len(products)} product file(s) in {os.path.basename(out_dir)}/ (no image)")
+        _write_decode_marker(wav_path, True, f"SatDump: {len(products)} product file(s) (no image)")
     else:
         state.log_console(f"SatDump produced no products ({label}) - signal too weak or transmitter off", "warn")
+        _write_decode_marker(wav_path, False, "SatDump produced no products - signal too weak or transmitter off")
 
-def _decode_iq(wav_path, pipeline, suffix):
+def _decode_iq(wav_path, pipeline, suffix, force=False):
     """SatDump decode of the raw IQ sibling of a recording. Returns
     (started, message); spawns the actual work detached."""
     base, _ = os.path.splitext(wav_path)
@@ -284,14 +387,19 @@ def _decode_iq(wav_path, pipeline, suffix):
     if not os.path.exists(iq_path):
         return False, f'No raw IQ capture for {label} - cannot decode'
     if os.path.exists(out_dir):
-        return True, 'already decoded'
+        if not force:
+            return True, 'already decoded'
+        # Retry after a failed run: start the product directory fresh
+        shutil.rmtree(out_dir, ignore_errors=True)
     # Where the satellite sits in the raw baseband: measured from the IQ
     # itself (the dongle error is modeled, transmitters can be off their
     # nominal frequency, Doppler shifts a few kHz — see
     # _measure_signal_offset). The tuner offset is the fallback.
-    # LRPT is a ~72 kHz wide QPSK stream, the DSB telemetry ~6 kHz —
-    # the width makes the offset measurement robust against spurs
-    measured = _measure_signal_offset(iq_path, 72_000 if 'lrpt' in pipeline else 6_000)
+    # LRPT (Meteor M2-X: 80 kbaud OQPSK) fills roughly +/-60 kHz, the DSB
+    # telemetry ~6 kHz - the window width rejects narrowband spurs, and
+    # the measurement's drift/width gates reject local carriers (see
+    # _measure_signal_offset)
+    measured = _measure_signal_offset(iq_path, 120_000 if 'lrpt' in pipeline else 6_000)
     # _measure_signal_offset returns the signal's POSITION in the baseband
     # (negative Hz, e.g. -71425 for a satellite 71.4 kHz below center);
     # frequency_shift rotates BY its argument (signal at f -> f + shift),
@@ -346,12 +454,12 @@ def decode_recording(wav_path, force=False):
     elif sat.startswith('Meteor'):
         # LRPT is a ~72 kHz wide QPSK digital mode — noaa-apt cannot decode
         # it, but the raw IQ capture can (SatDump meteor_m2-x_lrpt)
-        started, msg = _decode_iq(wav_path, 'meteor_m2-x_lrpt', '_lrpt')
+        started, msg = _decode_iq(wav_path, 'meteor_m2-x_lrpt', '_lrpt', force)
         result = (started, None, f'LRPT recording - {msg}')
     elif sat in _DSB_RECEIVE_SATS:
         # APT transmitter off: this satellite is received via its DSB
         # downlink (instrument telemetry) - decodable from the raw IQ
-        started, msg = _decode_iq(wav_path, 'noaa_dsb', '_dsb')
+        started, msg = _decode_iq(wav_path, 'noaa_dsb', '_dsb', force)
         result = (started, None, f'DSB recording - {msg}')
     else:
         result = _decode_apt(wav_path, output_png, sat)

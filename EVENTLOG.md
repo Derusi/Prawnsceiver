@@ -877,3 +877,77 @@ addresses. Removed: local rtl_tcp spawning, serial enumeration
 (rtl_sdr -d 99 probing), stale-process killing, port-conflict checks,
 PLL log checking. The old receiver on the Pi was stopped and its
 @reboot entry removed; the Pi now runs only the daemons.
+### 2026-10-10 12:20 CEST — LRPT decoding live: SatDump on the container + interferer-proof centering
+
+Task: "implement the stuff required for LRPT decoding". The capture side
+(IQ recording on LRPT/DSB frequencies, baseband centering, decode routing)
+already existed; the missing piece on the new container was the SatDump
+binary — plus everything below that only surfaced once it ran.
+
+1. SATDUMP INSTALLED on prawnsdr@192.168.2.73 (Ubuntu 25.04 standard repo,
+   apt, 1.2.0-3). Pipeline verified end-to-end: meteor_m2-x_lrpt on the
+   20261009_201200 M2-3 recording (355 MB, 740 s) decodes in ~112 s on
+   the container — runtime is a non-issue. First run: 0-byte CADU, same
+   signature as the old Pi failures. Cause this time: no satellite (see 2).
+2. NO SATELLITE IN ANY METE RECORDING (spectral forensics, 24-slice
+   time-frequency view of both M2-3 files): every spectral feature is
+   CONSTANT across the pass with ZERO Doppler drift and present before
+   rise — physically impossible for a LEO downlink. A real LRPT signal
+   (80 kbaud OQPSK, ~120 kHz wide, +/-3.4 kHz Doppler over a pass) is
+   nowhere. M2-3 (137.9125, correctly tuned since c594048) and M2-4 LRPT
+   transmitters remain DARK.
+3. LOCAL INTERFERER IDENTIFIED: a persistent ~11 kHz-wide NFM land-mobile
+   channel at ~137.905 MHz (raw -67.3 kHz in 137.9125 tunes; Region-1
+   land mobile band 137.825-138), 20-40x the noise floor, plus other
+   stationary carriers (-28.4/-14.9/-11.1/+32.6 kHz in various
+   recordings). It sits ~7.5 kHz BELOW the LRPT downlink — right inside
+   the recorded band, strong enough to fool any naive measurement. The
+   20:12 decode "measured" -47.6 kHz from it and centered empty spectrum.
+4. MEASUREMENT OVERHAUL (decode.py _measure_signal_offset) so a real
+   signal wins and local junk loses:
+   - Hann-windowed FFTs: a strong carrier's boxcar sinc skirt rides
+     above the noise test across the whole window and pinned the
+     centroid/drift tests onto the spike.
+   - Noise reference = positive-frequency half (the satellite is always
+     negative-side under offset tuning). The full-spectrum median sits
+     ON a plateau that fills half the capture — exactly the LRPT
+     geometry — and the score gate then rejects the satellite it found.
+   - Acceptance gates: -18 dB width of the winning window >= 45% of
+     signal_bw (broadband signal), else centroid drift >= 300 Hz
+     between the recording's first and last thirds (Doppler). A
+     stationary narrow feature = local transmitter -> None, and the
+     caller falls back to the +SDR_OFFSET_HZ rotation (exact on the
+     TCXO v5 whose correction is 0).
+   - 24 dB excess cap in the centroid: a strong narrow carrier
+     out-powers a whole broadband plateau bin-for-bin and pins the
+     drift test onto itself.
+   - Per-slice AGC normalization before the drift comparison: the
+     tuner's AGC pumps the floor +/-30% between slices and faked a
+     3.2 kHz "drift" on a satellite-less hump.
+   - Score threshold 2.0x -> 4.0x: a satellite-less AGC/tuner hump
+     measures 3.0x; only a confident detection may override the
+     (correct) fallback rotation.
+   - LRPT window 72 -> 120 kHz (M2-X LRPT is 80 kbaud OQPSK, ~+/-60
+     kHz; 72 was the old narrow assumption).
+   - PRE-EXISTING BUG FIXED: the slice-span mixed sample and byte
+     units, so the measurement's slices covered only the FIRST QUARTER
+     of a recording — the drift test could never see a real sweep.
+5. PRODUCTS + MARKERS: a finished SatDump decode copies its largest
+   PNG (the composite) into the flat <recording>.png slot the
+   dashboard/history serve; the decode marker is rewritten with the
+   real outcome at completion ('no products' = failed marker, so
+   dark-transmitter recordings stop re-decoding; Retry re-runs for
+   real now by clearing the stale product dir).
+6. TESTS: tests/test_lrpt.py — synthetic drifting/stationary plateaus
+   and carriers, plateau-vs-interferer, noise, product pickup; plus
+   real-data conformance: the 20:12 M2-3 recording measures None at
+   LRPT width (interferer + hump correctly rejected). All other test
+   files still pass (test_decode/test_radio keep their pre-existing
+   Windows-only POSIX failures).
+State: LRPT decoding is READY end-to-end on the container — the first
+ Meteor pass whose LRPT transmitter is actually on will center, decode
+ and show its composite on the dashboard automatically. The local
+ 137.905 MHz NFM channel remains an RF-level risk for weak passes (it
+ jams ~10% of the LRPT band including near the carrier); nothing code-
+ side can fix that — if products stay empty on confirmed-live passes,
+ re-check that channel's activity.

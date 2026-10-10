@@ -18,6 +18,10 @@ Live at: https://prawnceiver.derusi.de
   browser-playable WAV
 - 🖼️ APT decoding — recordings are decoded to weather images with noaa-apt
   (map overlay, auto-rotate), one click from the dashboard
+- 🛰 LRPT/DSB digital decoding — Meteor LRPT (OQPSK) and NOAA DSB
+  recordings cannot be FM-demodulated: their raw IQ is decoded with SatDump
+  (meteor_m2-x_lrpt / noaa_dsb) and the composite image lands next to the
+  recording like an APT PNG
 - 🛰️ ISS SSTV — ISS (Zarya) passes on 437.550 MHz are tracked and recorded;
   Robot 36 images from ARISS events are decoded automatically with the sstv
   tool (`RECORD_ISS` in config.py turns ISS recording off outside events)
@@ -56,6 +60,7 @@ Live at: https://prawnceiver.derusi.de
 - Skyfield — TLE-based pass prediction (TLEs refreshed from SatNOGS with a
   Celestrak fallback every 3 h, plus a local cache)
 - noaa-apt — APT image decoding
+- SatDump — LRPT (Meteor-M) and DSB (NOAA) digital downlink decoding
 - sstv — ISS Slow-Scan TV decoding (Robot 36)
 - nginx — HTTPS reverse proxy (Let's Encrypt) in front of the Python server
 - noaa_receiver/ais.py — AIS demodulation/decoding (GMSK discriminator,
