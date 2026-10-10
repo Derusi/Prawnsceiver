@@ -58,6 +58,7 @@ fakebin = os.path.join(d, 'bin'); os.mkdir(fakebin)
 exe = os.path.join(fakebin, 'satdump'); open(exe, 'w').write(FAKE); os.chmod(exe, 0o755)
 os.environ['PATH'] = fakebin + ':' + os.environ['PATH']
 log = os.path.join(d, 'args'); os.environ['FAKE_LOG'] = log
+ORIG_PATH = os.environ['PATH']   # the missing-binary test clobbers it
 def touch(n):
     p = os.path.join(d, n); open(p, 'wb').write(b'RIFF'); return p
 
@@ -94,7 +95,7 @@ assert not ok and 'not installed' in err, err
 print("decode_recording paths OK")
 
 # ---- decode-attempt markers: failures persist, short-circuit, and can be forced ----
-os.environ['PATH'] = fakebin + ':' + os.environ['PATH']
+os.environ['PATH'] = fakebin + ':' + ORIG_PATH   # restore: the fake needs mkdir etc. on PATH
 d2 = tempfile.mkdtemp()
 wav2 = os.path.join(d2, "NOAA_18_20261007_215400.wav"); open(wav2, 'wb').write(b'RIFF')
 ok, png, err = decode.decode_recording(wav2)
