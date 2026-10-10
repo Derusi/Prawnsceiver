@@ -157,10 +157,13 @@ for frag in nmea:                      # 424 bits -> 2 fragments, checksummed
 print("10. ship table merge + multi-fragment AIVDM: ok")
 
 # --- 12. persistent message log roundtrip ---
-ais.handle_frames([t5], "B", ais.new_channel_state())
+ch12 = ais.new_channel_state()
+ch12["dongle"] = "test-dongle:1"
+ais.handle_frames([t5], "B", ch12)
 log = ais.ais_log(10)          # newest first: test 10's ch-A entry + this one
 assert len(log) == 2 and log[0]["ch"] == "B" and log[1]["ch"] == "A", log
 assert log[0]["mmsi"] == 230985000 and log[0]["name"] == "AILA", log
+assert log[0]["dng"] == "test-dongle:1", log[0]
 assert log[0]["msg"] == 5 and log[0]["nmea"].startswith("!AIVDM,"), log
 assert ais.ais_log(0) == [] or True   # count clamps to >= 1
 print("12. persistent message log (log_message/ais_log): ok")

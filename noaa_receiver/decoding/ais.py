@@ -497,6 +497,8 @@ def handle_frames(payloads, channel, ch_st):
             reg["last_seen"] = now
             reg["last_channel"] = channel
             entry = build_log_entry(d, channel, sentences, now)
+            if ch_st.get("dongle"):
+                entry["dng"] = ch_st["dongle"]
             reg["recent"].append(entry)
             if len(reg["recent"]) > AIS_RECENT_MSGS:
                 del reg["recent"][:len(reg["recent"]) - AIS_RECENT_MSGS]
@@ -718,6 +720,11 @@ def ais_capture_thread(did):
     channel_names = ["A", "B"]
     shifts = _ais_shifts()
     st = [new_channel_state() for _ in shifts]
+    # Dual-AIS support: two dongles may listen at the same time (A/B
+    # comparison); every decoded frame is stamped with the receiving
+    # dongle in the persistent log, so attribution is unambiguous
+    for s_ in st:
+        s_["dongle"] = did
 
     def ais_reception_off():
         """Clear the global AIS markers when this thread stops (dongle
