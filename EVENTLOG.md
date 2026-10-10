@@ -1103,3 +1103,11 @@ the registry from the database immediately AFTER import_legacy() (with
 a comment explaining why the order matters). The 9 ships were
 re-imported into station.db from ais_ships_persist.json.migrated
 (INSERT OR IGNORE - the live-heard ship's row is newer and wins).
+### 2026-10-10 15:50 CEST — dashboard: Danube traffic above the pass list (user request)
+
+The AIS section moves to the top of the main panel: with a dongle
+switched to AIS mode the ship table is the first thing on the
+dashboard, Upcoming Passes follows below (spacing margin moved with
+it). The show/hide logic was already correct - it keys on
+/ais.json:enabled, i.e. any dongle currently in AIS mode. Static
+index.html change, no receiver restart needed for the deploy.
