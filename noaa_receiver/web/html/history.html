@@ -98,7 +98,9 @@ function render() {
                 + qualityBadge(h.quality !== null && h.quality !== undefined ? h.quality : (rec ? rec.quality : null)) + '</div>'
                 + satLine;
             if (rec) {
-                html += '<div class="filename">' + esc(rec.filename) + ' (' + esc(rec.size_mb) + ' MB)</div>';
+                html += '<div class="filename">' + esc(rec.filename) + ' (' + esc(rec.size_mb) + ' MB)</div>'
+                    + (rec.iq ? '<div class="filename" style="color:#888;">' + '📡 raw IQ: '
+                       + esc(rec.iq.filename) + ' (' + rec.iq.size_mb + ' MB) - deleted with the recording</div>' : '');
                 if (rec.recording_in_progress) {
                     html += '<div class="result" style="color:#f39c12;">🔴 Pass is being recorded right now — audio and decoding are available after the pass ends.</div>';
                 } else {
@@ -123,6 +125,8 @@ function render() {
         const rid = 'result-' + safeId(r.filename);
         uhtml += '<div class="pass-card">'
             + '<div class="card-head"><span class="sat">🎧 ' + esc(r.filename) + '</span> &nbsp;|&nbsp; ' + esc(r.size_mb) + ' MB' + qualityBadge(r.quality) + '</div>'
+            + (r.iq ? '<div class="filename" style="color:#888;">' + '📡 raw IQ: '
+                + esc(r.iq.filename) + ' (' + r.iq.size_mb + ' MB) - deleted with the recording</div>' : '')
             + (r.recording_in_progress
                 ? '<div class="result" style="color:#f39c12;">🔴 Pass is being recorded right now — audio and decoding are available after the pass ends.</div>'
                 : decodeButtonsHtml(r)
@@ -160,7 +164,7 @@ async function decodeRecording(filename, force) {
 }
 
 async function deleteRecording(filename) {
-    if (!confirm('Delete ' + filename + ' and its decoded image? This cannot be undone.')) return;
+    if (!confirm('Delete ' + filename + ' with its raw IQ capture and decoded products? This cannot be undone.')) return;
     try {
         const res = await fetch('/delete/' + filename);
         const data = await res.json();

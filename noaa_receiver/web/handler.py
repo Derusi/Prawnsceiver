@@ -874,6 +874,18 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 if os.path.exists(marker):
                     os.remove(marker)
                     deleted.append(os.path.basename(marker))
+                # Raw IQ capture and the SatDump product directories
+                # belong to the recording too - deleting takes the full set
+                iq_path = wav_path[:-4] + '.iq.u8'
+                if os.path.exists(iq_path):
+                    os.remove(iq_path)
+                    deleted.append(os.path.basename(iq_path))
+                import glob
+                import shutil
+                for d in glob.glob(wav_path[:-4] + '_*'):
+                    if os.path.isdir(d):
+                        shutil.rmtree(d)
+                        deleted.append(os.path.basename(d) + '/')
                 state.log_console(f"🗑 Deleted: {', '.join(deleted)}")
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')

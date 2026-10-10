@@ -282,8 +282,14 @@ def _pick_product_png(out_dir):
     outputs are the biggest files, single channels and metadata lose."""
     if not os.path.isdir(out_dir):
         return None   # decoder died before creating any product
+    # The map-overlay composites (SatDump's *_map.png products) are the most
+    # useful single image for the dashboard; without any, the largest PNG
+    # (the full composite) wins over channels and metadata.
+    pngs = [name for name in os.listdir(out_dir)
+            if name.lower().endswith('.png') and os.path.isfile(os.path.join(out_dir, name))]
+    overlay = [n for n in pngs if n.lower().endswith('_map.png')]
     best, best_size = None, 0
-    for name in os.listdir(out_dir):
+    for name in (overlay or pngs):
         p = os.path.join(out_dir, name)
         if name.lower().endswith('.png') and os.path.isfile(p):
             size = os.path.getsize(p)

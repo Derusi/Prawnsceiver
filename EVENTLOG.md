@@ -1010,3 +1010,29 @@ Next live tests of the new decode paths: any Meteor pass (LRPT, honest
 no-product markers expected while the transmitters stay dark) and NOAA
 15 19:33 CEST 64-deg (first SatDump APT image - the A/B against the
 retired noaa-apt output).
+### 2026-10-10 15:07 CEST — recordings wipe (all garbage) + raw IQ in the UI
+
+USER-ORDERED WIPE of every recording, after per-file verification:
+- The one exception was FOUND first: Manual_137.6200_MHz_20261009_110451.wav
+  carried a real NOAA 15 APT signal (1.5-4.5 kHz subcarrier band at 65x the
+  audio floor) - renamed to NOAA_15_20261009_110451.wav and decoded with the
+  new pipeline: THE FIRST REAL SatDump APT IMAGE (calibrated channels,
+  MCIR/MSA/Rain composites with map overlays, 20 s decode for 176 s audio).
+  Kept.
+- Meteor-M_2-4 IQs re-verified before deletion: the -59.2 kHz features are
+  exactly stationary over their recordings (zero Doppler drift - a satellite
+  at that elevation moves 2-4 kHz), the 115410 file's sweeping feature moves
+  at -415 Hz/s = 8x LEO Doppler rate: local interference, not satellites.
+- Everything else (M2-3 x2, NOAA 18/19 DSB, ISS no-ARISS WAVs) was already
+  spectroscopically confirmed dark in the 12:20 deep-dive.
+60 files/dirs removed (~1 GB); recordings dir now holds only the decoded
+NOAA 15 recording + its _apt products.
+
+UI: the history page now shows each recording's raw IQ capture (name + size,
+'📡 raw IQ:' line, shown for in-progress recordings too) and the Delete
+button removes the full artifact set - the /delete endpoint now also takes
+the .iq.u8 and the _lrpt/_dsb/_apt product directories (it previously left
+~300 MB raw files behind). _pick_product_png now prefers SatDump's
+map-overlay composites (*_map.png) for the flat dashboard slot - the
+decoded NOAA 15 recording's slot moves from the no-map MSA composite to
+the map version on its next re-decode. Delete-confirm wording updated.

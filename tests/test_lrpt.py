@@ -116,11 +116,13 @@ print("7. _pick_product_png: largest PNG wins, non-images ignored")
 d = tempfile.mkdtemp()
 for name, size in [("meteor.cadu", 50), ("dataset.json", 300),
                    ("msu_mr_ch1.png", 400), ("msu_mr_rgb_composite.png", 90_000),
+                   ("msu_mr_rgb_composite_map.png", 50_000),
                    ("msu_mr_ir.png", 800)]:
     with open(os.path.join(d, name), 'wb') as f:
         f.write(b"\0" * size)
 pick = _pick_product_png(d)
-check("composite picked", pick is not None and pick.endswith("msu_mr_rgb_composite.png"), str(pick))
+check("map overlay preferred over the bigger non-map composite",
+      pick is not None and pick.endswith("msu_mr_rgb_composite_map.png"), str(pick))
 empty = tempfile.mkdtemp()
 with open(os.path.join(empty, "meteor.cadu"), 'wb') as f:
     f.write(b"\0")

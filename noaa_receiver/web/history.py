@@ -179,5 +179,12 @@ def get_recordings():
                     # A wav that is still being written must not be played or
                     # decoded: its WAV header is stale and the file incomplete
                     "recording_in_progress": bool(active_wav and os.path.abspath(path) == os.path.abspath(active_wav)),
+                    # Raw IQ capture next to the WAV (digital modes: LRPT/DSB
+                    # are recorded as raw baseband alongside the FM audio),
+                    # shown in the UI and deleted WITH the recording.
+                    "iq": {"filename": f.replace('.wav', '.iq.u8'),
+                           "size_mb": round(os.path.getsize(path.replace('.wav', '.iq.u8'))
+                                            / (1024*1024), 1)}
+                          if os.path.exists(path.replace('.wav', '.iq.u8')) else None,
                 })
     return recordings
