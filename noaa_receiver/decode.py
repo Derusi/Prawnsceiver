@@ -1,4 +1,4 @@
-"""Recording decoding: noaa-apt (APT), sstv (ISS), SatDump (LRPT/DSB IQ)."""
+"""Recording decoding: SatDump (APT/LRPT/DSB), sstv (ISS Robot 36)."""
 import json
 import os
 import re
@@ -9,9 +9,10 @@ import time
 
 from . import state
 
-from .config import (NOAA_APT_DIR, NOAA_APT_TIMEOUT_SECS, NOAA_APT_TLE_FILE,
-                     SAT_DSB_FREQ, SDR_OFFSET_HZ, SDR_RATE, TLE_CACHE_FILE,
-                     TRACKED_SATS)
+from datetime import datetime
+
+from .config import (SATDUMP_TIMEOUT_SECS, SAT_DSB_FREQ, SDR_OFFSET_HZ, SDR_RATE,
+                     TLE_CACHE_FILE, TRACKED_SATS)
 from .dsp import frequency_shift, iq_to_complex, new_state
 
 # Recording names are '<sat>_<YYYYMMDD>_<HHMMSS>[-<n>][_<serial>].wav', written by
@@ -19,11 +20,12 @@ from .dsp import frequency_shift, iq_to_complex, new_state
 # matched lazily up to the first timestamp, so names with underscores work.
 _RECORDING_RE = re.compile(r'^(?P<sat>.+?)_(?P<ts>\d{8}_\d{6})(?:-\d+)?(?:_(?P<serial>.+))?\.wav$', re.I)
 
-# noaa-apt satellite ids (map overlay / false color need the right orbit)
-_NOAA_APT_SATS = {"NOAA 15": "noaa_15", "NOAA 18": "noaa_18", "NOAA 19": "noaa_19"}
+# SatDump noaa_apt satellite numbers (the map overlay / projection
+# needs the right orbit)
+_NOAA_APT_SATS = {"NOAA 15": "15", "NOAA 18": "18", "NOAA 19": "19"}
 
 # Satellites received via DSB (APT transmitter off): their recordings hold
-# the DSB instrument-data stream, which noaa-apt cannot decode
+# the DSB instrument-data stream, which the APT pipeline cannot decode
 _DSB_RECEIVE_SATS = {name for catnr, (name, _f) in TRACKED_SATS.items()
                      if catnr in SAT_DSB_FREQ}
 
@@ -447,13 +449,13 @@ def decode_recording(wav_path, force=False):
     output_png = _png_path(wav_path)
     sat = satellite_from_filename(wav_path)
     if sat is None:
-        state.log_console(f"Decode: no tracked satellite in the name of {os.path.basename(wav_path)} — trying noaa-apt without map overlay", "warn")
+        state.log_console(f"Decode: no tracked satellite in the name of {os.path.basename(wav_path)} — trying SatDump APT without orbit info", "warn")
         result = _decode_apt(wav_path, output_png, sat)
     elif sat.startswith('ISS'):
         result = _decode_sstv(wav_path, output_png)
     elif sat.startswith('Meteor'):
-        # LRPT is a ~72 kHz wide QPSK digital mode — noaa-apt cannot decode
-        # it, but the raw IQ capture can (SatDump meteor_m2-x_lrpt)
+        # LRPT is a ~72 kHz wide OQPSK digital mode - the APT pipeline
+        # cannot decode it, but the raw IQ capture can (meteor_m2-x_lrpt)
         started, msg = _decode_iq(wav_path, 'meteor_m2-x_lrpt', '_lrpt', force)
         result = (started, None, f'LRPT recording - {msg}')
     elif sat in _DSB_RECEIVE_SATS:
@@ -500,39 +502,73 @@ def _decode_sstv(wav_path, output_png):
     return True, output_png, None
 
 
-def _decode_apt(wav_path, output_png, sat):
-    """Decode NOAA APT weather images with noaa-apt.
+def _recording_start_ts(wav_path):
+    """Unix timestamp of a recording's start, from its filename
+    (<sat>_<YYYYMMDD>_<HHMMSS>.wav). The capture thread names files with
+    the HOST clock and decode runs on the same host, so parsing the naive
+    name with .timestamp() yields the correct instant on any host
+    timezone. None when the name carries no timestamp."""
+    m = _RECORDING_RE.match(os.path.basename(wav_path))
+    if not m:
+        return None
+    try:
+        dt = datetime.strptime(m.group('ts'), '%Y%m%d_%H%M%S')
+        return int(dt.timestamp())
+    except ValueError:
+        return None
 
-    Map overlay only when the satellite is known (a wrong orbit draws a
-    wrong map) and with our own fresh TLE file when the scheduler has
-    written one. A stale PNG from an earlier attempt is removed first —
-    "output exists" is the success signal, so it must be this run's.
+
+def _decode_apt(wav_path, output_png, sat):
+    """Decode NOAA APT weather images with SatDump (noaa_apt pipeline).
+
+    The recording WAV is the station's 48 kHz FM-demodulated audio; the
+    pipeline's audio_wav stage demodulates the 2.4 kHz APT subcarrier
+    itself. SatDump wedge-calibrates the channels, builds a false-color
+    composite (the avhrr_*_rgb_MCIR product) and draws the map overlay
+    from its own TLE file - seeded from the receiver's TLE cache by
+    _seed_satdump_tles - geo-referenced with the recording's start
+    timestamp. satellite_number selects the orbit (a wrong orbit draws
+    a wrong map), so it is only passed for a known satellite.
+
+    Replaced noaa-apt (overlay + rotation, no calibration) so all three
+    decodes - APT, DSB, LRPT - run through one decoder. Synchronous:
+    ~2.5 min for a 12-min pass on the container (the projection solve
+    dominates; measured 2026-10-10).
+
+    A stale PNG must not count as success, and neither must leftovers
+    of an earlier attempt in the product directory: both go first.
     """
-    sat_arg = _NOAA_APT_SATS.get(sat)
-    exe = shutil.which('noaa-apt') or os.path.join(NOAA_APT_DIR, 'noaa-apt')
-    cmd = [exe, wav_path, '-o', output_png, '-q', '-R', 'auto']
-    if sat_arg:
-        cmd += ['-m', 'yes', '-s', sat_arg]
-        if os.path.exists(NOAA_APT_TLE_FILE):
-            cmd += ['-T', NOAA_APT_TLE_FILE]
-    else:
-        cmd += ['-m', 'no']
+    exe = shutil.which('satdump')
+    if not exe:
+        return False, None, 'SatDump is not installed - cannot decode APT'
+    base, _ = os.path.splitext(wav_path)
+    out_dir = base + '_apt'
+    shutil.rmtree(out_dir, ignore_errors=True)
     _remove_quietly(output_png)
+    _seed_satdump_tles()
+    cmd = [exe, 'noaa_apt', 'audio_wav', wav_path, out_dir]
+    sat_arg = _NOAA_APT_SATS.get(sat)
+    if sat_arg:
+        cmd += ['--satellite_number', sat_arg]
+    start_ts = _recording_start_ts(wav_path)
+    if start_ts:
+        cmd += ['--start_timestamp', str(start_ts)]
+    # Network isolation (unshare) keeps SatDump's Celestrak TLE retries
+    # from stalling the decode on this network - same as the LRPT path
+    if shutil.which('unshare'):
+        cmd = ['unshare', '-rn'] + cmd
     try:
         result = subprocess.run(cmd, capture_output=True, text=True,
-                                timeout=NOAA_APT_TIMEOUT_SECS,
-                                cwd=NOAA_APT_DIR if os.path.isdir(NOAA_APT_DIR) else None)
+                                timeout=SATDUMP_TIMEOUT_SECS)
     except subprocess.TimeoutExpired:
-        _remove_quietly(output_png)   # a half-written image must not pass as decoded
-        return False, None, f'Decode timeout ({NOAA_APT_TIMEOUT_SECS:.0f} s)'
+        return False, None, f'Decode timeout ({SATDUMP_TIMEOUT_SECS:.0f} s)'
     except Exception as e:
-        return False, None, f'noaa-apt could not be run ({exe}): {e}'
-
-    output = (result.stderr or result.stdout or '').strip()
-    last_line = output.splitlines()[-1] if output else ''
-    if os.path.exists(output_png) and os.path.getsize(output_png) > 0:
-        if result.returncode != 0:
-            state.log_console(f"noaa-apt exited {result.returncode} but wrote {os.path.basename(output_png)}: {last_line}", "warn")
-        return True, output_png, None
-    _remove_quietly(output_png)
-    return False, None, last_line or f'noaa-apt exited {result.returncode} without an image'
+        return False, None, f'satdump could not be run ({exe}): {e}'
+    image = _pick_product_png(out_dir)
+    if image is None:
+        output = (result.stderr or result.stdout or '').strip()
+        last_line = output.splitlines()[-1] if output else ''
+        return False, None, last_line or f'satdump exited {result.returncode} without an image'
+    shutil.copyfile(image, output_png)
+    state.log_console(f"🖼 APT decode done ({os.path.basename(wav_path)}): {os.path.basename(image)}")
+    return True, output_png, None

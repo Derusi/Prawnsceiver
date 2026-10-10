@@ -951,3 +951,36 @@ State: LRPT decoding is READY end-to-end on the container — the first
  jams ~10% of the LRPT band including near the carrier); nothing code-
  side can fix that — if products stay empty on confirmed-live passes,
  re-check that channel's activity.
+### 2026-10-10 13:05 CEST — APT decoding switched to SatDump (user request: one decoder)
+
+noaa-apt is out; SatDump decodes APT too now. Verified live before the
+swap: pipeline noaa_apt, input level audio_wav (it demodulates the
+2.4 kHz subcarrier from our 48 kHz FM audio itself), parameters
+--satellite_number (orbit for the overlay/projection) and
+--start_timestamp (geo-reference; parsed from the recording name —
+the capture thread names files with the host clock and decode runs on
+the same host, so naive .timestamp() is correct on any host TZ; the
+container is UTC). Test run on a real WAV (NOAA_18_20261010_120838,
+dark DSB noise): full product set incl. wedge calibration, channel
+images, avhrr_3_rgb_MCIR composite WITH map overlay drawn from the
+TLE file seeded by _seed_satdump_tles. Runtime ~2.5 min for a 12-min
+WAV (the TPS projection solve dominates) -> the synchronous APT
+timeout went 120 -> 600 s (SATDUMP_TIMEOUT_SECS).
+
+- decode.py: _decode_apt rewritten around satdump; products land in
+  <base>_apt/, the composite is copied to the flat <recording>.png slot
+  (same pickup as LRPT/DSB). Gains vs noaa-apt: wedge radiometric
+  calibration, SDR++ noise reduction, false-color MCIR composite —
+  noaa-apt only did overlay + rotation. unknown-satellite recordings
+  decode without --satellite_number (no overlay, as before).
+- Removed with it: NOAA_APT_DIR / NOAA_APT_TLE_FILE config, the
+  passes.py weather.txt writer (noaa-apt's -T overlay TLEs — SatDump's
+  TLE file is seeded from the TLE cache instead), NOAA_APT_TIMEOUT_SECS.
+- tests/test_decode.py rewritten around a fake satdump (POSIX-side;
+  run it on the container). All other suites pass on the dev box.
+- /opt/noaa-apt on the container is now unused — can be uninstalled
+  whenever convenient.
+- Open: the first real NOAA 15 pass after deploy is the live A/B
+  against the old decoder's images (none of the current recordings
+  carry an APT signal — NOAA 18/19 APT are dark, no NOAA 15 WAVs on
+  disk since the Oct 8 wipe).

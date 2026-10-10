@@ -16,8 +16,9 @@ Live at: https://prawnceiver.derusi.de
   frequency-feature overlay (APT band, demod filter, DC spike)
 - 🔊 Live audio — software FM demodulation streams the downlink as a
   browser-playable WAV
-- 🖼️ APT decoding — recordings are decoded to weather images with noaa-apt
-  (map overlay, auto-rotate), one click from the dashboard
+- 🖼️ APT decoding — recordings are decoded to weather images with SatDump
+  (wedge-calibrated channels, false-color composite, map overlay), one
+  click from the dashboard
 - 🛰 LRPT/DSB digital decoding — Meteor LRPT (OQPSK) and NOAA DSB
   recordings cannot be FM-demodulated: their raw IQ is decoded with SatDump
   (meteor_m2-x_lrpt / noaa_dsb) and the composite image lands next to the
@@ -59,8 +60,7 @@ Live at: https://prawnceiver.derusi.de
 - Python 3 + NumPy — FFT waterfall and software FM demodulation
 - Skyfield — TLE-based pass prediction (TLEs refreshed from SatNOGS with a
   Celestrak fallback every 3 h, plus a local cache)
-- noaa-apt — APT image decoding
-- SatDump — LRPT (Meteor-M) and DSB (NOAA) digital downlink decoding
+- SatDump — APT (NOAA), LRPT (Meteor-M) and DSB (NOAA) downlink decoding
 - sstv — ISS Slow-Scan TV decoding (Robot 36)
 - nginx — HTTPS reverse proxy (Let's Encrypt) in front of the Python server
 - noaa_receiver/ais.py — AIS demodulation/decoding (GMSK discriminator,
@@ -85,7 +85,7 @@ The receiver itself runs in a single Python process (`server_noaa.py` → the
 ```
 rtl_tcp (dongle host) ──TCP IQ──▶ capture thread ──▶ FFT ──▶ live waterfall
                                         │
-                                        └─▶ FM demod ──▶ live audio + WAV recording ──▶ noaa-apt ──▶ weather PNG
+                                        └─▶ FM demod ──▶ live audio + WAV recording ──▶ SatDump ──▶ weather PNG
 ```
 
 The scheduler tunes the dongle to the next satellite 60 s before each pass
@@ -98,8 +98,8 @@ rise and records until 60 s after set. Between passes it parks on NOAA 15.
 sudo apt install rtl-sdr python3-numpy nginx
 pip install skyfield
 
-# noaa-apt (APT image decoder) — grab a release binary from
-# https://github.com/martinber/noaa-apt/releases and put it on PATH
+# SatDump (APT / LRPT / DSB decoder)
+sudo apt install satdump
 
 # sstv (ISS SSTV decoder)
 pip install sstv

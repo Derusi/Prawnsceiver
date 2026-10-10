@@ -12,13 +12,12 @@ PASS_HISTORY_FILE = os.path.join(LOGDIR, "pass_history.json")
 # Dongles added at runtime (dashboard "Add dongle") persist across restarts
 # as a JSON list of {"host": ..., "port": ...} entries
 DONGLES_FILE = os.path.join(LOGDIR, "dongles.json")
-# noaa-apt (APT image decoder): install directory (its res/ folder must be
-# the working directory), per-decode timeout, and the TLE file the
-# scheduler writes for its map overlay (3-line format, refreshed with the
-# pass-prediction TLEs so the overlay never uses noaa-apt's bundled stale set)
-NOAA_APT_DIR = "/opt/noaa-apt"
-NOAA_APT_TIMEOUT_SECS = 120
-NOAA_APT_TLE_FILE = os.path.join(LOGDIR, "weather.txt")
+# SatDump (APT / DSB / LRPT decoder; apt-installed on the receiver):
+# timeout for the synchronous APT decode of one recording. The map
+# projection solve dominates (~2.5 min for a 12-min pass on the
+# container, measured 2026-10-10). The digital LRPT/DSB decodes run
+# detached with their own longer timeout in decode.py.
+SATDUMP_TIMEOUT_SECS = 600
 # The dashboard (index.html, images) is served straight from the project
 # directory - the receiver is no longer tied to one deployment host
 WEBDIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -49,7 +48,7 @@ UTC_OFFSET = 2  # Germany UTC+2
 # spectrum. A tune anywhere in 137.86-137.96 captures the LRPT band:
 # the recording spans +/-120 kHz and the decode measures the actual
 # signal position). Decoded from the raw IQ with SatDump (meteor_m2-x_lrpt,
-# see decode.py) - noaa-apt cannot. Both Meteor LRPT transmitters have been
+# see decode.py) - the APT pipeline cannot. Both Meteor LRPT transmitters have been
 # dark in every pass received so far (verified 2026-10-10: no satellite
 # signal in any Meteor IQ recording, just local land-mobile carriers).
 TRACKED_SATS = {

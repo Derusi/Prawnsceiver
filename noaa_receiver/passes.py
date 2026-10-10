@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import state
 from .plan import receive_plan, transmitter_status
-from .config import LAT, LON, NOAA_APT_TLE_FILE, TRACKED_SATS, PASS_MIN_ALT, SAT_DSB_FREQ, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
+from .config import LAT, LON, TRACKED_SATS, PASS_MIN_ALT, SAT_DSB_FREQ, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
 
 try:
     from skyfield.api import load, wgs84, EarthSatellite
@@ -121,16 +121,6 @@ def refresh_tles():
                     json.dump(tle_data, f)
             except Exception as e:
                 state.log_console(f"TLE cache write failed: {e}", "warn")
-            # Same TLEs in 3-line format for noaa-apt's map overlay (-T),
-            # written atomically so a decode never reads a half file
-            try:
-                tmp = NOAA_APT_TLE_FILE + '.tmp'
-                with open(tmp, 'w') as f:
-                    for lines in tle_data.values():
-                        f.write('\n'.join(lines) + '\n')
-                os.replace(tmp, NOAA_APT_TLE_FILE)
-            except Exception as e:
-                state.log_console(f"noaa-apt TLE file write failed: {e}", "warn")
         elif os.path.exists(TLE_CACHE_FILE):
             # Celestrak unreachable: reuse the last good TLEs
             state.log_console("TLE fetch failed for all satellites, using cached TLEs", "warn")

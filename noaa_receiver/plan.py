@@ -38,7 +38,7 @@ def receive_plan(catnr, sat_name):
         return ('SSTV',
                 'SSTV Robot 36 (only during ARISS events) — audio recording, sstv decoder',
                 None, False)
-    return ('APT', 'APT analog weather image — audio recording, noaa-apt PNG',
+    return ('APT', 'APT analog weather image — audio recording, SatDump PNG',
             None, False)
 
 
