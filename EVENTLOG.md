@@ -1243,3 +1243,35 @@ waterfall method, live during high-rate mode (960 kHz, 1875 Hz bins):
 Collateral: the NOAA 19 DSB recording (started 19:04) was sacrificed
 for the measurement (user call) - two manual-tune gaps in its
 WAV/IQ where the FM band was measured mid-pass.
+
+
+### 2026-10-10 20:15 CEST — GSM BTS tried as a frequency reference: refarmed away here, no verified FCCH (experiment closed)
+
+Following the v5 calibration (a8f07d0), tried GSM base stations as a
+GPS-locked reference (3GPP BTS spec +/-0.05 ppm; FCCH = pure CW tone
+at +67708.33 Hz on every BCCH - the classic SDR calibration trick).
+Method: direct rtl_tcp client from the container, dongle PAUSED via
+/pause_dongle (the clean way - no client fight; an earlier attempt
+without pausing collapsed the stream and left two stray pythons
+fighting the receiver, killed by PID). Spur discriminator: a real
+FCCH must vanish when the dongle is retuned +/-200 kHz; an LO/clock
+spur keeps its offset.
+- E-GSM 900 downlink 935-960: REFARMED - the strong signals sit OFF
+  the 200 kHz GSM raster (LTE Band 8, 100 kHz raster centers). The
+  FCCH window (+/-1.5 kHz around +67.7 kHz) is a spur forest:
+  adjacent slots report IDENTICAL line offsets (e.g. +655.9/+656.8,
+  +1388.4/+1388.6 - spurs track the tune); recurring spur offsets
+  -61.9, +641, +743, +1037, +1360, +1476, -1160 Hz at ratios up
+  to 460. Nothing survived the retune test.
+- GSM-R 921-925 (rail corridor): one weak line, spur-verified.
+- DCS1800 1805-1880: broad spur plateau 1871-1880 MHz at -985 Hz
+  offset, present at every tune with ratios 90-460; nothing
+  verified. The -985 Hz family also appeared at 900 MHz.
+Verdict: no usable GSM reference from this site/antenna; 2G is
+likely gone from E-GSM900 here. The v5 calibration stands on the
+DSB-pass measurement (+0.3 ppm <= TCXO spec, corrections 0).
+If a BTS reference is ever wanted: DCS1800 FCCH with a real 1800
+MHz antenna plus a time-domain blink test (FCCH has 1.2% duty,
+spurs are continuous) would be the way; TETRA BOS 380-400 MHz
+(GPS-locked) remains untested. Operational: dongle unpaused after
+each sweep, receiver self-reconnected every time.
