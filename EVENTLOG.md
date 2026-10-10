@@ -984,3 +984,29 @@ timeout went 120 -> 600 s (SATDUMP_TIMEOUT_SECS).
   against the old decoder's images (none of the current recordings
   carry an APT signal — NOAA 18/19 APT are dark, no NOAA 15 WAVs on
   disk since the Oct 8 wipe).
+### 2026-10-10 12:45 UTC — deploy: LRPT chain + APT-on-SatDump live; dongle registry AIS flag fixed
+
+Deployed eb9279b/53780c3 (LRPT interferer-proof centering + APT via
+SatDump) to the container in the idle window before the 15:11 CEST
+Meteor-M 2-4 86-degree pass: push, git pull, test_decode.py run ON the
+container (it caught two real issues the Windows box cannot: a crash in
+_pick_product_png when the decoder dies before writing products, and a
+test-PATH bug - both fixed in eb9279b/53780c3), systemctl --user
+restart with pass_active false.
+
+POST-RESTART FINDING (station config, not code): dongles.json had the
+satellite dongle (v5, 192.168.3.245:1234) persisted with "ais": true -
+a leftover of the AIS experiments - so the only connected dongle was the
+AIS receiver and SATELLITE RECORDING WAS OFF after every restart. The
+actual AIS dongle (R820T, port 1235) is offline: the Pi serves only
+1234 right now (no rtl-tcp@... unit, one python3 listener on 1234).
+Fixed via the dashboard API (/ais_dongle?...&on=0): v5 back to
+satellite duty, registry now persists "ais": false. AIS stays OFF
+until the R820T is plugged in and rtl-tcp@77771111153705700.service
+(port 1235) is started on the Pi - then pin it with the card button or
+calibration.AIS_DONGLE.
+
+Next live tests of the new decode paths: any Meteor pass (LRPT, honest
+no-product markers expected while the transmitters stay dark) and NOAA
+15 19:33 CEST 64-deg (first SatDump APT image - the A/B against the
+retired noaa-apt output).
