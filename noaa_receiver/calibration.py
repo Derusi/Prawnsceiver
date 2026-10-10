@@ -7,10 +7,10 @@ recalibrating a dongle (or plugging in a new one) never touches config.py.
 """
 
 # Dongles are remote rtl_tcp servers ("host:port" - see radio.py): a machine
-# with the dongles attached runs one rtl_tcp daemon per dongle, and the
-# receiver connects to it over the network. The physical dongle behind an
-# address is pinned by the SERVING host (e.g. rtl-tcp@<serial>.service on
-# the Pi), so these entries identify a dongle by its network address.
+# with the dongles attached publishes one rtl_tcp server per dongle (the
+# prawntenna manager), and the receiver connects to it over the network.
+# The physical dongle behind an address is pinned by the SERVING host,
+# so these entries identify a dongle by its network address.
 #
 # Primary dongle: the rtl_tcp address whose dongle feeds live audio and WAV
 # recording. If this address is not registered at startup, the first added

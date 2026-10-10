@@ -2,9 +2,9 @@
 
 All attached dongles run on the same frequency with the same settings (they
 re-tune together via state.current_frequency). A dongle is a REMOTE rtl_tcp
-server identified by "host:port" — e.g. a Raspberry Pi running one
-rtl-tcp@<serial>.service daemon per dongle (the serving host pins which
-physical dongle answers on which port). The receiver owns no USB devices:
+server identified by "host:port" — e.g. the prawntenna dongle manager on
+the Pi publishing one rtl_tcp server per dongle (the serving host pins
+which physical dongle answers on which port). The receiver owns no USB devices:
 it connects out, and dongles are added/removed at runtime from the
 dashboard (radio.add_dongle / remove_dongle, persisted in DONGLES_FILE).
 

@@ -133,22 +133,14 @@ python3 server_noaa.py
 
 Then open http://your-pi:8085 in your browser.
 
-### Dongle host: rtl_tcp daemons
+### Dongle host: the prawntenna manager
 
-The dongles live on a separate machine (a Raspberry Pi in this station).
-Install the RTL tools, keep the kernel from claiming the dongles for DVB-T,
-and run one persistent `rtl_tcp` per dongle, bound to the LAN:
-
-```bash
-sudo apt install rtl-sdr
-echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf
-
-# ~/rtl_tcp_daemon.sh: map each dongle serial to a port (see the repo's
-# dongle-host/rtl_tcp_daemon.sh for the template), then:
-# ~/.config/systemd/user/rtl-tcp@.service runs it with Restart=always.
-systemctl --user enable --now rtl-tcp@48263793          # serial → port 1234
-loginctl enable-linger                                   # start at boot
-```
+The dongles live on a separate machine (a Raspberry Pi in this station)
+running [prawntenna](https://github.com/iludr/Prawntenna), a small web
+manager that enumerates the attached RTL-SDRs and publishes each one as
+a standard `rtl_tcp` server on the LAN (ports are remembered per dongle
+serial; a wedged `rtl_tcp` is killed and republished automatically — see
+its API.md for the HTTP control API and the rtl_tcp protocol).
 
 The receiver picks dongles up by address: open the dashboard and use
 the **Add** field under "SDR Dongles (rtl_tcp)" (IP + port), or start
