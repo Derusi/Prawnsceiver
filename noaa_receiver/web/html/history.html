@@ -40,6 +40,12 @@ audio { width: 100%; margin-top: 6px; height: 30px; }
 const decodingInProcess = {};
 let historyData = [];
 let recordingsData = [];
+function productsHtml(rec) {
+    return '<div class="filename" style="margin-top:6px;">' + '📂 Products (' + rec.products.length + '):'
+        + rec.products.map(p => '<div style="padding:1px 0 1px 14px;"><a href="/products/' + encodeURIComponent(p.path) + '" target="_blank">'
+            + esc(p.name) + '</a> <span style="color:#888;">(' + p.size_kb + ' kB)</span></div>').join('')
+        + '</div>';
+}
 
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function safeId(f) { return f.replace(/[^a-zA-Z0-9]/g, ''); }
@@ -71,7 +77,6 @@ function render() {
             const q = h.max_alt >= 35 ? 'high' : (h.max_alt >= 15 ? 'medium' : 'low');
             const qi = q === 'high' ? '🟢' : (q === 'medium' ? '🟡' : '🔴');
             const rec = h.wav ? recordingsData.find(r => r.filename === h.wav) : null;
-            const img = (h.png && rec && rec.png) ? h.png : (rec && rec.png ? rec.png : null);
             const rid = h.wav ? 'result-' + safeId(h.wav) : '';
             // SatNOGS DB snapshot stored with the pass (hover for transmitters)
             let satLine = '';
@@ -108,7 +113,7 @@ function render() {
                         + '<button class="danger" onclick="deleteRecording(\'' + esc(rec.filename) + '\')">🗑 Delete</button>'
                         + '<audio controls preload="none"><source src="/audio/' + esc(rec.filename) + '" type="audio/wav"></audio>'
                         + '<div class="result" id="' + rid + '"></div>'
-                        + (img ? '<img class="decoded-img" src="/thumbs/' + esc(img) + '" alt="APT image" loading="lazy" title="Click to open the full-size image" onclick="window.open(\'/images/' + esc(img) + '\')" style="cursor:pointer;">' : '');
+                        + (rec.products && rec.products.length ? productsHtml(rec) : '');
                 }
             } else {
                 html += '<div class="muted" style="padding:4px 0;">' + (h.wav ? 'recording file deleted' : 'no recording on disk') + '</div>';
@@ -133,7 +138,7 @@ function render() {
                     + '<button class="danger" onclick="deleteRecording(\'' + esc(r.filename) + '\')">🗑 Delete</button>'
                     + '<audio controls preload="none"><source src="/audio/' + esc(r.filename) + '" type="audio/wav"></audio>'
                     + '<div class="result" id="' + rid + '"></div>')
-            + (r.png && !r.recording_in_progress ? '<img class="decoded-img" src="/thumbs/' + esc(r.png) + '" alt="APT image" loading="lazy" title="Click to open the full-size image" onclick="window.open(\'/images/' + esc(r.png) + '\')" style="cursor:pointer;">' : '')
+            + (r.products && r.products.length ? productsHtml(r) : '')
             + '</div>';
     }
     utable.innerHTML = uhtml;

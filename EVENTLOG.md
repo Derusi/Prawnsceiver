@@ -1036,3 +1036,14 @@ the .iq.u8 and the _lrpt/_dsb/_apt product directories (it previously left
 map-overlay composites (*_map.png) for the flat dashboard slot - the
 decoded NOAA 15 recording's slot moves from the no-map MSA composite to
 the map version on its next re-decode. Delete-confirm wording updated.
+### 2026-10-10 15:12 CEST — history page: product links instead of one image
+
+The history tab no longer shows a single decoded image per recording -
+it lists EVERY generated decode product (SatDump's full set: MCIR/MSA/
+Rain composites with and without map overlays, calibrated channels,
+raw_sync/raw_unsync, dataset.json) as links with sizes. New /products/
+<dir>/<file> endpoint serves files from the product subdirectories
+(one level, traversal-sanitized; the old /images route only serves
+flat files). get_recordings exposes iq + products per recording; the
+formerly dead img variable is gone. The post-decode inline preview in
+the result box stays as the manual-decode success indicator.

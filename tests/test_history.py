@@ -43,4 +43,25 @@ history.log_pass("Meteor-M 2-3", 137912500, 19.4, 7.0, rise(30), rise(450),
 h = history._load_history()
 assert len(h) == 3 and h[-1]["sat_name"] == "Meteor-M 2-3", h
 
+
+# ---- get_recordings: raw IQ info + decode product list ----
+d = tempfile.mkdtemp()
+os.makedirs(os.path.join(d, 'NOAA_15_20261007_215400_apt'))
+open(os.path.join(d, 'NOAA_15_20261007_215400.wav'), 'wb').write(b'RIFF')
+open(os.path.join(d, 'NOAA_15_20261007_215400.iq.u8'), 'wb').write(b'\0' * 1024 * 1024)
+open(os.path.join(d, 'NOAA_15_20261007_215400_apt', 'avhrr_3_rgb_MCIR_map.png'), 'wb').write(b'x' * 2048)
+saved_dir, saved_hist = history.RECORD_DIR, history.PASS_HISTORY_FILE
+history.RECORD_DIR, history.PASS_HISTORY_FILE = d, os.path.join(d, 'no_history.json')
+try:
+    r = history.get_recordings()[0]
+    assert r['iq'] and r['iq']['filename'] == 'NOAA_15_20261007_215400.iq.u8', r
+    assert r['iq']['size_mb'] == 1.0, r
+    assert len(r['products']) == 1, r
+    assert r['products'][0]['name'] == 'avhrr_3_rgb_MCIR_map.png', r
+    assert r['products'][0]['size_kb'] == 2.0, r
+    assert r['products'][0]['path'] == 'NOAA_15_20261007_215400_apt/avhrr_3_rgb_MCIR_map.png', r
+finally:
+    history.RECORD_DIR, history.PASS_HISTORY_FILE = saved_dir, saved_hist
+print("get_recordings products OK")
+
 print("pass-history merge OK")

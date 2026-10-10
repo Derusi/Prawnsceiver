@@ -966,6 +966,33 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             with open(tpath, 'rb') as f:
                 self.wfile.write(f.read())
+        elif self.path.startswith('/products/'):
+            # Decode products live in subdirectories next to their
+            # recording (<base>_apt/, _lrpt/, _dsb/). Serve exactly one
+            # directory level, sanitized: the path must be
+            # /products/<dir>/<file> with no traversal.
+            from urllib.parse import unquote
+            parts = unquote(self.path[10:]).split('?', 1)[0].split('/')
+            if len(parts) != 2 or not all(parts) or any('..' in p for p in parts):
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'Invalid product path')
+                return
+            ppath = os.path.join(RECORD_DIR, parts[0], parts[1])
+            if not os.path.isfile(ppath):
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b'Product not found')
+                return
+            ctype = ('image/png' if parts[1].lower().endswith('.png')
+                     else 'application/json' if parts[1].lower().endswith('.json')
+                     else 'application/octet-stream')
+            self.send_response(200)
+            self.send_header('Content-type', ctype)
+            self.send_header('Cache-Control', 'max-age=3600')
+            self.end_headers()
+            with open(ppath, 'rb') as f:
+                self.wfile.write(f.read())
         else:
             super().do_GET()
     def send_header(self, keyword, value):

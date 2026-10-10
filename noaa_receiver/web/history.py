@@ -1,3 +1,4 @@
+import glob
 """Pass history log and recording file management."""
 import json
 import os
@@ -186,5 +187,16 @@ def get_recordings():
                            "size_mb": round(os.path.getsize(path.replace('.wav', '.iq.u8'))
                                             / (1024*1024), 1)}
                           if os.path.exists(path.replace('.wav', '.iq.u8')) else None,
+                    # Every generated decode product (SatDump product
+                    # directories next to the recording, e.g. <base>_apt/):
+                    # the history page links them all instead of one image
+                    "products": [
+                        {"name": pname,
+                         "size_kb": round(os.path.getsize(os.path.join(pdir, pname)) / 1024.0, 1),
+                         "path": os.path.basename(pdir) + '/' + pname}
+                        for pdir in sorted(glob.glob(os.path.join(RECORD_DIR, f[:-4] + '_*')))
+                        if os.path.isdir(pdir)
+                        for pname in sorted(os.listdir(pdir))
+                        if os.path.isfile(os.path.join(pdir, pname))],
                 })
     return recordings
