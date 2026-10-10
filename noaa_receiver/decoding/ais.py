@@ -827,10 +827,12 @@ def ais_capture_thread(did):
         if entry.get("closed") or not entry.get("ais"):
             ais_reception_off()
             return
+        # like sdr_capture_thread: cap at 15 s - the prawntenna manager
+        # republishes a wedged rtl_tcp within ~30 s (see its API.md)
         if time.time() - run_started >= 30:
             restart_backoff = 5.0
         else:
-            restart_backoff = min(restart_backoff * 2, 60.0)
+            restart_backoff = min(restart_backoff * 2, 15.0)
         time.sleep(restart_backoff)
 
 # ---------- test/simulation helpers (used by tests/test_ais.py) ----------

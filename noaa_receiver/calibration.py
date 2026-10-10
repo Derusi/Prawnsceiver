@@ -17,24 +17,25 @@ recalibrating a dongle (or plugging in a new one) never touches config.py.
 # non-AIS dongle becomes primary.
 # 2026-10-08: the NESDR SMArt v5 (R820T2, 0.5 ppm TCXO) replaces the ancient
 # generic R820T as primary; the R820T moves to AIS. Served by the Pi
-# (Krabstral, 192.168.3.245) as rtl-tcp@48263793.service on port 1234.
+# (prawntenna, 192.168.3.245): its dongle manager (web API on :8080, see
+# prawntenna/API.md) publishes serial 48263793 as rtl_tcp on port 1234.
 PRIMARY_DONGLE = "192.168.3.245:1234"
 
 # AIS dongle: rtl_tcp address of a dongle dedicated to ship-traffic reception
 # (161.975/162.025 MHz, Danube vessels -- see noaa_receiver/ais.py). AIS
 # needs a continuously listening receiver, so a dongle pinned here is
 # excluded from satellite tracking and never becomes the primary. The
-# generic R820T (77771111153705700) is served on the Pi as
-# rtl-tcp@77771111153705700.service on port 1235. None = off.
+# generic R820T (serial 77771111153705700) is published by the Pi's dongle
+# manager as rtl_tcp on port 1235 (see prawntenna/API.md). None = off.
 AIS_DONGLE = "192.168.3.245:1235"
 
 # Dongles registered at startup when no persisted list exists yet (the
-# dashboard's "Add dongle" writes runtime additions to DONGLES_FILE; that
-# file then wins over this default). One (host, port) per rtl_tcp daemon.
+# dashboard's "Add dongle" persists runtime additions in station.db's
+# dongles table; that table then wins over this default). One (host,
+# port) per rtl_tcp server published by the prawntenna manager on the Pi.
 DEFAULT_DONGLES = [
-    ("192.168.3.245", 1234),   # NESDR SMArt v5 (primary)
-    # ("192.168.3.245", 1235),  # generic R820T (AIS) - plug in + start
-#                               rtl-tcp@77771111153705700.service first
+    ("192.168.3.245", 1234),   # NESDR SMArt v5 (serial 48263793, primary)
+    ("192.168.3.245", 1235),   # generic R820T (serial 77771111153705700, AIS)
 ]
 
 

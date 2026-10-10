@@ -695,10 +695,12 @@ def sdr_capture_thread(did):
         if entry.get('closed') or entry.get('ais'):
             return
         # Backoff when the rtl_tcp server stays unreachable (daemon down,
-        # host off, network drop): 5 s doubling up to 60 s; reset after a
-        # stable run
+        # host off, network drop): 5 s doubling up to 15 s, reset after a
+        # stable run. The prawntenna manager (see its API.md) kills a
+        # wedged rtl_tcp and republishes the same port within ~30 s, so
+        # retrying more slowly than that only adds dead air.
         if time.time() - run_started >= 30:
             restart_backoff = 5.0
         else:
-            restart_backoff = min(restart_backoff * 2, 60.0)
+            restart_backoff = min(restart_backoff * 2, 15.0)
         time.sleep(restart_backoff)
