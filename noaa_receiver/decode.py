@@ -280,6 +280,8 @@ def _pick_product_png(out_dir):
     next to the WAV and never list product subdirectories, so a finished
     decode reduces to its largest PNG: the full composite (RGB/IR)
     outputs are the biggest files, single channels and metadata lose."""
+    if not os.path.isdir(out_dir):
+        return None   # decoder died before creating any product
     best, best_size = None, 0
     for name in os.listdir(out_dir):
         p = os.path.join(out_dir, name)
