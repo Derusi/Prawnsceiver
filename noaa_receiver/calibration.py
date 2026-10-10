@@ -90,7 +90,16 @@ SDR_DONGLE_CORRECTIONS = {
 # fixed value is MEASURED for a specific dongle (sweep gain on a strong FM
 # station / NOAA pass, pick the knee before noise floor rise); do not guess
 # from a guide's number for a different dongle.
-SDR_DONGLE_GAIN = {}
+# 2026-10-10 AIS overload experiment: the R820T with the resonant 46 cm
+# whip is dominated by a strong local BOS carrier at ~162.075 MHz (measured:
+# invisible to the v5's 137 MHz V-dipole, gone when retuned to 137 MHz - real
+# RF, not a spur). AGC pumps on it and the AIS demod decodes nothing (0 frames
+# vs the v5's 493 on the same band/time, ~68 false burst triggers/s). Fixed
+# 40.2 dB (~10 dB under the AGC-equivalent) tests whether the failure is AGC
+# pumping or genuine front-end overload.
+SDR_DONGLE_GAIN = {
+    "192.168.3.245:1235": 40.2,   # generic R820T (AIS) - fixed gain experiment
+}
 
 def correction_info(freq_hz, dongle=None):
     """(correction_hz, source) describing the tuning correction applied to a
