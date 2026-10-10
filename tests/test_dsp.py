@@ -7,7 +7,7 @@ import time
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import numpy as np
-from noaa_receiver import dsp
+from noaa_receiver.sdr import dsp
 from noaa_receiver.config import SDR_RATE, DECIMATION, SDR_OFFSET_HZ, IQ_BLOCK
 
 fs = SDR_RATE

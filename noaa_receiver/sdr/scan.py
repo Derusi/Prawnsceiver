@@ -47,8 +47,8 @@ import time
 
 import numpy as np
 
-from . import state
-from .config import FFT_SIZE, SDR_OFFSET_HZ, SDR_RATE
+from .. import state
+from ..config import FFT_SIZE, SDR_OFFSET_HZ, SDR_RATE
 
 SCAN_SETTLE_SECS = 0.25    # discard first samples after a retune (tuner re-lock)
 SCAN_DWELL_SECS = 0.7      # measurement window per step

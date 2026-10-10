@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 # and killed every satellite capture thread at runtime, unnoticed until
 # deploy): every name the capture threads reference at module level must
 # resolve. Updated 2026-10-09 for the network-dongle architecture.
-import noaa_receiver.radio as _radio
+import noaa_receiver.sdr.radio as _radio
 for _n in ("AIS_DONGLE", "FM_BAND", "PRIMARY_DONGLE", "DEFAULT_DONGLES",
             "SDR_DONGLE_GAIN", "correction_info", "tuning_correction",
             "add_dongle", "remove_dongle", "sdr_thread", "set_dongle_ais"):
@@ -25,7 +25,8 @@ for _n in ("AIS_DONGLE", "FM_BAND", "PRIMARY_DONGLE", "DEFAULT_DONGLES",
 print("radio namespace guard: ok")
 import numpy as np
 from collections import deque
-from noaa_receiver import radio, state
+from noaa_receiver.sdr import radio
+from noaa_receiver import state
 from noaa_receiver.config import AIS_CENTER_HZ, SDR_OFFSET_HZ, WATERFALL_ROWS
 from noaa_receiver.calibration import tuning_correction
 
@@ -259,7 +260,7 @@ print("9 unique names on fast re-split:", [n for n in names if 'NOAA_19' in n])
 # satellite thread exits, the AIS thread tunes 162 MHz and marks the
 # receiver enabled; a pending manual recording is dropped with the role;
 # switching back restarts satellite capture on the shared frequency.
-from noaa_receiver import ais as _ais
+from noaa_receiver.decoding import ais as _ais
 assert radio.set_dongle_ais('nope:1', True) is False    # unknown dongle
 with state.status_lock: state.manual_recording[DID] = True
 wait_for(lambda: entry['is_recording'], what='manual recording before the AIS switch')

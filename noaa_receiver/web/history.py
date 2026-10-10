@@ -3,9 +3,9 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
-from . import state
-from .config import PASS_HISTORY_FILE, RECORD_DIR, UTC_OFFSET
-from .decode import read_decode_marker
+from .. import state
+from ..config import PASS_HISTORY_FILE, RECORD_DIR, UTC_OFFSET
+from ..decoding.decode import read_decode_marker
 
 def log_pass(sat_name, frequency, max_alt, duration_min, rise_time, set_time, signal_peak, decoded, png_file, wav_file, quality=None, satnogs=None):
     """Log a completed pass (with recording metadata) to the history file.

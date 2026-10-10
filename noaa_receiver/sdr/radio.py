@@ -26,15 +26,15 @@ import wave
 from collections import deque
 from datetime import datetime
 
-from . import state
-from .calibration import (AIS_DONGLE, DEFAULT_DONGLES, FM_BAND, PRIMARY_DONGLE,
+from .. import state
+from ..calibration import (AIS_DONGLE, DEFAULT_DONGLES, FM_BAND, PRIMARY_DONGLE,
                           SDR_DONGLE_GAIN, correction_info, tuning_correction)
-from .config import (AUDIO_RATE, DOPPLER_APPLY_RANGE_HZ, DECIMATION, DONGLES_FILE,
+from ..config import (AUDIO_RATE, DOPPLER_APPLY_RANGE_HZ, DECIMATION, DONGLES_FILE,
                      FFT_SIZE, IQ_BLOCK, IQ_RECORD_FREQS, LOGDIR, RECORD_DIR,
                      SAT_DSB_DEMOD_BW_HZ, SAT_DSB_FREQ, SDR_GAIN,
                      SDR_OFFSET_HZ, SDR_RATE, WATERFALL_ROWS)
 
-from .decode import sat_short_name
+from ..decoding.decode import sat_short_name
 from .dsp import doppler_shift, fm_demodulate, frequency_shift, iq_to_complex, new_state
 
 # Waterfall/signal FFT cadence: compute the FFT only every Nth IQ block. The
@@ -342,7 +342,7 @@ def sdr_thread():
                 t = None
             if t is None:
                 if entry.get('ais'):
-                    from .ais import ais_capture_thread
+                    from ..decoding.ais import ais_capture_thread
                     t = threading.Thread(target=ais_capture_thread, args=(did,),
                                          daemon=True, name=f'ais-{did}')
                 else:

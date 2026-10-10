@@ -5,9 +5,9 @@ import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from . import state
+from .. import state
 from .plan import receive_plan, transmitter_status
-from .config import LAT, LON, TRACKED_SATS, PASS_MIN_ALT, SAT_DSB_FREQ, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
+from ..config import LAT, LON, TRACKED_SATS, PASS_MIN_ALT, SAT_DSB_FREQ, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
 
 try:
     from skyfield.api import load, wgs84, EarthSatellite

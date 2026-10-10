@@ -1,4 +1,4 @@
 """NOAAh's CrabArk — modular NOAA APT satellite receiver package."""
-from .app import main
+from .web.app import main
 
 __all__ = ["main"]

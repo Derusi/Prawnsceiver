@@ -8,7 +8,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-from noaa_receiver import history   # noqa: E402
+from noaa_receiver.web import history   # noqa: E402
 
 d = tempfile.mkdtemp()
 history.PASS_HISTORY_FILE = os.path.join(d, 'pass_history.json')

@@ -15,7 +15,7 @@ import wave
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-from noaa_receiver import quality   # noqa: E402
+from noaa_receiver.decoding import quality   # noqa: E402
 
 RATE = 48000
 

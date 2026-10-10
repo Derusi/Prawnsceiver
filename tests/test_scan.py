@@ -26,7 +26,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
-from noaa_receiver import scan, state
+from noaa_receiver.sdr import scan
+from noaa_receiver import state
 from noaa_receiver.config import FFT_SIZE, SDR_OFFSET_HZ, SDR_RATE
 
 BIN_HZ = SDR_RATE / FFT_SIZE

@@ -3,14 +3,14 @@ import os
 import socketserver
 import threading
 
-from . import state
-from .config import LAT, LON, LOGDIR, PASS_MIN_ALT, PORT, RECORD_DIR
+from .. import state
+from ..config import LAT, LON, LOGDIR, PASS_MIN_ALT, PORT, RECORD_DIR
 
 from .handler import NOAAHandler
 from .history import migrate_pass_history
-from .plan import prime_transmitters
-from .radio import sdr_thread
-from .scheduler import scheduler_thread
+from ..tracking.plan import prime_transmitters
+from ..sdr.radio import sdr_thread
+from ..tracking.scheduler import scheduler_thread
 
 
 def main():

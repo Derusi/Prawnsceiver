@@ -63,7 +63,7 @@ Live at: https://prawnceiver.derusi.de
 - SatDump — APT (NOAA), LRPT (Meteor-M) and DSB (NOAA) downlink decoding
 - sstv — ISS Slow-Scan TV decoding (Robot 36)
 - nginx — HTTPS reverse proxy (Let's Encrypt) in front of the Python server
-- noaa_receiver/ais.py — AIS demodulation/decoding (GMSK discriminator,
+- noaa_receiver/decoding/ais.py — AIS demodulation/decoding (GMSK discriminator,
   HDLC deframing, CRC-16/SDLC, ship database) — pure NumPy, no extra deps
 
 ## Architecture
@@ -90,6 +90,22 @@ rtl_tcp (dongle host) ──TCP IQ──▶ capture thread ──▶ FFT ──�
 
 The scheduler tunes the dongle to the next satellite 60 s before each pass
 rise and records until 60 s after set. Between passes it parks on NOAA 15.
+
+### Repo layout
+
+The `noaa_receiver/` package is grouped by topic:
+
+```
+noaa_receiver/
+├── config.py, calibration.py, state.py   # station core: config, dongle calibration, shared state
+├── decoding/   # decode.py (dispatch: SatDump noaa_apt / meteor_m2-x_lrpt / noaa_dsb + sstv),
+│              # quality.py (reception scoring), ais.py (AIS demod + ship database)
+├── sdr/         # radio.py (rtl_tcp capture + recording), dsp.py (per-block DSP chain),
+│              # scan.py (frequency scanner)
+├── tracking/    # scheduler.py, passes.py (TLE prediction), plan.py, satnogs.py
+└── web/         # app.py (HTTP server), handler.py (endpoints), pages.py (+html/),
+               # history.py (pass history + recordings), thumbs.py
+```
 
 ## Setup
 

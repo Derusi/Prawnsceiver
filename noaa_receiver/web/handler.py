@@ -7,20 +7,20 @@ import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
-from . import state
-from .config import (AUDIO_RATE, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS, SAT_DSB_FREQ,
+from .. import state
+from ..config import (AUDIO_RATE, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS, SAT_DSB_FREQ,
                    PASS_HISTORY_FILE, RECORD_DIR, UTC_OFFSET, WEBDIR)
 
-from . import ais
-from . import scan
-from .decode import decode_recording
+from ..decoding import ais
+from ..sdr import scan
+from ..decoding.decode import decode_recording
 from .history import get_recordings, quality_map, set_recording_quality
 from .pages import AIS_HTML, CONSOLE_HTML, HISTORY_HTML
 from .thumbs import THUMB_SUFFIX, ensure_thumb
-from .passes import HAS_SKYFIELD, load, passes_to_json, wgs84
-from .satnogs import satellite_info
-from .quality import estimate_quality
-from .radio import add_dongle, remove_dongle, set_dongle_ais
+from ..tracking.passes import HAS_SKYFIELD, load, passes_to_json, wgs84
+from ..tracking.satnogs import satellite_info
+from ..decoding.quality import estimate_quality
+from ..sdr.radio import add_dongle, remove_dongle, set_dongle_ais
 
 def _dongle_list():
     """Dongle descriptors for status/dongles.json: primary first, then stable

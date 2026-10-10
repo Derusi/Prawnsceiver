@@ -7,13 +7,13 @@ import subprocess
 import threading
 import time
 
-from . import state
+from .. import state
 
 from datetime import datetime
 
-from .config import (SATDUMP_TIMEOUT_SECS, SAT_DSB_FREQ, SDR_OFFSET_HZ, SDR_RATE,
+from ..config import (SATDUMP_TIMEOUT_SECS, SAT_DSB_FREQ, SDR_OFFSET_HZ, SDR_RATE,
                      TLE_CACHE_FILE, TRACKED_SATS)
-from .dsp import frequency_shift, iq_to_complex, new_state
+from ..sdr.dsp import frequency_shift, iq_to_complex, new_state
 
 # Recording names are '<sat>_<YYYYMMDD>_<HHMMSS>[-<n>][_<serial>].wav', written by
 # radio.sdr_capture_thread via sat_short_name(). The satellite part is

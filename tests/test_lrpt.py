@@ -19,7 +19,7 @@ import tempfile
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-from noaa_receiver.decode import _measure_signal_offset, _pick_product_png
+from noaa_receiver.decoding.decode import _measure_signal_offset, _pick_product_png
 from noaa_receiver.config import SDR_RATE
 
 FS = SDR_RATE

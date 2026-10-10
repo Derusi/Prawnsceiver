@@ -4,14 +4,14 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import state
-from .config import LAT, LON, PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, RECORD_ISS, SAT_DSB_FREQ, TLE_REFRESH_HOURS, UTC_OFFSET
+from .. import state
+from ..config import LAT, LON, PASS_MARGIN_SECS, PASS_PREDICT_HOURS, RECORD_DIR, RECORD_ISS, SAT_DSB_FREQ, TLE_REFRESH_HOURS, UTC_OFFSET
 
-from .decode import decode_recording, read_decode_marker, sat_short_name
-from .history import log_pass
+from ..decoding.decode import decode_recording, read_decode_marker, sat_short_name
+from ..web.history import log_pass
 from .passes import HAS_SKYFIELD, load, load_tles_from_cache, predict_passes, refresh_tles, wgs84
 from .satnogs import satellite_info
-from .quality import estimate_quality
+from ..decoding.quality import estimate_quality
 
 def _doppler_hz(sat, freq_hz):
     """Live Doppler shift of the satellite's carrier at the site (Hz).

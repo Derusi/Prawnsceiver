@@ -9,7 +9,7 @@ import json
 import time
 import urllib.request
 
-from .config import TLE_USER_AGENT
+from ..config import TLE_USER_AGENT
 
 _API = "https://db.satnogs.org/api"
 _cache = {}        # catnr -> {'info': dict, 'ts': epoch}

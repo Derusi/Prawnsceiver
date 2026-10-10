@@ -10,7 +10,7 @@ import threading
 import time
 
 from . import satnogs
-from .config import (RECORD_ISS, SAT_DSB_DEMOD_BW_HZ, SAT_DSB_FREQ,
+from ..config import (RECORD_ISS, SAT_DSB_DEMOD_BW_HZ, SAT_DSB_FREQ,
                      TRACKED_SATS)
 
 # catnr -> matching transmitter dict (or None: fetched, no match / DB down).

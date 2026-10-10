@@ -21,9 +21,10 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
-from noaa_receiver import ais, state
+from noaa_receiver.decoding import ais
+from noaa_receiver import state
 from noaa_receiver.config import SDR_RATE, IQ_BLOCK
-from noaa_receiver.dsp import frequency_shift, iq_to_complex
+from noaa_receiver.sdr.dsp import frequency_shift, iq_to_complex
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 

@@ -46,9 +46,9 @@ from datetime import datetime
 
 import numpy as np
 
-from . import state
-from .calibration import SDR_DONGLE_GAIN, correction_info, tuning_correction
-from .config import (AIS_CENTER_HZ, AIS_CHANNEL_HZ, AIS_LOG_FILE,
+from .. import state
+from ..calibration import SDR_DONGLE_GAIN, correction_info, tuning_correction
+from ..config import (AIS_CENTER_HZ, AIS_CHANNEL_HZ, AIS_LOG_FILE,
                      AIS_LOG_KEEP_HOURS, AIS_RECENT_MSGS, AIS_SHIPS_FILE,
                      AIS_SHIPS_SAVE_SECS, AIS_SHIP_TTL_SECS,
                      LOGDIR, SDR_GAIN, SDR_OFFSET_HZ, SDR_RATE,
@@ -702,10 +702,10 @@ def ais_capture_thread(did):
     satellites. Waterfall/signal update the same state.sdrs entry, so
     the dongle card shows the AIS spectrum like any other.
     """
-    from .dsp import iq_to_complex, frequency_shift
-    from .radio import (_IQReader, _get_fft_window, _rtl_tcp_connect,
+    from ..sdr.dsp import iq_to_complex, frequency_shift
+    from ..sdr.radio import (_IQReader, _get_fft_window, _rtl_tcp_connect,
                         RTL_TCP_SET_FREQ, TUNER_NAMES, _rtl_tcp_set)
-    from .config import FFT_SIZE, IQ_BLOCK
+    from ..config import FFT_SIZE, IQ_BLOCK
 
     entry = state.sdrs[did]
     channel_names = ["A", "B"]

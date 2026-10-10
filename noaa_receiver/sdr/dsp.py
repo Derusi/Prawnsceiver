@@ -11,7 +11,7 @@ from math import gcd
 
 import numpy as np
 
-from .config import SDR_RATE
+from ..config import SDR_RATE
 
 TWO_PI = 2.0 * np.pi
 
