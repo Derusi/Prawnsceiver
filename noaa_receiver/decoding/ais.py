@@ -649,6 +649,33 @@ def prune_ships():
                      if now - s["last_seen"] > AIS_SHIP_TTL_SECS]:
             del state.ais_ships[mmsi]
 
+def ship_tracks(mmsis, hours=24):
+    """Position track (oldest first) per MMSI, from the persistent
+    message log - the rolling frame history is the station's position
+    archive. Only frames that carried a position become track points;
+    MMSIs without any are returned as empty lists (the caller can say
+    so instead of drawing nothing silently)."""
+    try:
+        wanted = {int(m) for m in mmsis}
+    except (TypeError, ValueError):
+        return {}
+    if not wanted:
+        return {}
+    hours = max(1, min(float(hours), 48))
+    cutoff = time.time() - hours * 3600
+    tracks = {m: [] for m in wanted}
+    for r in db.query("SELECT entry FROM ais_messages WHERE ts >= ?"
+                      " ORDER BY id", (cutoff,)):
+        try:
+            e = json.loads(r["entry"])
+        except ValueError:
+            continue
+        m = e.get("mmsi")
+        if m in tracks and e.get("lat") is not None and e.get("lon") is not None:
+            tracks[m].append({"ts": e.get("ts", 0),
+                              "lat": e["lat"], "lon": e["lon"]})
+    return tracks
+
 def ais_status():
     """Snapshot for /ais.json: ship table, stats, recent raw sentences."""
     prune_ships()

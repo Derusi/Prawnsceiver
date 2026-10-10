@@ -251,6 +251,23 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(AIS_HTML.encode())
+        elif self.path.split('?')[0] == '/ship_tracks.json':
+            # 24 h position tracks for the AIS page's 'path on map'
+            # multi-select: ?mmsi=123,456&hours=24
+            query = parse_qs(urlparse(self.path).query)
+            mmsis = [m.strip() for m in (query.get('mmsi') or [''])[0].split(',')
+                      if m.strip()][:50]
+            try:
+                hours = float((query.get('hours') or ['24'])[0])
+            except ValueError:
+                hours = 24.0
+            tracks = ais.ship_tracks(mmsis, hours)
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(tracks).encode())
+
         elif self.path.startswith('/aislog.json'):
             # Tail of the persistent AIS message log (?count=N, max 2000)
             query = parse_qs(urlparse(self.path).query)

@@ -34,8 +34,9 @@ tr.cls-BASE td:first-child, tr.cls-ATON td:first-child, tr.cls-SAR td:first-chil
 .muted { color: #666; padding: 10px; }
 #mapwrap { margin-bottom: 14px; }
 #mapinfo { font-size: 0.85em; color: #888; margin: 4px 0 6px; display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
-#fitbtn { background: #0f3460; color: #4da6ff; border: 1px solid #4da6ff; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.9em; padding: 1px 8px; }
-#fitbtn:hover { background: #16294e; }
+#fitbtn, #trackmode-btn { background: #0f3460; color: #4da6ff; border: 1px solid #4da6ff; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.9em; padding: 1px 8px; }
+#fitbtn:hover, #trackmode-btn:hover { background: #16294e; }
+#trackmode-hint { font-size: 0.8em; color: #888; margin-left: 8px; }
 #map { height: 460px; border: 1px solid #0f3460; border-radius: 4px; background: #000; }
 .leaflet-tile { filter: brightness(0.9) saturate(0.85); }
 .leaflet-container { background: #000; font-family: monospace; }
@@ -79,9 +80,13 @@ tr.cls-BASE td:first-child, tr.cls-ATON td:first-child, tr.cls-SAR td:first-chil
     <div id="map"></div>
 </div>
 <div id="regwrap">
+    <div style="margin-bottom:4px;">
+        <button id="trackmode-btn" onclick="toggleTrackMode()">&#128506; Show path on map</button>
+        <span id="trackmode-hint"></span>
+    </div>
     <h2>&#128218; Ship registry — <span class="cnt" id="regcount">&hellip;</span> ships ever received, with their last 10 messages</h2>
     <table>
-    <thead><tr>
+    <thead><tr id="reghead">
         <th>name</th><th>MMSI</th><th>class</th><th>first seen</th>
         <th>last seen</th><th>total msgs</th><th>message history</th>
     </tr></thead>
@@ -113,6 +118,15 @@ function cell(v, cls, dash) { return '<td' + (cls ? ' class="' + cls + '"' : '')
 
 // ---------- persistent ship registry (all ships ever received) ----------
 const regOpen = new Set();       // MMSIs whose message history is expanded
+let registryShips = {};          // MMSI -> name, for track popups
+let trackMode = false;           // 'show path on map' multi-select active
+const selectedShips = new Set(); // MMSIs whose path is drawn
+const trackLayers = {};          // MMSI -> Leaflet polyline
+const TRACK_COLORS = ['#ff6b6b', '#ffd93d', '#6bcb77', '#4d96ff', '#c77dff',
+                      '#ff9770', '#70d6ff', '#b5e48c', '#f7a072', '#9bd1e5'];
+const REG_HEAD_PLAIN = '<th>name</th><th>MMSI</th><th>class</th><th>first seen</th>'
+    + '<th>last seen</th><th>total msgs</th><th>message history</th>';
+const REG_HEAD_TRACK = '<th>path</th>' + REG_HEAD_PLAIN;
 function fmtDateTime(ts) {
     const d = new Date(ts * 1000);
     return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour12: false });
@@ -122,9 +136,12 @@ async function loadRegistry() {
         const res = await fetch('/ais_ships.json');
         const ships = await res.json();
         document.getElementById('regcount').textContent = ships.length;
+        registryShips = {};
+        for (const s of ships) registryShips[s.mmsi] = s.name || ('MMSI ' + s.mmsi);
         const rows = document.getElementById('regrows');
         if (!ships.length) {
-            rows.innerHTML = '<tr><td colspan="7" class="muted">No ships in the registry yet — it fills as ships come into range.</td></tr>';
+            rows.innerHTML = '<tr><td colspan="' + (trackMode ? 8 : 7)
+                + '" class="muted">No ships in the registry yet — it fills as ships come into range.</td></tr>';
             return;
         }
         let html = '';
@@ -139,6 +156,11 @@ async function loadRegistry() {
                     + '<td class="nmea">' + esc(e.nmea || '') + '</td></tr>';
             }
             html += '<tr class="cls-' + esc(s.cls || '') + '">'
+                + (trackMode
+                    ? '<td><input type="checkbox"'
+                        + (selectedShips.has(s.mmsi) ? ' checked' : '')
+                        + ' onchange="trackToggle(' + esc(s.mmsi) + ', this.checked)"></td>'
+                    : '')
                 + '<td class="name">' + esc(s.name || '(unnamed)') + '</td>'
                 + '<td class="mmsi">' + esc(s.mmsi) + '</td>'
                 + '<td class="type">' + esc(s.cls || '') + '</td>'
@@ -154,6 +176,62 @@ async function loadRegistry() {
         rows.innerHTML = html;
     } catch (err) {
         console.error('Ship registry load failed:', err);
+    }
+}
+function toggleTrackMode() {
+    trackMode = !trackMode;
+    if (!trackMode) {
+        for (const m of Array.from(selectedShips)) removeTrack(m);
+        selectedShips.clear();
+    }
+    document.getElementById('trackmode-btn').innerHTML =
+        trackMode ? '&#10060; Exit path mode' : '&#128506; Show path on map';
+    document.getElementById('reghead').innerHTML =
+        trackMode ? REG_HEAD_TRACK : REG_HEAD_PLAIN;
+    updateTrackHint();
+    loadRegistry();
+}
+function updateTrackHint() {
+    const el = document.getElementById('trackmode-hint');
+    if (!trackMode) { el.textContent = ''; return; }
+    el.textContent = selectedShips.size
+        ? selectedShips.size + ' path(s) drawn (last 24 h) — uncheck to remove'
+        : 'select ships below to draw their last 24 h path';
+}
+async function trackToggle(mmsi, on) {
+    if (on) {
+        selectedShips.add(mmsi);
+        await drawTrack(mmsi);
+    } else {
+        selectedShips.delete(mmsi);
+        removeTrack(mmsi);
+    }
+    updateTrackHint();
+}
+function removeTrack(mmsi) {
+    if (trackLayers[mmsi] && map) map.removeLayer(trackLayers[mmsi]);
+    delete trackLayers[mmsi];
+}
+async function drawTrack(mmsi) {
+    if (!map) { alert('The map library is unavailable — paths cannot be drawn.'); return; }
+    try {
+        const res = await fetch('/ship_tracks.json?mmsi='
+                                 + encodeURIComponent(mmsi) + '&hours=24');
+        const tracks = await res.json();
+        const pts = tracks[mmsi] || [];
+        removeTrack(mmsi);
+        if (!pts.length) return;   // no positions in the window: nothing to draw
+        const color = TRACK_COLORS[selectedShips.size % TRACK_COLORS.length];
+        const line = L.polyline(pts.map(p => [p.lat, p.lon]),
+                                { color: color, weight: 3, opacity: 0.85 }).addTo(map);
+        const t0 = new Date(pts[0].ts * 1000).toLocaleTimeString([], { hour12: false });
+        const t1 = new Date(pts[pts.length - 1].ts * 1000).toLocaleTimeString([], { hour12: false });
+        line.bindPopup('<b>' + esc(registryShips[mmsi] || mmsi) + '</b><br>'
+            + pts.length + ' positions (24 h)<br>' + t0 + ' — ' + t1);
+        trackLayers[mmsi] = line;
+        map.fitBounds(line.getBounds().pad(0.2));
+    } catch (err) {
+        console.error('Track load failed for ' + mmsi, err);
     }
 }
 function regToggle(mmsi, open) {

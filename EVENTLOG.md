@@ -1111,3 +1111,16 @@ dashboard, Upcoming Passes follows below (spacing margin moved with
 it). The show/hide logic was already correct - it keys on
 /ais.json:enabled, i.e. any dongle currently in AIS mode. Static
 index.html change, no receiver restart needed for the deploy.
+### 2026-10-10 16:05 CEST — AIS page: "Show path on map" (user request)
+
+New button above the ship registry. Pressing it switches the registry
+into a multi-select list (checkbox column): every selected ship gets
+its last 24 h path drawn on the live map as a colored polyline (popup
+with positions count and time span, map fits to the newest track).
+Unchecking removes the path, exiting the mode clears all.
+
+Backend: /ship_tracks.json?mmsi=A,B&hours=24 - ais.ship_tracks()
+extracts the per-MMSI position history from the rolling ais_messages
+log (24 h retention = exactly the requested window); only frames with
+positions become track points, positionless MMSIs come back empty and
+the UI simply draws nothing for them.
