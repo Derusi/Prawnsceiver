@@ -1124,3 +1124,52 @@ extracts the per-MMSI position history from the rolling ais_messages
 log (24 h retention = exactly the requested window); only frames with
 positions become track points, positionless MMSIs come back empty and
 the UI simply draws nothing for them.
+### 2026-10-10 18:35 CEST — 🛰 AIS 0-frames mystery SOLVED: rtl_tcp served a 10x sample rate (fixed-gain experiment superseded)
+
+The fixed-gain experiment (40.2 dB on the R820T + whip, ec40cf0) tamed
+the AGC-overload symptoms - floor 3.5/3.9 -> 2.7/2.9, false burst
+triggers 68/s -> 0 - but the frame verdict stayed open when the Danube
+went quiet. The antenna-swap A/B (V-dipole -> R820T, whip -> v5, both
+dongles on AIS 16:39-16:48) broke the case open: v5+whip caught every
+3-min burst of the WA YSUR ATON beacon (3/3) while R820T+V-dipole got
+0 - the SAME V-dipole had fed 493 frames to the v5 in the morning.
+40.2 dB was picked for the whip's delivered power and under-drives on
+the V-dipole, so it was retired (59a5129) - back to AGC like the v5.
+
+Root cause of the 0 frames (all antennas, all gains): the capture
+threads set the FREQUENCY on connect but never the SAMPLE RATE - they
+relied on the rtl_tcp daemon being spawned with -s 240000. The v5's
+daemon has it remembered; the R820T's was spawned without -s and
+served rtl_tcp's ~2.4 MHz DEFAULT. The AIS demod translated channels
+assuming 240 kHz - i.e. it listened at 162.063/162.068 MHz, in the
+BOS carrier's neighborhood, on a ~10x-rate stream: waterfall alive,
+decodes impossible. Fix 03507b4: _rtl_tcp_connect asserts SDR_RATE on
+every connect (covers satellite + AIS threads; test asserts the
+0x02 command). The "BOS monster" framing of the morning was partly
+an artifact of the mis-mapped band.
+
+Post-fix verdict (the experiment this entry closes): stream correct,
+tune verified on-frequency against the v5 (raw-band cross-correlation
+lag 0, correction +12960 = +80 ppm confirmed), demod channels
+correct, AGC gain - and the R820T still decoded 0 frames while the
+v5+whip caught 12/12 WA YSUR bursts (14:42-15:36 UTC). NOT
+inconclusive: ships/beacon transmitted, everything software-side is
+fixed, the R820T front end itself (sensitivity / IQ quality) is the
+remaining suspect. Next step when the Pi is back: live-path AGC IQ
+captures from both dongles, offline demod, compare burst SNR at the
+channel offsets. No further gain experiments - AGC stays.
+
+Collateral fixes landed the same day: the AIS waterfall cards read
+60 kHz low (raw band labeled as centered on AIS_CENTER; now rotated by
++SDR_OFFSET_HZ like the satellite cards, a85ea35); per-dongle
+pause/play (0cd5c24) because two dongles recording at once collapse
+the dongle host's shared USB bus (non-default rtl_tcp -b/-n measured
+at 3.4% throughput, documented in prawntenna API.md); a wedged R820T
+recovered with a plugdev USBDEVFS_RESET (no sudo needed on the Pi).
+
+NOAA 15 evening passes (v5 on satellites, but wearing the swapped
+whip): 17:55 23° recorded in two WAVs (the mid-pass receiver restart
+split it), decode ran, quality 0% - the 46 cm whip is unusable at
+137 MHz as predicted. The 19:33 64° pass is the good one; it needs
+the Pi back up, the v5 on satellites (it was flipped to AIS during
+dashboard testing) and ideally the V-dipole swapped back to the v5.
