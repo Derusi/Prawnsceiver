@@ -63,6 +63,7 @@ def _get_fft_window():
 # changes apply while the stream keeps flowing, so a retune is one socket
 # write instead of a kill-restart-sleep cycle (~8 s of dead air).
 RTL_TCP_SET_FREQ = 0x01
+RTL_TCP_SET_SAMPLE_RATE = 0x02
 RTL_TCP_SET_GAIN_MODE = 0x03   # 0 = tuner AGC, 1 = manual
 RTL_TCP_SET_GAIN = 0x04        # value = gain in tenths of dB
 
@@ -92,10 +93,11 @@ def _recv_exact(sock, n):
     return buf
 
 def _rtl_tcp_connect(host, port, gain_db):
-    """Open one rtl_tcp connection: connect, verify the 'RTL0' handshake and
-    set a fixed manual gain (when configured) over the control protocol —
-    the rtl_tcp CLI parses -g as an int, so fractional gain steps like the
-    R820T's 29.7 dB must go through the socket.
+    """Open one rtl_tcp connection: connect, verify the 'RTL0' handshake,
+    set the sample rate (always) and a fixed manual gain (when configured)
+    over the control protocol — the rtl_tcp CLI parses -g as an int, so
+    fractional gain steps like the R820T's 29.7 dB must go through the
+    socket.
 
     Returns (socket, tuner_type, gain_count); the IQ stream starts flowing
     immediately (the caller reads it via _IQReader).
@@ -109,6 +111,12 @@ def _rtl_tcp_connect(host, port, gain_db):
         sock.close()
         raise RuntimeError('bad rtl_tcp handshake (not an rtl_tcp server?)')
     tuner_type, gain_count = struct.unpack('!II', header[4:12])
+    # Explicit sample rate on every connect: a daemon spawned without -s
+    # serves rtl_tcp's default (~2.4 MHz) while every demodulator here
+    # needs SDR_RATE. The AIS dongle's daemon had no -s and the demod
+    # silently processed a ~10x-rate stream: waterfall alive, zero
+    # decodes, on every antenna and gain (2026-10-10).
+    _rtl_tcp_set(sock, RTL_TCP_SET_SAMPLE_RATE, SDR_RATE)
     if gain_db:
         _rtl_tcp_set(sock, RTL_TCP_SET_GAIN_MODE, 1)
         _rtl_tcp_set(sock, RTL_TCP_SET_GAIN, int(round(gain_db * 10)))

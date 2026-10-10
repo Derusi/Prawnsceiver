@@ -30,7 +30,7 @@ import numpy as np
 from collections import deque
 from noaa_receiver.sdr import radio
 from noaa_receiver import state
-from noaa_receiver.config import AIS_CENTER_HZ, SDR_OFFSET_HZ, WATERFALL_ROWS
+from noaa_receiver.config import AIS_CENTER_HZ, SDR_OFFSET_HZ, SDR_RATE, WATERFALL_ROWS
 from noaa_receiver.calibration import tuning_correction
 
 tmp = tempfile.mkdtemp(prefix='prawn_')
@@ -139,6 +139,9 @@ wait_for(lambda: entry['last_data'] > 0 and len(entry['waterfall']) > 3, what='I
 wait_for(lambda: entry['la']['total'] > 10, what='live audio')
 assert entry['connected'] and not entry['is_recording']
 expect_cmd(137620000)   # explicit tune on connect (fresh daemons park at 137.68 MHz)
+want_rate = (2, SDR_RATE)
+wait_for(lambda: want_rate in commands, what='sample-rate command on connect')
+commands.remove(want_rate)
 assert last_doppler['d'] == 0
 print("1 idle: streaming, waterfall rows, live audio, no retune OK")
 
