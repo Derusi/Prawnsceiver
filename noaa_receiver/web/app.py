@@ -19,8 +19,15 @@ def main():
 
     os.makedirs(LOGDIR, exist_ok=True)
     os.makedirs(RECORD_DIR, exist_ok=True)
-    # One-time import of the legacy JSON stores into station.db
+    # One-time import of the legacy JSON stores into station.db,
+    # then load the AIS ship registry from it. ORDER MATTERS: the
+    # registry lives in memory and save_ships() mirrors memory back
+    # into the database - loading it before the import would mirror
+    # an EMPTY table over the just-imported ships and delete them
+    # (observed live 2026-10-10: 9 imported ships reduced to 1).
     db.import_legacy(None)
+    from ..decoding import ais as _ais
+    _ais.load_ships()
 
     # Start scheduler thread (TLE refresh + pass prediction + frequency switching)
     threading.Thread(target=scheduler_thread, daemon=True).start()

@@ -1086,3 +1086,20 @@ history updated to the DB semantics (log isolation = table clear,
 dongle persistence = dongles-table assertions, history order =
 insertion order like the old file). _load_history keeps the exact
 legacy JSON shape so the history page parses unchanged.
+### 2026-10-10 15:40 CEST — BUG (user-reported): the AIS ship import was wiped by its own save
+
+The ship registry showed 1 ship instead of the 9 ever received. Root
+cause: ais.py called load_ships() at MODULE IMPORT time, which runs
+before app.main()'s import_legacy() - so memory started EMPTY, the
+import wrote 9 ships into the database, and the running AIS thread's
+periodic save_ships() (which mirrors the in-memory table into the
+ships table, DELETE FROM ships WHERE mmsi NOT IN <memory>) erased the
+8 imported rows at its next save, keeping only the one live-heard
+ship. Classic two-writer ordering bug: import-after-load instead of
+load-after-import.
+
+Fix: the module-level load_ships() call is gone; app.main() now loads
+the registry from the database immediately AFTER import_legacy() (with
+a comment explaining why the order matters). The 9 ships were
+re-imported into station.db from ais_ships_persist.json.migrated
+(INSERT OR IGNORE - the live-heard ship's row is newer and wins).

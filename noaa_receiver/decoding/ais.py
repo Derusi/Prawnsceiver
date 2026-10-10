@@ -641,8 +641,6 @@ def ships_registry():
         return sorted(state.ais_ships_all.values(),
                       key=lambda s: -s.get("last_seen", 0))
 
-load_ships()
-
 def prune_ships():
     """Drop ships not heard for AIS_SHIP_TTL_SECS (called on read paths)."""
     now = time.time()
