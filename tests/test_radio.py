@@ -291,6 +291,27 @@ wait_for(lambda: entry['last_data'] > 0 and not entry['ais'], what='satellite ca
 expect_cmd(137620000)         # back on the shared idle frequency
 print("9b AIS toggle: role flip both ways, 162 MHz tune, recording flag dropped OK")
 
+# 11. pause/play (dashboard button): pause closes the stream, the capture
+# thread exits (recording closed, no reconnect while paused - the
+# supervisor skips paused dongles); play clears the flag and capture
+# restarts. The test starts threads manually (no supervisor here), so
+# play restarts the thread the same way the supervisor would.
+assert radio.set_dongle_paused('nope:1', True) is False    # unknown dongle
+assert radio.set_dongle_paused(DID, True) is True
+wait_for(lambda: not t.is_alive(), secs=6, what='capture thread exits on pause')
+assert not entry['connected'] and not entry['is_recording'] and entry['paused']
+sessions_before = srv.sessions
+time.sleep(4)   # two supervisor polls: a paused dongle must not reconnect
+assert srv.sessions == sessions_before, 'a paused dongle must not be reconnected'
+assert radio.set_dongle_paused(DID, True) is True          # idempotent
+assert radio.set_dongle_paused(DID, False) is True
+t = threading.Thread(target=radio.sdr_capture_thread, args=(DID,), daemon=True); t.start()
+entry['last_data'] = 0
+wait_for(lambda: entry['last_data'] > 0, what='streaming again after play')
+expect_cmd(137620000)         # back on the shared idle frequency
+assert not entry['paused']
+print("11 pause/play: thread exits on pause, no reconnect while paused, play restarts OK")
+
 # 10. remove_dongle stops the thread and clears the state
 did_b, _ = radio.add_dongle('127.0.0.1', PORT + 50)   # a second (unreachable) dongle
 assert did_b in state.sdrs

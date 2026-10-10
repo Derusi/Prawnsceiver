@@ -1399,12 +1399,32 @@ card.appendChild(scanRow); card.appendChild(scanRow2);
                     })
                     .catch(() => toast('AIS switch failed: receiver unreachable', true));
             };
-            card.appendChild(info); card.appendChild(listenBtn); card.appendChild(aisBtn); card.appendChild(removeBtn);
+            // Pause/Play: temporarily stops this dongle's capture thread —
+            // two dongles recording at once can overload the dongle host's
+            // shared USB bus. The dongle stays registered; Play restarts it.
+            const pauseBtn = document.createElement('button');
+            pauseBtn.style.cssText = 'width:100%;margin-top:4px;padding:3px 10px;background:#0f3460;color:#4da6ff;border:1px solid #4da6ff;border-radius:3px;cursor:pointer;font-family:monospace;font-size:0.85em;';
+            pauseBtn.title = 'Temporarily stop this dongle\'s capture — frees the dongle host\'s USB bandwidth (two dongles recording at once overload it). Play restarts the capture.';
+            pauseBtn.onclick = () => {
+                const on = !(c.lastD && c.lastD.paused);
+                fetch('/pause_dongle?d=' + encodeURIComponent(d.id) + '&on=' + (on ? 1 : 0))
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            toast(on ? '⏸ Paused — capture stopped, USB bandwidth freed'
+                                     : '▶ Play — capture restarting');
+                        } else {
+                            toast('Pause failed: ' + (data.error || 'unknown error'), true);
+                        }
+                    })
+                    .catch(() => toast('Pause failed: receiver unreachable', true));
+            };
+            card.appendChild(info); card.appendChild(listenBtn); card.appendChild(aisBtn); card.appendChild(pauseBtn); card.appendChild(removeBtn);
             col.appendChild(card);
             c = dongleCards[d.id] = {
                 cardEl: card,
                 sigVal, sigFill, tlCtx: tl.getContext('2d'),
-                hist: [], recLed, recTxt, recBtn, info, listenBtn, aisBtn, dinput, lastD: d, lastHistTs: 0,
+                hist: [], recLed, recTxt, recBtn, info, listenBtn, aisBtn, pauseBtn, dinput, lastD: d, lastHistTs: 0,
 bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanRow, scanRow2, scanFrom, scanTo, scanStep, scanBtn, scanTxt,
             };
             applyDongleAisMode(c, !!d.ais);
@@ -1455,7 +1475,7 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanRow, scanRow2, scanFrom, scanTo,
                 drawCardTimeline(c);
             }
             c.recLed.className = 'indicator ' + (d.recording ? 'green' : 'red');
-            const rec = d.recording ? (d.wav || 'Recording…') : 'Idle';
+            const rec = d.recording ? (d.wav || 'Recording…') : (d.paused ? '⏸ Paused' : 'Idle');
             if (c.recTxt._last !== rec) { c.recTxt._last = rec; c.recTxt.textContent = rec; }
             // Record button mirrors the manual flag (a running pass
             // recording is independent of it)
@@ -1464,6 +1484,12 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanRow, scanRow2, scanFrom, scanTo,
             if (c.recBtn._last !== recBtnTxt) { c.recBtn._last = recBtnTxt; c.recBtn.textContent = recBtnTxt; }
             c.recBtn.style.background = recOn ? '#e74c3c' : 'rgba(231,76,60,0.15)';
             c.recBtn.style.color = recOn ? '#1a1a2e' : '#e07890';
+            // Pause/Play button mirrors the paused flag (orange while paused)
+            const pTxt = d.paused ? '▶ Play' : '⏸ Pause';
+            if (c.pauseBtn._last !== pTxt) { c.pauseBtn._last = pTxt; c.pauseBtn.textContent = pTxt; }
+            c.pauseBtn.style.background = d.paused ? '#2a1a0f' : '#0f3460';
+            c.pauseBtn.style.color = d.paused ? '#f39c12' : '#4da6ff';
+            c.pauseBtn.style.borderColor = d.paused ? '#f39c12' : '#4da6ff';
             // Manual tuner state: show the effective frequency, highlight
             // the input while this dongle overrides the shared frequency
             c.lastD = d;

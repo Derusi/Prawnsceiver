@@ -731,7 +731,17 @@ def ais_capture_thread(did):
         removed, or AIS switched off from the dashboard and the satellite
         capture thread takes over): /ais.json then reports the receiver
         as disabled. The ship table and message log are kept."""
+        others = [d for d, e in state.sdrs.items()
+                  if d != did and e.get('ais')
+                  and not e.get('closed') and not e.get('paused')]
         with state.ais_lock:
+            if others:
+                # dual-AIS: another dongle still listens for ships -
+                # hand the markers to it instead of disabling the
+                # receiver (a paused dongle must not clear them)
+                state.ais_enabled = True
+                state.ais_dongle = others[0]
+                return
             state.ais_enabled = False
             state.ais_dongle = None
 
@@ -744,7 +754,7 @@ def ais_capture_thread(did):
     restart_backoff = 5.0
     block_count = 0
     while True:
-        if entry.get("closed") or not entry.get("ais"):
+        if entry.get("closed") or not entry.get("ais") or entry.get("paused"):
             ais_reception_off()
             return
         run_started = time.time()
@@ -823,7 +833,7 @@ def ais_capture_thread(did):
                             "floor": round(ch_st["floor"] or 0.0, 2),
                         }
         except Exception as e:
-            if not entry.get("closed") and entry.get("ais"):   # a removed/AIS-switched dongle's socket is
+            if not entry.get("closed") and entry.get("ais") and not entry.get("paused"):   # a removed/AIS-switched/paused dongle's socket is
                 state.log_console(f"AIS thread error (dongle {did}): {e}", "error")  # closed under the thread — not an error
         entry["connected"] = False
         entry["sock"] = None
@@ -832,7 +842,7 @@ def ais_capture_thread(did):
                 sock.close()
             except Exception:
                 pass
-        if entry.get("closed") or not entry.get("ais"):
+        if entry.get("closed") or not entry.get("ais") or entry.get("paused"):
             ais_reception_off()
             return
         # like sdr_capture_thread: cap at 15 s - the prawntenna manager

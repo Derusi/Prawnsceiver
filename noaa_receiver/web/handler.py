@@ -21,7 +21,7 @@ from .thumbs import THUMB_SUFFIX, ensure_thumb
 from ..tracking.passes import HAS_SKYFIELD, load, passes_to_json, wgs84
 from ..tracking.satnogs import satellite_info
 from ..decoding.quality import estimate_quality
-from ..sdr.radio import add_dongle, remove_dongle, set_dongle_ais
+from ..sdr.radio import add_dongle, remove_dongle, set_dongle_ais, set_dongle_paused
 
 def _dongle_list():
     """Dongle descriptors for status/dongles.json: primary first, then stable
@@ -42,6 +42,7 @@ def _dongle_list():
                 "tuner": e["tuner"],
                 "primary": e["primary"],
                 "ais": bool(e.get("ais")),
+                "paused": bool(e.get("paused")),
                 "signal": round(e["signal"], 2),
                 "connected": bool(e.get("connected")),
                 "recording": e["is_recording"],
@@ -397,6 +398,30 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps({'success': True, 'ais': bool(entry.get('ais'))}).encode())
+        elif self.path.split('?')[0] == '/pause_dongle':
+            # Temporarily stop one dongle's capture (dashboard
+            # pause/play button): two dongles recording at the same
+            # time overload the dongle host's shared USB bus.
+            # /pause_dongle?d=<id>&on=1 closes the stream and any
+            # recording (the supervisor restarts the capture on
+            # on=0, within ~2 s). The dongle stays registered.
+            query = parse_qs(urlparse(self.path).query)
+            dev = (query.get('d') or [''])[0].strip()
+            on = (query.get('on') or [''])[0].strip().lower() not in ('', '0', 'false', 'off', 'no')
+            entry = state.sdrs.get(dev)
+            if entry is None:
+                self.send_response(404)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Unknown dongle'}).encode())
+                return
+            set_dongle_paused(dev, on)
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': True, 'paused': bool(entry.get('paused'))}).encode())
         elif self.path.split('?')[0] == '/tune':
             # Manual tune (dongle reception test, e.g. FM broadcast radio):
             # /tune?f=89.7 parks the dongle on a frequency and pauses the

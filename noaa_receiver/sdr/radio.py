@@ -186,6 +186,7 @@ def _new_entry(did, host, port, primary):
         'id': did, 'host': host, 'port': int(port),
         'label': f'{host}:{port}', 'tuner': 'rtl_tcp', 'primary': primary,
         'ais': did == AIS_DONGLE,
+        'paused': False,
         'waterfall': waterfall, 'lock': lock,
         'signal': 0.0, 'last_mag': None, 'connected': False,
         'sock': None, 'last_data': 0.0,
@@ -333,6 +334,42 @@ def load_dongles():
     _persist_dongles()
 
 
+def set_dongle_paused(did, on):
+    """Temporarily stop one dongle's capture (dashboard pause/play
+    button).
+
+    Two dongles recording at the same time overload the dongle host's
+    shared USB bus (measured 2026-10-10 on the Pi: both streams
+    collapsed to a few percent of their nominal rate); pausing one
+    frees its bandwidth until the operator plays it back. Closes the
+    running capture thread's socket under it - the thread notices the
+    flag, closes any recording and exits; the supervisor loop starts
+    a fresh thread within ~2 s of unpausing. The dongle stays
+    registered - its id, waterfall and card survive. Pause is runtime
+    only: a restart brings every dongle back live. Unknown id: False;
+    a no-op request still succeeds.
+    """
+    entry = state.sdrs.get(did)
+    if entry is None:
+        return False
+    on = bool(on)
+    if bool(entry.get('paused')) == on:
+        return True
+    with state.status_lock:
+        entry['paused'] = on
+    sock = entry.get('sock')
+    if on:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        state.log_console(f"\u23f8 Dongle {did} paused — capture stopped")
+    else:
+        state.log_console(f"\u25b6 Dongle {did} played — capture restarting")
+    return True
+
+
 def sdr_thread():
     """Keep one capture thread per registered dongle.
 
@@ -348,7 +385,9 @@ def sdr_thread():
             t = threads.get(did)
             if t is not None and not t.is_alive():
                 t = None
-            if t is None:
+            if t is None and not entry.get('paused'):
+                # a paused dongle (dashboard pause button) gets its
+                # thread back on play, not before
                 if entry.get('ais'):
                     from ..decoding.ais import ais_capture_thread
                     t = threading.Thread(target=ais_capture_thread, args=(did,),
@@ -456,6 +495,13 @@ def sdr_capture_thread(did):
         if entry.get('ais'):
             # AIS was switched on from the dashboard after this thread
             # started: hand the dongle over to the supervisor's AIS thread
+            close_wav()
+            return
+        if entry.get('paused'):
+            # Paused from the dashboard (pause/play button): two dongles
+            # recording at once overload the dongle host's shared USB bus
+            # - stop streaming and free the bandwidth. The supervisor
+            # restarts this thread when the dongle is played again.
             close_wav()
             return
         run_started = time.time()
@@ -684,7 +730,7 @@ def sdr_capture_thread(did):
                             wav_retry_at = now_ts + WAV_RETRY_SECS
 
         except Exception as e:
-            if not entry.get('closed') and not entry.get('ais'):   # a removed/AIS-switched dongle's socket is
+            if not entry.get('closed') and not entry.get('ais') and not entry.get('paused'):   # a removed/AIS-switched/paused dongle's socket is
                 state.log_console(f"SDR thread error (dongle {did}): {e}", "error")  # closed under the thread — not an error
         entry['connected'] = False
         entry['sock'] = None
@@ -692,7 +738,10 @@ def sdr_capture_thread(did):
             try: sock.close()
             except Exception: pass
         close_wav()
-        if entry.get('closed') or entry.get('ais'):
+        if entry.get('closed') or entry.get('ais') or entry.get('paused'):
+            # a removed/role-switched/paused dongle never reconnects;
+            # a dongle removed mid-backoff also needs its WAV closed here
+            close_wav()
             return
         # Backoff when the rtl_tcp server stays unreachable (daemon down,
         # host off, network drop): 5 s doubling up to 15 s, reset after a
