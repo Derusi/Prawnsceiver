@@ -40,17 +40,17 @@ def noise_row(seed):
     rng = np.random.RandomState(seed)
     return rng.uniform(90.0, 110.0, FFT_SIZE).astype(np.float32)
 
-def signal_row(seed, offset_hz, amp=500.0, width_bins=40.0):
+def signal_row(seed, offset_hz, amp=500.0, width_hz=18750.0):
     m = noise_row(seed).astype(np.float64)
     idx = np.arange(FFT_SIZE)
     c = FFT_SIZE // 2 + offset_hz / BIN_HZ
-    m += amp * np.exp(-0.5 * ((idx - c) / (width_bins / 2.35)) ** 2)
+    m += amp * np.exp(-0.5 * ((idx - c) / (width_hz / BIN_HZ / 2.35)) ** 2)
     return m.astype(np.float32)
 
 row = signal_row(1, -50000)
 idx, ratio, floor = scan._measure(row)
 assert abs((idx - FFT_SIZE // 2) * BIN_HZ - (-50000)) < 4 * BIN_HZ, "peak bin offset wrong"
-assert 4.0 < ratio < 6.0, f"peak/floor ratio off: {ratio}"
+assert 4.0 < ratio < 6.5, f"peak/floor ratio off: {ratio}"
 assert 90 < floor < 110, "floor should track the noise median"
 
 # A 4x-floor spike INSIDE the +SDR_OFFSET_HZ window must not win:
@@ -120,10 +120,10 @@ def wait_done(sc, timeout=15):
         time.sleep(0.02)
     assert not sc.get("active"), "scan thread did not finish"
 
-def add_hump(m, offset_hz, amp=500.0, width_bins=40.0):
+def add_hump(m, offset_hz, amp=500.0, width_hz=18750.0):
     idx = np.arange(FFT_SIZE)
     c = FFT_SIZE // 2 + offset_hz / BIN_HZ
-    m += amp * np.exp(-0.5 * ((idx - c) / (width_bins / 2.35)) ** 2)
+    m += amp * np.exp(-0.5 * ((idx - c) / (width_hz / BIN_HZ / 2.35)) ** 2)
     return m
 
 # The fake carrier's absolute frequency (below the 100 MHz scan start)

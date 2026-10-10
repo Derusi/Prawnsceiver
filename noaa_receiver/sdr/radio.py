@@ -39,7 +39,7 @@ from ..decoding.decode import sat_short_name
 from .dsp import doppler_shift, fm_demodulate, frequency_shift, iq_to_complex, new_state
 
 # Waterfall/signal FFT cadence: compute the FFT only every Nth IQ block. The
-# dashboard draws ~5 rows/s, so ~59 rows/s (469 blocks/s / 8) is still 10x
+# dashboard draws ~5 rows/s, so ~234 rows/s (1875 blocks/s / 8) is still 40x
 # oversampled. At full block rate the FFT + row conversion (~1 ms/block on the
 # Pi) starved the demod once two dongles were attached.
 FFT_EVERY = 8

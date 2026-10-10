@@ -46,7 +46,7 @@ def iq_to_complex(iq_bytes):
 
 # ---------- offset rotator ----------
 # One LUT per (offset, fs, block length). For the periodic phasor (period
-# fs/gcd(offset, fs) = 4 samples at 60 kHz / 240 kHz) the LUT holds one
+# fs/gcd(offset, fs) = 16 samples at 60 kHz / 960 kHz) the LUT holds one
 # pre-rolled block-length row per rotator phase, so a block costs a single
 # complex multiply with no index arithmetic. Offsets with a long period fall
 # back to a one-period LUT with modulo indexing.
@@ -90,7 +90,7 @@ def frequency_shift(c, offset_hz, fs, st=None):
 # ---------- low-pass FIRs ----------
 _lowpass_taps = {}
 _real_taps = {}
-FIR_TAPS = 25
+FIR_TAPS = 100
 
 
 def _windowed_sinc(cutoff_hz, numtaps):
@@ -101,8 +101,11 @@ def _windowed_sinc(cutoff_hz, numtaps):
 
 def get_lowpass_taps(cutoff_hz=22000.0):
     """Windowed-sinc low-pass FIR taps (complex64, for the IQ path), cached
-    per cutoff. 25 taps at 240 kHz: -3 dB at ~18 kHz for the 22 kHz design
-    cutoff, -8 dB at 24 kHz, below -55 dB from 40 kHz up."""
+    per cutoff. 100 taps at 960 kHz: -3 dB at ~18 kHz for the 22 kHz
+    design cutoff, -8 dB at 24 kHz, below -55 dB from 40 kHz up — the
+    same absolute selectivity 25 taps gave at 240 kHz. Taps must scale
+    with SDR_RATE or the transition band widens and adjacent-channel
+    noise floods the demod (measured 2026-10-10, see EVENTLOG)."""
     key = int(cutoff_hz)
     if key not in _lowpass_taps:
         _lowpass_taps[key] = _windowed_sinc(cutoff_hz, FIR_TAPS).astype(np.complex64)

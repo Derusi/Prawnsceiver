@@ -4,7 +4,7 @@ The dongle at calibration.AIS_DONGLE (a remote rtl_tcp server) is
 dedicated to AIS (it does not join the satellite tracking). It is tuned
 to 162.000 MHz — the
 midpoint of the two AIS channels — so both channels land at +/-25 kHz
-inside one 240 kHz capture, and each is demodulated from the same IQ
+inside one 960 kHz capture, and each is demodulated from the same IQ
 stream: per-channel offset rotation -> 14 kHz low-pass -> FM
 discriminator -> 48 kHz (5 samples/bit at 9600 baud).
 
@@ -55,9 +55,9 @@ from ..config import (AIS_CENTER_HZ, AIS_CHANNEL_HZ,
                      LOGDIR, SDR_GAIN, SDR_OFFSET_HZ, SDR_RATE,
                      WATERFALL_ROWS)
 
-# Discriminator decimation: 240 kHz -> 48 kHz = 5 samples per AIS bit
+# Discriminator decimation: 960 kHz -> 48 kHz = 20 samples per AIS bit
 AIS_BITRATE = 9600
-assert SDR_RATE % 48000 == 0, "AIS demod needs 240 kHz SDR_RATE decimating to 48 kHz"
+assert SDR_RATE % 48000 == 0, "AIS demod needs SDR_RATE to be a 48 kHz multiple"
 AIS_DEC = SDR_RATE // 48000
 AIS_FS = SDR_RATE // AIS_DEC
 
@@ -386,11 +386,15 @@ def _sinc_taps(cutoff_hz, numtaps, fs=SDR_RATE):
     h = np.sinc(2 * cutoff_hz / fs * m) * np.hamming(numtaps)
     return (h / h.sum()).astype(np.float64)
 
-# 61 taps at 240 kHz: -3 dB ~11 kHz, stopband by ~25 kHz — the other AIS
-# channel (50 kHz away) and the dongle's DC spike (60 kHz, offset-tuned)
-# are far outside; adjacent-channel 25 kHz marine voice would leak only
-# at its edges. 14 kHz design cutoff keeps the whole GMSK spectrum.
-_AIS_TAPS = _sinc_taps(14000, 61)
+# 244 taps at 960 kHz: -3 dB ~11 kHz, stopband by ~25 kHz — the same
+# absolute selectivity 61 taps gave at 240 kHz; taps must scale with
+# SDR_RATE or the wider transition band floods the demod with adjacent
+# noise (measured 2026-10-10: 61 taps at 960 kHz ~1700 bad frames/min,
+# 244 taps ~3/min). The other AIS channel (50 kHz away) and the
+# dongle's DC spike (60 kHz, offset-tuned) are far outside;
+# adjacent-channel 25 kHz marine voice would leak only at its edges.
+# 14 kHz design cutoff keeps the whole GMSK spectrum.
+_AIS_TAPS = _sinc_taps(14000, 244)
 
 def new_channel_state():
     """Fresh per-channel DSP state (one per AIS channel, per dongle)."""

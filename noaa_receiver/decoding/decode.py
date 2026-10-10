@@ -224,7 +224,7 @@ def _measure_signal_offset(iq_path, signal_bw_hz=120_000):
     # is receiver noise (the +SDR_OFFSET_HZ DC spike is a few bins and
     # cannot move a median). The full-spectrum median would sit ON a
     # plateau that fills half the capture - exactly the LRPT geometry
-    # (a 120 kHz signal in a 240 kHz recording) - and the score gate
+    # (a 120 kHz signal in a 960 kHz recording) - and the score gate
     # would reject the satellite it just found.
     med = float(np.median(avg[n_fft // 2:]))
     half = max(1, int(signal_bw_hz / 2 / bin_hz))

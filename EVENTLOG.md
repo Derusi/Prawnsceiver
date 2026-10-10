@@ -1173,3 +1173,42 @@ split it), decode ran, quality 0% - the 46 cm whip is unusable at
 137 MHz as predicted. The 19:33 64° pass is the good one; it needs
 the Pi back up, the v5 on satellites (it was flipped to AIS during
 dashboard testing) and ideally the V-dipole swapped back to the v5.
+
+
+### 2026-10-10 19:05 CEST — High-rate mode: 960 kHz capture committed (SDR_RATE 4x, FIR taps scaled)
+
+Fun experiment promoted to a real mode: SDR_RATE 240000 -> 960000
+(config), FIR_TAPS 25 -> 100 (dsp) and _AIS_TAPS 61 -> 244 taps
+(ais) — the FIR taps scale with the rate so the absolute filter
+selectivity is unchanged; without that, the wider fs/numtaps
+transition band floods the demodulators with adjacent-channel noise.
+
+Live evidence on the container (18:48-19:00, dongle v5 on AIS,
+tuned 162.060 MHz = 162.000 + 60 kHz offset):
+- 480 kHz, unscaled taps: AIS bad frames ~1.6/min, CPU 0%.
+- 960 kHz, 61-tap AIS filter: ~1700 bad frames/min, channels A/B
+  showing identical counts (both filtering the same wide noise).
+- 960 kHz, 244-tap AIS filter: ~3 bad frames/min, channels
+  independent again. CPU 0.0%, RSS ~52 MB at every rate.
+Waterfall now spans +/-480 kHz; no ships decoded during the test
+window (bad-frame statistics stand in for a real frame).
+
+Caveats recorded: decode.py assumes .iq.u8 recordings were made at
+the CURRENT SDR_RATE (SatDump --samplerate) — pre-switch 240 kHz
+recordings must not be re-decoded under 960 kHz config; decodes run
+immediately post-pass so only manual re-decodes are affected. At
+960 kHz the USB load is ~1.9 MB/s per dongle — do NOT record two
+dongles at once (shared-bus collapse, cf. 0cd5c24); one dongle was
+removed from the dashboard for exactly that reason.
+
+Test suite run at 960 kHz on the dev PC: test_dsp, test_ais,
+test_radio, test_scan, test_history, test_quality, test_lrpt all
+pass (test_decode still fails on Windows, pre-existing). test_scan
+needed two fixture fixes to become rate-independent: the synthetic
+humps were drawn in BINS (40 bins = 18.75 kHz at 240 kHz, 75 kHz
+at 960 kHz) and now specify width_hz; the peak/floor ratio bound
+6.0 -> 6.5 (at 960 kHz the peak bin lands on the Gaussian apex
+and measures the true amp/floor limit, 6.008).
+
+Next: first NOAA pass at 960 kHz is the real test of the 100-tap
+satellite demod path (no pass was live during the change).

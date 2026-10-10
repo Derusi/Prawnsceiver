@@ -31,7 +31,7 @@ WATERFALL_ROWS = 120
 # Gain: 0 = auto (RTL-SDR AGC), or fixed dB like 35. Auto adapts to signal
 # strength during passes, which is better than a fixed value.
 SDR_GAIN = 0  # auto-gain
-SDR_RATE = 240000
+SDR_RATE = 960000
 # Offset tuning: rtl_sdr tunes SDR_OFFSET_HZ above the target frequency and the
 # signal is shifted back to baseband in software. This moves the dongle's
 # inherent center DC spike off the satellite signal (it would otherwise sit
@@ -51,7 +51,7 @@ UTC_OFFSET = 2  # Germany UTC+2
 # (137.9125 MHz family per SatNOGS; M2-3 was wrongly tracked at
 # 137.1 — ~800 kHz below its LRPT, so every M2-3 recording tuned dead
 # spectrum. A tune anywhere in 137.86-137.96 captures the LRPT band:
-# the recording spans +/-120 kHz and the decode measures the actual
+# the recording spans +/-480 kHz and the decode measures the actual
 # signal position). Decoded from the raw IQ with SatDump (meteor_m2-x_lrpt,
 # see decode.py) - the APT pipeline cannot. Both Meteor LRPT transmitters have been
 # dark in every pass received so far (verified 2026-10-10: no satellite
@@ -81,7 +81,7 @@ SAT_DSB_FREQ = {
 SAT_DSB_DEMOD_BW_HZ = 6000
 
 # Passes on these frequencies also record the RAW IQ stream (u8 complex,
-# 240 kHz -> ~480 kB/s per dongle) next to the demod audio WAV: DSB and
+# 960 kHz -> ~1.9 MB/s per dongle) next to the demod audio WAV: DSB and
 # Meteor LRPT are digital modes the FM-demod audio cannot carry — decoding
 # (SatDump) needs the baseband. APT/SSTV passes stay audio-only.
 IQ_RECORD_FREQS = {
@@ -117,7 +117,7 @@ DOPPLER_UPDATE_SECS = 10  # scheduler tick cadence; steps stay < ~1 kHz on ISS
 
 # AIS (ship traffic on the Danube; see noaa_receiver/ais.py): both AIS
 # channels (A: 161.975 MHz, B: 162.025 MHz) sit at +/-25 kHz around this
-# center, inside one 240 kHz capture - a dongle dedicated to AIS (pinned
+# center, inside one 960 kHz capture - a dongle dedicated to AIS (pinned
 # by calibration.AIS_DONGLE) demodulates both from the same IQ stream
 # and is excluded from satellite tracking.
 AIS_CENTER_HZ = 162000000
