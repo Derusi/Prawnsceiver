@@ -96,9 +96,18 @@ SDR_DONGLE_CORRECTIONS = {
 # RF, not a spur). AGC pumps on it and the AIS demod decodes nothing (0 frames
 # vs the v5's 493 on the same band/time, ~68 false burst triggers/s). Fixed
 # 40.2 dB (~10 dB under the AGC-equivalent) tests whether the failure is AGC
-# pumping or genuine front-end overload.
+# pumping or genuine front-end overload. Verdict on the whip: overload gone
+# (floor 3.5 -> 2.7, false-burst storm stopped), frames still 0 - river
+# went quiet, inconclusive on its own.
+# 2026-10-10 antenna-swap A/B (V-dipole -> R820T, whip -> v5, both AIS
+# 14:39-14:48 UTC): v5+whip caught every burst of the WA YSUR ATON beacon
+# (~1/3 min, 3/3); R820T+V-dipole 0 frames and the bursts barely visible
+# in its waterfall - while the SAME V-dipole had fed 493 frames to the v5
+# in the morning. 40.2 dB was picked for the whip's delivered power; on
+# the V-dipole it under-drives the ADC. Entry removed -> AGC (SDR_GAIN=0),
+# the same gain path the v5 uses, so the next A/B isolates the dongle
+# itself from the gain setting.
 SDR_DONGLE_GAIN = {
-    "192.168.3.245:1235": 40.2,   # generic R820T (AIS) - fixed gain experiment
 }
 
 def correction_info(freq_hz, dongle=None):
