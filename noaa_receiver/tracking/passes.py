@@ -5,9 +5,10 @@ import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+from .. import db
 from .. import state
 from .plan import receive_plan, transmitter_status
-from ..config import LAT, LON, TRACKED_SATS, PASS_MIN_ALT, SAT_DSB_FREQ, TLE_CACHE_FILE, TLE_USER_AGENT, UTC_OFFSET
+from ..config import LAT, LON, TRACKED_SATS, PASS_MIN_ALT, SAT_DSB_FREQ, TLE_USER_AGENT, UTC_OFFSET
 
 try:
     from skyfield.api import load, wgs84, EarthSatellite
@@ -59,33 +60,34 @@ def _sat_from_lines(lines, ts):
 
 
 def load_tles_from_cache():
-    """Load TLEs from the on-disk cache only — no network, seconds not
-    minutes. Used at startup: when the online sources are slow or down, an
-    eager fetch leaves the receiver blind for minutes right after every
-    restart, exactly when a pass may need triggering. Freshness is kept by
-    the periodic refresh and the manual sync (/sync_tle) instead."""
+    """Load TLEs from the station database only - no network, seconds
+    not minutes. Used at startup: when the online sources are slow or
+    down, an eager fetch leaves the receiver blind for minutes right
+    after every restart, exactly when a pass may need triggering.
+    Freshness is kept by the periodic refresh and the manual sync
+    (/sync_tle) instead."""
     if not HAS_SKYFIELD:
         state.log_console("Skyfield not available, cannot predict passes", "warn")
         return {}
-    if not os.path.exists(TLE_CACHE_FILE):
-        state.log_console("No TLE cache yet — start a sync from the dashboard or wait for the periodic refresh", "warn")
+    rows = db.query("SELECT catnr, name, l1, l2 FROM tle_cache")
+    if not rows:
+        state.log_console("No TLE cache yet - start a sync from the dashboard or wait for the periodic refresh", "warn")
         return {}
     try:
         ts = load.timescale()
-        with open(TLE_CACHE_FILE, 'r') as f:
-            cached = json.load(f)
         sats = {}
-        for catnr_str, lines in cached.items():
-            catnr = int(catnr_str)
-            if catnr not in TRACKED_SATS:
+        for r in rows:
+            if r["catnr"] not in TRACKED_SATS:
                 continue
-            name, freq = TRACKED_SATS[catnr]
-            sats[catnr] = (_sat_from_lines(lines, ts), name, freq)
+            name, freq = TRACKED_SATS[r["catnr"]]
+            sats[r["catnr"]] = (_sat_from_lines([r["name"], r["l1"], r["l2"]], ts),
+                                name, freq)
         state.log_console(f"Loaded {len(sats)} TLEs from cache (no network fetch)")
         return sats
     except Exception as e:
         state.log_console(f"TLE cache read failed: {e}", "error")
         return {}
+
 
 def refresh_tles():
     """Refresh TLE data from SatNOGS (Celestrak fallback), with an on-disk
@@ -117,21 +119,19 @@ def refresh_tles():
         if sats:
             # Persist for future outages
             try:
-                with open(TLE_CACHE_FILE, 'w') as f:
-                    json.dump(tle_data, f)
+                with db.write() as cur:
+                    for catnr, lines in tle_data.items():
+                        cur.execute("INSERT OR REPLACE INTO tle_cache"
+                                    " VALUES (?,?,?,?,?)",
+                                    (catnr, lines[0], lines[1], lines[2],
+                                     time.time()))
             except Exception as e:
                 state.log_console(f"TLE cache write failed: {e}", "warn")
-        elif os.path.exists(TLE_CACHE_FILE):
+        else:
             # Celestrak unreachable: reuse the last good TLEs
             state.log_console("TLE fetch failed for all satellites, using cached TLEs", "warn")
             try:
-                with open(TLE_CACHE_FILE, 'r') as f:
-                    cached = json.load(f)
-                for catnr_str, lines in cached.items():
-                    catnr = int(catnr_str)
-                    name, freq = TRACKED_SATS[catnr]
-                    sats[catnr] = (_sat_from_lines(lines, ts), name, freq)
-                state.log_console(f"Loaded {len(sats)} TLEs from cache")
+                sats = load_tles_from_cache()
             except Exception as e:
                 state.log_console(f"TLE cache read failed: {e}", "error")
     finally:

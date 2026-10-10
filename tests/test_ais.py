@@ -21,6 +21,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
+import tempfile  # noqa: E402
+os.environ.setdefault("PRAWN_DB_FILE",
+                     os.path.join(tempfile.mkdtemp(), "station.db"))
 from noaa_receiver.decoding import ais
 from noaa_receiver import state
 from noaa_receiver.config import SDR_RATE, IQ_BLOCK
@@ -131,7 +134,9 @@ print("9. Helsinki over-the-air capture (3 s, both channels): ok")
 # --- 10. ship table + AIVDM output (handle_frames/ais_status) ---
 # keep test frames out of the real /var/log/noaa message log
 import tempfile
-ais.AIS_LOG_FILE = os.path.join(tempfile.mkdtemp(), "ais_log.jsonl")
+from noaa_receiver import db as _db   # log isolation: clear the table
+with _db.write() as _cur:
+    _cur.execute("DELETE FROM ais_messages")
 ais.AIS_SHIPS_FILE = os.path.join(tempfile.mkdtemp(), "ais_ships.json")
 state.ais_ships_all = {}
 assert ais.parse_payload([0] * 8) is None          # too short
@@ -172,15 +177,17 @@ print("11. single-bit corruption fails the frame CRC: ok")
 
 # --- 13. 24 h traffic-log trim + persistent ship registry ---
 import json as _json, time as _time
-tmp13 = tempfile.mkdtemp()
-ais.AIS_LOG_FILE = os.path.join(tmp13, "ais_log.jsonl")
-ais.AIS_SHIPS_FILE = os.path.join(tmp13, "ais_ships.json")
+import json as _json, time as _time
 state.ais_ships_all = {}
 now13 = _time.time()
-# a 25 h old line plus two fresh appends: the trim (fires on append 256)
-# must drop only the line outside the 24 h window
-with open(ais.AIS_LOG_FILE, "w", encoding="utf-8") as f:
-    f.write(_json.dumps({"ts": round(now13 - 25 * 3600, 2), "mmsi": 1}) + "\n")
+# a 25 h old log row plus two fresh appends: the trim (fires on append
+# 256) must drop only the row outside the 24 h window
+from noaa_receiver import db as _db
+with _db.write() as _cur:
+    _cur.execute("DELETE FROM ais_messages")
+    _cur.execute("INSERT INTO ais_messages (ts, entry) VALUES (?,?)",
+                 (now13 - 25 * 3600, '{"ts": %f, "mmsi": 1}' % (now13 - 25 * 3600)))
+ais._log_appends = 255
 ais._log_appends = 255
 ais.handle_frames([t5], "A", ais.new_channel_state())
 ais.handle_frames([t5], "B", ais.new_channel_state())
@@ -189,7 +196,8 @@ assert len(log) == 2 and all(e["ts"] >= now13 - 3600 for e in log), log
 assert not any(e.get("mmsi") == 1 for e in log), "25 h old line must be trimmed"
 # registry: every ship ever received, last 10 messages, persisted
 ais.save_ships()
-reg = {r["mmsi"]: r for r in _json.load(open(ais.AIS_SHIPS_FILE, encoding="utf-8"))}
+ais.save_ships()
+reg = {r["mmsi"]: r for r in (_json.loads(x["data"]) for x in _db.query("SELECT data FROM ships"))}
 assert 230985000 in reg, sorted(reg)
 r = reg[230985000]
 assert r["name"] == "AILA" and r["msgs"] == 2 and r["last_channel"] == "B", r
@@ -207,7 +215,7 @@ assert ais.ships_registry()[0]["mmsi"] == 230985000
 for _ in range(12):
     ais.handle_frames([t5], "A", ais.new_channel_state())
 ais.save_ships()
-r = {x["mmsi"]: x for x in _json.load(open(ais.AIS_SHIPS_FILE, encoding="utf-8"))}[230985000]
+r = {x["mmsi"]: x for x in (_json.loads(y["data"]) for y in _db.query("SELECT data FROM ships"))}[230985000]
 assert r["msgs"] == 14 and len(r["recent"]) == 10, (r["msgs"], len(r["recent"]))
 assert len({e["ts"] for e in r["recent"]}) == 10 or True   # same-second frames allowed
 print("13. log trim 24 h + persistent registry with last-10 messages: ok")

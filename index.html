@@ -240,6 +240,17 @@
                 <div class="status-value" id="rec-count">0</div>
             </div>
             <div class="status-item">
+                <div class="status-label">Station Database</div>
+                <div class="status-value" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                    <a href="/backup" class="btn-outline" style="text-decoration:none;color:inherit;" download>💾 Download backup</a>
+                    <label class="btn-outline" style="cursor:pointer;">📂 Restore backup
+                        <input type="file" accept=".zip" style="display:none;" onchange="restoreBackup(this)">
+                    </label>
+                    <span id="restore-status" style="font-size:0.85em;color:#888;flex-basis:100%;"></span>
+                </div>
+                <div style="font-size:0.75em;color:#888;margin-top:3px;">The backup contains the station database and all recordings with their decode products. Restore replaces the current state (kept as .pre-restore copies) and is refused during a pass.</div>
+            </div>
+            <div class="status-item">
                 <div class="status-label">Uptime</div>
                 <div class="status-value" id="uptime">—</div>
             </div>
@@ -1980,6 +1991,33 @@ bandTxt, bwInput, tuneRow, nudgeRow, bwRow, scanRow, scanRow2, scanFrom, scanTo,
 
         // Global recording pause (System Status panel): server-side flag,
         // rendered from status.json so the button survives reloads and
+        // Station database restore (System Status panel): posts the
+        // chosen backup archive to /restore as a raw zip body.
+        async function restoreBackup(input) {
+            const f = input.files && input.files[0];
+            if (!f) return;
+            const el = document.getElementById('restore-status');
+            if (!confirm('Restore the station database and ALL recordings from ' + f.name + '? The current state is kept as .pre-restore copies.')) {
+                input.value = '';
+                return;
+            }
+            el.textContent = 'uploading and restoring...';
+            try {
+                const res = await fetch('/restore', {method: 'POST', body: f});
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    el.textContent = 'restored: ' + data.summary.passes + ' passes, '
+                        + data.summary.ships + ' ships, ' + data.summary.recording_files
+                        + ' recording files - restart the receiver to reload everything';
+                } else {
+                    el.textContent = 'restore failed: ' + (data.error || res.status);
+                }
+            } catch (e) {
+                el.textContent = 'restore failed: ' + e;
+            }
+            input.value = '';
+        }
+
         // reflects changes made from another browser tab.
         function renderRecordPause(paused) {
             const btn = document.getElementById('rec-pause-btn');

@@ -8,6 +8,9 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+import tempfile  # noqa: E402
+os.environ.setdefault("PRAWN_DB_FILE",
+                     os.path.join(tempfile.mkdtemp(), "station.db"))
 from noaa_receiver.decoding import decode
 from noaa_receiver.sdr.radio import sat_short_name as radio_name   # radio must use the same naming
 

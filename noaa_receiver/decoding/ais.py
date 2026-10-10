@@ -46,10 +46,11 @@ from datetime import datetime
 
 import numpy as np
 
+from .. import db
 from .. import state
 from ..calibration import SDR_DONGLE_GAIN, correction_info, tuning_correction
-from ..config import (AIS_CENTER_HZ, AIS_CHANNEL_HZ, AIS_LOG_FILE,
-                     AIS_LOG_KEEP_HOURS, AIS_RECENT_MSGS, AIS_SHIPS_FILE,
+from ..config import (AIS_CENTER_HZ, AIS_CHANNEL_HZ, 
+                     AIS_LOG_KEEP_HOURS, AIS_RECENT_MSGS, 
                      AIS_SHIPS_SAVE_SECS, AIS_SHIP_TTL_SECS,
                      LOGDIR, SDR_GAIN, SDR_OFFSET_HZ, SDR_RATE,
                      WATERFALL_ROWS)
@@ -531,73 +532,49 @@ def build_log_entry(d, channel, sentences, now=None):
     }
 
 def _trim_log():
-    """Drop log lines older than AIS_LOG_KEEP_HOURS (called every 256
-    appends — cheap at AIS message rates). Atomic tmp+replace so a
-    crash mid-rewrite cannot truncate the log; undecodable lines are
-    kept rather than lost."""
+    """Drop log rows older than AIS_LOG_KEEP_HOURS (checked every 256
+    appends - cheap at AIS message rates)."""
     cutoff = time.time() - AIS_LOG_KEEP_HOURS * 3600
     try:
-        with open(AIS_LOG_FILE, encoding="utf-8") as f:
-            lines = f.readlines()
-        keep, dropped = [], 0
-        for line in lines:
-            try:
-                if json.loads(line).get("ts", 0) >= cutoff:
-                    keep.append(line)
-                else:
-                    dropped += 1
-            except ValueError:
-                keep.append(line)
-        if dropped:
-            tmp = AIS_LOG_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.writelines(keep)
-            os.replace(tmp, AIS_LOG_FILE)
-    except OSError:
+        with db.write() as cur:
+            cur.execute("DELETE FROM ais_messages WHERE ts < ?", (cutoff,))
+    except Exception:
         pass
 
 def log_message(entry):
-    """Append one decoded frame to AIS_LOG_FILE (jsonl, newest last).
+    """Append one decoded frame to the station database (ais_messages).
 
-    Survives restarts; bounded to the last AIS_LOG_KEEP_HOURS of frames
-    (checked every 256 appends). Log write failures (disk full,
-    permissions) warn but never take the capture thread down.
+    Survives restarts; bounded to the last AIS_LOG_KEEP_HOURS of frames.
+    Database failures (disk full, corruption) warn but never take the
+    capture thread down.
     """
     global _log_appends
     with _log_lock:
         try:
-            os.makedirs(os.path.dirname(AIS_LOG_FILE), exist_ok=True)
-            with open(AIS_LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+            with db.write() as cur:
+                cur.execute("INSERT INTO ais_messages (ts, entry) VALUES (?,?)",
+                            (entry.get("ts", time.time()),
+                             json.dumps(entry, separators=(",", ":"))))
             _log_appends += 1
             if _log_appends % 256 == 0:
                 _trim_log()
-        except (OSError, ValueError) as e:
+        except Exception as e:
             state.log_console(f"AIS log write failed: {e}", "warn")
 
 def ais_log(count=200):
-    """Newest-first tail of the persistent message log for /aislog.json.
-
-    Only the last ~count lines are READ: with 24 h retention the file
-    can grow to tens of MB, and the page polls it every 10 s."""
+    """Newest-first tail of the persistent message log for /aislog.json."""
     try:
         count = max(1, min(int(count), 2000))
     except ValueError:
         count = 200
-    with _log_lock:
-        try:
-            size = os.path.getsize(AIS_LOG_FILE)
-            with open(AIS_LOG_FILE, "rb") as f:
-                f.seek(max(0, size - count * 1024 - 8192))
-                tail = f.read().decode("utf-8", "replace")
-        except OSError:
-            return []
     out = []
-    for line in reversed(tail.splitlines()[-count:]):
+    for r in db.query("SELECT entry FROM ais_messages"
+                      " ORDER BY id DESC LIMIT ?", (count,)):
         try:
-            out.append(json.loads(line))
+            out.append(json.loads(r["entry"]))
         except ValueError:
-            continue   # first line after the seek may be partial
+            continue
+    return out
     return out
 
 # ---------- persistent ship registry (every ship ever received) ----------
@@ -609,37 +586,42 @@ def load_ships():
     """Read the registry at startup: the ship table itself is in-memory,
     this restores every ship ever received (with message history)."""
     try:
-        with open(AIS_SHIPS_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        with state.ais_lock:
-            state.ais_ships_all = {e["mmsi"]: e for e in data
-                                    if isinstance(e, dict) and "mmsi" in e}
-        state.log_console(f"📚 AIS ship registry: {len(state.ais_ships_all)} ships ever received, restored from disk")
-    except FileNotFoundError:
+        rows = db.query("SELECT data FROM ships")
         with state.ais_lock:
             state.ais_ships_all = {}
-    except (OSError, ValueError) as e:
+            for r in rows:
+                s = json.loads(r["data"])
+                if isinstance(s, dict) and "mmsi" in s:
+                    state.ais_ships_all[s["mmsi"]] = s
+        state.log_console(f"\U0001f4da AIS ship registry: {len(state.ais_ships_all)} ships ever received, restored from the database")
+    except Exception as e:
         state.log_console(f"AIS ship registry could not be loaded: {e}", "warn")
         with state.ais_lock:
             state.ais_ships_all = {}
 
 def save_ships():
-    """Write the whole registry to AIS_SHIPS_FILE (atomic tmp+replace).
+    """Write the whole registry to the station database (ships table).
 
-    Never fatal: on an unwritable LOGDIR the receiver keeps running with
-    the in-memory registry and warns once per save attempt."""
+    Never fatal: on an error the receiver keeps running with the
+    in-memory registry and warns once per save attempt.
+    """
     with state.ais_lock:
         snapshot = [dict(s, recent=list(s.get("recent", [])))
                     for s in state.ais_ships_all.values()]
     with _ships_file_lock:
         try:
-            os.makedirs(os.path.dirname(AIS_SHIPS_FILE), exist_ok=True)
-            tmp = AIS_SHIPS_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(snapshot, f, separators=(",", ":"))
-            os.replace(tmp, AIS_SHIPS_FILE)
-        except (OSError, ValueError) as e:
+            now = time.time()
+            with db.write() as cur:
+                for s in snapshot:
+                    cur.execute("INSERT OR REPLACE INTO ships VALUES (?,?,?)",
+                                (s["mmsi"], json.dumps(s, separators=(",", ":")), now))
+                mmsis = [s["mmsi"] for s in snapshot]
+                if mmsis:
+                    cur.execute("DELETE FROM ships WHERE mmsi NOT IN (%s)"
+                                % ",".join("?" * len(mmsis)), mmsis)
+        except Exception as e:
             state.log_console(f"AIS ship registry save failed: {e}", "warn")
+
 
 def _maybe_save_ships():
     """Throttled save from the capture path: at most one write per

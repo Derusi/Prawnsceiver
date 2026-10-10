@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 # and killed every satellite capture thread at runtime, unnoticed until
 # deploy): every name the capture threads reference at module level must
 # resolve. Updated 2026-10-09 for the network-dongle architecture.
+import tempfile  # noqa: E402
+os.environ.setdefault("PRAWN_DB_FILE",
+                     os.path.join(tempfile.mkdtemp(), "station.db"))
 import noaa_receiver.sdr.radio as _radio
 for _n in ("AIS_DONGLE", "FM_BAND", "PRIMARY_DONGLE", "DEFAULT_DONGLES",
             "SDR_DONGLE_GAIN", "correction_info", "tuning_correction",
@@ -32,7 +35,8 @@ from noaa_receiver.calibration import tuning_correction
 
 tmp = tempfile.mkdtemp(prefix='prawn_')
 radio.LOGDIR = os.path.join(tmp, 'log'); radio.RECORD_DIR = os.path.join(tmp, 'rec')
-radio.DONGLES_FILE = os.path.join(tmp, 'dongles.json')   # keep the real registry untouched
+from noaa_receiver import db   # dongle persistence lives in the station database
+db.query("SELECT 1")           # schema ready against the isolated test DB
 radio.WAV_RETRY_SECS = 0.5
 HOST, PORT = '127.0.0.1', 1299
 DID = f'{HOST}:{PORT}'
@@ -100,7 +104,7 @@ assert did == DID and created, (did, created)
 did2, created2 = radio.add_dongle(HOST, PORT)      # idempotent
 assert did2 == DID and not created2
 assert state.primary_dongle == DID                  # first non-AIS dongle becomes primary
-assert json.load(open(radio.DONGLES_FILE)) == [{"host": HOST, "port": PORT, "ais": False}]
+assert [dict(r) for r in db.query("SELECT host, port, ais FROM dongles")] == [{"host": HOST, "port": PORT, "ais": 0}]
 print("dongle registry: validation, idempotency, primary, persistence OK")
 
 entry = state.sdrs[DID]
@@ -265,7 +269,7 @@ assert radio.set_dongle_ais('nope:1', True) is False    # unknown dongle
 with state.status_lock: state.manual_recording[DID] = True
 wait_for(lambda: entry['is_recording'], what='manual recording before the AIS switch')
 assert radio.set_dongle_ais(DID, True) is True
-assert json.load(open(radio.DONGLES_FILE))[0]["ais"] is True, "the AIS role must persist"
+assert db.query_one("SELECT ais FROM dongles")["ais"] == 1, "the AIS role must persist"
 wait_for(lambda: not t.is_alive(), secs=5, what='satellite thread exits after the AIS switch')
 assert entry['ais'] and not entry['is_recording']
 assert DID not in state.manual_recording, "the manual recording flag must be dropped with the role"
@@ -275,7 +279,7 @@ expect_cmd(AIS_CENTER_HZ)      # explicit 162 MHz tune on connect
 wait_for(lambda: entry['last_data'] > time.time() - 2 and set(state.ais_channels) == {'A', 'B'},
          what='AIS capture streaming both channels')
 assert radio.set_dongle_ais(DID, False) is True
-assert json.load(open(radio.DONGLES_FILE))[0]["ais"] is False
+assert db.query_one("SELECT ais FROM dongles")["ais"] == 0
 wait_for(lambda: not t.is_alive(), secs=5, what='AIS thread exits after the switch back')
 assert not state.ais_enabled and state.ais_dongle is None
 t = threading.Thread(target=radio.sdr_capture_thread, args=(DID,), daemon=True); t.start()

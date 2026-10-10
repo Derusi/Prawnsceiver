@@ -1,5 +1,4 @@
 """Recording decoding: SatDump (APT/LRPT/DSB), sstv (ISS Robot 36)."""
-import json
 import os
 import re
 import shutil
@@ -7,12 +6,14 @@ import subprocess
 import threading
 import time
 
+from .. import db
+from .. import db
 from .. import state
 
 from datetime import datetime
 
 from ..config import (SATDUMP_TIMEOUT_SECS, SAT_DSB_FREQ, SDR_OFFSET_HZ, SDR_RATE,
-                     TLE_CACHE_FILE, TRACKED_SATS)
+                     TRACKED_SATS)
 from ..sdr.dsp import frequency_shift, iq_to_complex, new_state
 
 # Recording names are '<sat>_<YYYYMMDD>_<HHMMSS>[-<n>][_<serial>].wav', written by
@@ -66,24 +67,40 @@ def _png_path(wav_path):
 # Each attempt's outcome is therefore persisted next to the recording and
 # short-circuits every later attempt unless force=True (Retry button).
 
-def _marker_path(wav_path):
-    base, _ = os.path.splitext(wav_path)
-    return base + '.decode.json'
-
 def read_decode_marker(wav_path):
-    """The recorded outcome of a previous decode attempt, or None."""
-    try:
-        with open(_marker_path(wav_path), encoding='utf-8') as f:
-            return json.load(f)
-    except (OSError, ValueError):
+    """The recorded outcome of a previous decode attempt, or None.
+
+    Stored in the station database (decodes table), keyed by the
+    recording's base name so absolute paths and bare filenames
+    resolve to the same row.
+    """
+    base, _ = os.path.splitext(os.path.basename(wav_path))
+    row = db.query_one("SELECT success, message, ts FROM decodes"
+                       " WHERE base=?", (base,))
+    if row is None:
         return None
+    return {'success': bool(row['success']), 'message': row['message'],
+            'ts': row['ts']}
+
 
 def _write_decode_marker(wav_path, success, message):
+    base, _ = os.path.splitext(os.path.basename(wav_path))
     try:
-        with open(_marker_path(wav_path), 'w', encoding='utf-8') as f:
-            json.dump({'success': bool(success), 'message': str(message),
-                       'ts': time.time()}, f)
-    except OSError:
+        with db.write() as cur:
+            cur.execute("INSERT OR REPLACE INTO decodes VALUES (?,?,?,?)",
+                        (base, 1 if success else 0, str(message),
+                         time.time()))
+    except Exception as e:
+        state.log_console(f"Decode marker write failed: {e}", "warn")
+
+
+def forget_decode_marker(wav_path):
+    """Drop the attempt marker - the recording was deleted (/delete)."""
+    base, _ = os.path.splitext(os.path.basename(wav_path))
+    try:
+        with db.write() as cur:
+            cur.execute("DELETE FROM decodes WHERE base=?", (base,))
+    except Exception:
         pass
 
 def _satellite_freq(sat_name):
@@ -299,16 +316,15 @@ def _pick_product_png(out_dir):
 
 
 def _seed_satdump_tles():
-    """Keep SatDump's TLE file fed from the receiver's own TLE cache —
-    SatDump cannot fetch Celestrak from this network, and with no TLEs it
-    cannot geo-reference Meteor images."""
+    """Keep SatDump's TLE file fed from the receiver's own TLE cache
+    (station database, tle_cache table) - SatDump cannot fetch
+    Celestrak from this network, and with no TLEs it cannot
+    geo-reference Meteor images."""
     try:
-        import json
-        cache = json.load(open(TLE_CACHE_FILE))
+        rows = db.query("SELECT name, l1, l2 FROM tle_cache")
         lines = []
-        for catnr, trio in cache.items():
-            if isinstance(trio, list) and len(trio) == 3:
-                lines.extend(l.strip() for l in trio)
+        for r in rows:
+            lines.extend([r['name'].strip(), r['l1'].strip(), r['l2'].strip()])
         if not lines:
             return
         path = os.path.expanduser('~/.config/satdump/satdump_tles.txt')
@@ -316,7 +332,7 @@ def _seed_satdump_tles():
         with open(path, 'w') as f:
             f.write('\n'.join(lines) + '\n')
     except Exception:
-        pass   # best effort — SatDump runs without TLEs, just without maps
+        pass   # best effort - SatDump runs without TLEs, just without maps
 
 
 def _satdump_decode(pipeline, iq_path, out_dir, label, shift_hz=None):

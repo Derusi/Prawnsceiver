@@ -7,6 +7,9 @@ import time
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import numpy as np
+import tempfile  # noqa: E402
+os.environ.setdefault("PRAWN_DB_FILE",
+                     os.path.join(tempfile.mkdtemp(), "station.db"))
 from noaa_receiver.sdr import dsp
 from noaa_receiver.config import SDR_RATE, DECIMATION, SDR_OFFSET_HZ, IQ_BLOCK
 

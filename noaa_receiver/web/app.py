@@ -3,11 +3,11 @@ import os
 import socketserver
 import threading
 
+from .. import db
 from .. import state
 from ..config import LAT, LON, LOGDIR, PASS_MIN_ALT, PORT, RECORD_DIR
 
 from .handler import NOAAHandler
-from .history import migrate_pass_history
 from ..tracking.plan import prime_transmitters
 from ..sdr.radio import sdr_thread
 from ..tracking.scheduler import scheduler_thread
@@ -17,11 +17,10 @@ def main():
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     socketserver.ThreadingTCPServer.daemon_threads = True
 
-
-    # Link pre-migration history entries to their recordings
     os.makedirs(LOGDIR, exist_ok=True)
     os.makedirs(RECORD_DIR, exist_ok=True)
-    migrate_pass_history()
+    # One-time import of the legacy JSON stores into station.db
+    db.import_legacy(None)
 
     # Start scheduler thread (TLE refresh + pass prediction + frequency switching)
     threading.Thread(target=scheduler_thread, daemon=True).start()

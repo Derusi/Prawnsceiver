@@ -6,6 +6,11 @@ lives in calibration.py, separate from this system config.
 import os
 
 PORT = 8085
+# LOGDIR holds station.db (the SQLite catalog of all persistent state:
+# passes, dongles, TLEs, decode markers, AIS ships/messages - see
+# noaa_receiver/db.py) plus the LEGACY JSON stores below, which are
+# imported into the database once at startup and then retired to
+# <name>.migrated
 LOGDIR = "/var/log/noaa"
 RECORD_DIR = "/var/log/noaa/recordings"
 PASS_HISTORY_FILE = os.path.join(LOGDIR, "pass_history.json")

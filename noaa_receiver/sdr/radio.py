@@ -26,6 +26,7 @@ import wave
 from collections import deque
 from datetime import datetime
 
+from .. import db
 from .. import state
 from ..calibration import (AIS_DONGLE, DEFAULT_DONGLES, FM_BAND, PRIMARY_DONGLE,
                           SDR_DONGLE_GAIN, correction_info, tuning_correction)
@@ -146,20 +147,23 @@ def _dongle_id(host, port):
     return f'{host}:{int(port)}'
 
 def _persist_dongles():
-    """Write the registered dongle list to DONGLES_FILE (list of
-    {"host", "port"}), so a restart keeps the runtime-added set.
+    """Write the registered dongle list to the station database (dongles
+    table), so a restart keeps the runtime-added set and each dongle's
+    role.
 
-    Never fatal: on an unwritable LOGDIR the receiver keeps running with
+    Never fatal: on a database error the receiver keeps running with
     the in-memory set (the dashboard shows a warning once).
     """
     try:
-        os.makedirs(os.path.dirname(DONGLES_FILE), exist_ok=True)
-        with open(DONGLES_FILE, 'w', encoding='utf-8') as f:
-            json.dump([{'host': e['host'], 'port': e['port'],
-                        'ais': bool(e.get('ais'))}
-                       for e in state.sdrs.values()], f, indent=1)
-    except OSError as e:
-        state.log_console(f"Cannot persist dongle list to {DONGLES_FILE}: {e}", "warn")
+        with db.write() as cur:
+            cur.execute("DELETE FROM dongles")
+            for e in state.sdrs.values():
+                cur.execute("INSERT INTO dongles VALUES (?,?,?,?)",
+                            (e['host'], int(e['port']),
+                             1 if e.get('ais') else 0, time.time()))
+    except Exception as e:
+        state.log_console(f"Cannot persist dongle list: {e}", "warn")
+
 
 def _new_entry(did, host, port, primary):
     """Fresh state.sdrs entry for one dongle address (shared by load and
@@ -297,17 +301,12 @@ def set_dongle_ais(did, on):
     return True
 
 def load_dongles():
-    """Register the startup dongle set: the persisted DONGLES_FILE when it
-    exists, else calibration.DEFAULT_DONGLES (persisted right away, so
-    later dashboard additions update the file)."""
-    entries = None
-    try:
-        with open(DONGLES_FILE, encoding='utf-8') as f:
-            entries = json.load(f)
-        entries = [(e['host'], int(e['port']), bool(e.get('ais')))
-                   for e in entries]
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
+    """Register the startup dongle set: the persisted dongles table when
+    it has rows, else calibration.DEFAULT_DONGLES (persisted right away,
+    so later dashboard additions update the database)."""
+    entries = [(r['host'], r['port'], bool(r['ais']))
+               for r in db.query("SELECT host, port, ais FROM dongles"
+                                 " ORDER BY port, host")]
     if not entries:
         entries = [(h, p, False) for h, p in DEFAULT_DONGLES]
     for host, port, was_ais in entries:
@@ -317,13 +316,14 @@ def load_dongles():
             state.log_console(f"Skipping persisted dongle {host}:{port}: {e}", "warn")
             continue
         if was_ais:
-            # the AIS switch is persisted too — a restart must not silently
+            # the AIS switch is persisted too - a restart must not silently
             # put a dongle the operator dedicated to ship traffic back on
             # the satellites (capture threads have not started yet)
             with state.status_lock:
                 state.sdrs[did]['ais'] = True
-            state.log_console(f"Dongle {did} restored to AIS (ship traffic) — persisted role")
+            state.log_console(f"Dongle {did} restored to AIS (ship traffic) - persisted role")
     _persist_dongles()
+
 
 def sdr_thread():
     """Keep one capture thread per registered dongle.

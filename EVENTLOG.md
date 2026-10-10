@@ -1047,3 +1047,42 @@ raw_sync/raw_unsync, dataset.json) as links with sizes. New /products/
 flat files). get_recordings exposes iq + products per recording; the
 formerly dead img variable is gone. The post-decode inline preview in
 the result box stays as the manual-decode success indicator.
+### 2026-10-10 15:30 CEST — all persistent state moved into a SQLite station database + backup/restore
+
+Implemented the architecture discussed earlier: noaa_receiver/db.py is
+a single SQLite catalog (LOGDIR/station.db, WAL, one shared connection,
+writes serialized in transactions) - stdlib only, no new dependency.
+The filesystem stays the blob store (WAV/IQ/PNG/products); every table
+points at files.
+
+Tables: passes (was pass_history.json, merge rule preserved: same
+satellite rising within 120 s updates, never appends), dongles (was
+dongles.json, roles incl. AIS flag), tle_cache (was tle_cache.json,
+3-line groups with names for SatDump's TLE file), decodes (was the
+<rec>.decode.json sidecar markers - keyed by recording base name so
+absolute paths and bare filenames resolve identically), ships (was
+ais_ships_persist.json, full ship dicts as JSON), ais_messages (was
+ais_log.jsonl, trimmed by ts instead of file rewrites).
+
+MIGRATION: db.import_legacy() runs once at startup (app.py), ingests
+all five JSON/JSONL stores plus the decode markers, is idempotent
+(rows win), and retires each source to <name>.migrated. Failed sources
+stay for a retry. On the first deploy the container's real pass
+history/dongles/TLEs/AIS data (9 ships) will import.
+
+BACKUP/RESTORE (user request): /backup builds a zip with a consistent
+SQLite snapshot (conn.backup()) + the whole recordings tree (stored,
+not deflated) -> one-click download in the System Status panel;
+POST /restore (raw zip body from the file picker) refuses during a
+pass, moves the live DB + recordings to .pre-restore copies, extracts,
+sanity-checks, and answers with a summary. Restart after restore
+reloads in-memory state (AIS ships, dongle registry).
+
+Also: tests get isolated temp databases via the PRAWN_DB_FILE env
+override (no D:ar\log pollution on the dev box, no cross-test
+leakage); tests/test_db.py covers schema/import/roundtrips/backup-
+restore incl. corrupt-archive refusal; test_ais/test_radio/test_
+history updated to the DB semantics (log isolation = table clear,
+dongle persistence = dongles-table assertions, history order =
+insertion order like the old file). _load_history keeps the exact
+legacy JSON shape so the history page parses unchanged.

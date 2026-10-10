@@ -19,6 +19,9 @@ import tempfile
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+import tempfile  # noqa: E402
+os.environ.setdefault("PRAWN_DB_FILE",
+                     os.path.join(tempfile.mkdtemp(), "station.db"))
 from noaa_receiver.decoding.decode import _measure_signal_offset, _pick_product_png
 from noaa_receiver.config import SDR_RATE
 

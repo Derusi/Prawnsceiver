@@ -8,6 +8,9 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+import tempfile  # noqa: E402
+os.environ.setdefault("PRAWN_DB_FILE",
+                     os.path.join(tempfile.mkdtemp(), "station.db"))
 from noaa_receiver.web import history   # noqa: E402
 
 d = tempfile.mkdtemp()

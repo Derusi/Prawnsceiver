@@ -61,6 +61,9 @@ Live at: https://prawnceiver.derusi.de
 - Skyfield — TLE-based pass prediction (TLEs refreshed from SatNOGS with a
   Celestrak fallback every 3 h, plus a local cache)
 - SatDump — APT (NOAA), LRPT (Meteor-M) and DSB (NOAA) downlink decoding
+- SQLite (Python stdlib) — station database: passes, dongles, TLEs, decode
+  markers, AIS ships/messages; one-click full backup download/restore
+  from the dashboard
 - sstv — ISS Slow-Scan TV decoding (Robot 36)
 - nginx — HTTPS reverse proxy (Let's Encrypt) in front of the Python server
 - noaa_receiver/decoding/ais.py — AIS demodulation/decoding (GMSK discriminator,
@@ -98,6 +101,8 @@ The `noaa_receiver/` package is grouped by topic:
 ```
 noaa_receiver/
 ├── config.py, calibration.py, state.py   # station core: config, dongle calibration, shared state
+│              # db.py (SQLite catalog: passes, dongles, TLEs, decode markers,
+│              #  AIS ships/messages + full backup/restore)
 ├── decoding/   # decode.py (dispatch: SatDump noaa_apt / meteor_m2-x_lrpt / noaa_dsb + sstv),
 │              # quality.py (reception scoring), ais.py (AIS demod + ship database)
 ├── sdr/         # radio.py (rtl_tcp capture + recording), dsp.py (per-block DSP chain),

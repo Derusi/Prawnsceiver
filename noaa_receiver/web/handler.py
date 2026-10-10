@@ -7,14 +7,15 @@ import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
+from .. import db
 from .. import state
-from ..config import (AUDIO_RATE, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS, SAT_DSB_FREQ,
+from ..config import (AUDIO_RATE, LOGDIR, LAT, LON, MANUAL_TUNE_LOCKOUT_MINS, SAT_DSB_FREQ,
                    PASS_HISTORY_FILE, RECORD_DIR, UTC_OFFSET, WEBDIR)
 
 from ..decoding import ais
 from ..sdr import scan
-from ..decoding.decode import decode_recording
-from .history import get_recordings, quality_map, set_recording_quality
+from ..decoding.decode import decode_recording, forget_decode_marker
+from .history import _load_history, get_recordings, quality_map, set_recording_quality
 from .pages import AIS_HTML, CONSOLE_HTML, HISTORY_HTML
 from .thumbs import THUMB_SUFFIX, ensure_thumb
 from ..tracking.passes import HAS_SKYFIELD, load, passes_to_json, wgs84
@@ -174,13 +175,7 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(history).encode())
         elif self.path == '/pass_history.json':
-            history = []
-            if os.path.exists(PASS_HISTORY_FILE):
-                try:
-                    with open(PASS_HISTORY_FILE, 'r') as f:
-                        history = json.load(f)
-                except Exception:
-                    pass
+            history = _load_history()
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -870,10 +865,8 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
                 if os.path.exists(thumb):
                     os.remove(thumb)
                     deleted.append(os.path.basename(thumb))
-                marker = png_path[:-4] + '.decode.json'
-                if os.path.exists(marker):
-                    os.remove(marker)
-                    deleted.append(os.path.basename(marker))
+                # The decode-attempt marker is a decodes-table row
+                forget_decode_marker(wav_path)
                 # Raw IQ capture and the SatDump product directories
                 # belong to the recording too - deleting takes the full set
                 iq_path = wav_path[:-4] + '.iq.u8'
@@ -993,8 +986,102 @@ class NOAAHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             with open(ppath, 'rb') as f:
                 self.wfile.write(f.read())
+        elif self.path.split('?')[0] == '/backup':
+            # Full station backup: consistent SQLite snapshot plus the
+            # whole recordings tree, as a downloadable zip. Stored, not
+            # deflated - WAV/IQ/PNG payloads do not compress.
+            import shutil
+            dest = os.path.join(LOGDIR, 'station_backup_%s.zip'
+                                % datetime.now().strftime('%Y%m%d_%H%M%S'))
+            try:
+                _, total = db.build_backup(dest, None)
+            except Exception as e:
+                state.log_console(f'Backup failed: {e}', 'error')
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode())
+                return
+            state.log_console(f'\U0001f4be Station backup built: {os.path.basename(dest)}'
+                              f' ({total / 1e6:.1f} MB)')
+            self.send_response(200)
+            self.send_header('Content-type', 'application/zip')
+            self.send_header('Content-Disposition',
+                             'attachment; filename="%s"' % os.path.basename(dest))
+            self.send_header('Content-Length', str(os.path.getsize(dest)))
+            self.end_headers()
+            with open(dest, 'rb') as f:
+                shutil.copyfileobj(f, self.wfile)
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
         else:
             super().do_GET()
+    def do_POST(self):
+        """Upload a station backup archive: /restore with the raw zip
+        as the request body (the dashboard posts the chosen file)."""
+        if self.path.split('?')[0] != '/restore':
+            self.send_response(404)
+            self.end_headers()
+            return
+        with state.status_lock:
+            active = state.is_pass_active or state.is_recording
+        if active:
+            self.send_response(409)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(
+                {'error': 'Recording in progress - restore after the pass'}).encode())
+            return
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            length = 0
+        if length <= 0:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b'Empty upload')
+            return
+        tmp = os.path.join(LOGDIR, 'restore_upload.zip')
+        try:
+            with open(tmp, 'wb') as f:
+                remaining = length
+                while remaining > 0:
+                    chunk = self.rfile.read(min(1 << 20, remaining))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    remaining -= len(chunk)
+            summary = db.restore_backup(tmp, None)
+        except ValueError as e:
+            self.send_response(400)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode())
+            return
+        except Exception as e:
+            state.log_console(f'Restore failed: {e}', 'error')
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode())
+            return
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        state.log_console(f'\U0001f4be Station restored from backup: '
+                          f'{summary["passes"]} passes, {summary["ships"]} ships, '
+                          f'{summary["recording_files"]} recording files')
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({
+            'success': True, 'summary': summary,
+            'note': 'Restart the receiver to reload in-memory state '
+                    '(AIS ship table, dongle registry)'}).encode())
     def send_header(self, keyword, value):
         # The dashboard and its sub-pages are single evolving HTML files
         # served with Last-Modified but no Cache-Control — browsers then
