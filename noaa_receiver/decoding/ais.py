@@ -781,7 +781,13 @@ def ais_capture_thread(did):
                     break
                 entry["last_data"] = time.time()
                 c = iq_to_complex(raw)
-                # Waterfall + signal for the dongle card (raw band)
+                # Waterfall + signal for the dongle card. The raw band is
+                # truly centered at AIS_CENTER + SDR_OFFSET_HZ (each
+                # dongle's correction cancels its crystal error at the
+                # tuner); the card labels the center as AIS_CENTER, so the
+                # displayed row rotates by +SDR_OFFSET_HZ - the same
+                # convention as the satellite cards (their thread shifts
+                # the baseband to the tracked frequency before the FFT).
                 block_count += 1
                 if block_count % 8 == 0 and len(c) >= FFT_SIZE:
                     try:
@@ -794,7 +800,9 @@ def ais_capture_thread(did):
                             peak = magnitude.max()
                             if peak > 0:
                                 magnitude *= 255.0 / peak
-                            entry["waterfall"].append(magnitude.astype(int).tolist())
+                            rot = int(SDR_OFFSET_HZ / SDR_RATE * FFT_SIZE)
+                            entry["waterfall"].append(
+                                np.roll(magnitude, rot).astype(int).tolist())
                     except Exception:
                         pass
                 # Demodulate both AIS channels from the same block
