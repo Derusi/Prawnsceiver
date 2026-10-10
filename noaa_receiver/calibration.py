@@ -78,6 +78,35 @@ SDR_DONGLE_CORRECTIONS = {
         "fm_band": -8200,  # VHF2: tunes ~8 kHz HIGH (carriers 6-11 kHz below nominal, measured on 89.7/93.0/95.0/99.6/103.0/105.0)
         "ppm": 80,
     },
+    # NESDR SMArt v5 (R820T2 + 0.5 ppm TCXO), measured 2026-10-10 during
+    # high-rate mode (960 kHz capture, 1875 Hz FFT bins):
+    #   - NOAA 19 DSB pass 19:09-19:11: the waterfall carrier (post-offset
+    #     rotation AND post-Doppler NCO, so its position IS the raw error)
+    #     held +0..+234 Hz, mean ~+40 Hz = +0.3 ppm at 137.77 MHz, while
+    #     the applied Doppler swept -349..-1514 Hz over the same 2 min.
+    #     That value includes the satellite's own transmitter error - the
+    #     dongle alone is likely even closer to nominal.
+    #   - FM broadcast 89.7-105.0: sideband-argmax, spectrum-symmetry and
+    #     stereo-pilot-midpoint methods all bottom out at ~+/-2 ppm with
+    #     1875 Hz bins (pilot lines share bins with program sidebands);
+    #     every result was consistent with 0 (89.7 +0.95, 93.0 +2.81 ppm).
+    # Corrections stay 0 on purpose: an error <= 0.5 ppm (<= 70 Hz at
+    # 137 MHz) is two orders of magnitude below the narrowest demodulator
+    # here (DSB, 6 kHz). The 0 entries mark the dongle as measured so the
+    # dashboard stops showing 'unmeasured dongle'.
+    "192.168.3.245:1234": {
+        "freqs": {
+            137620000: 0,   # NOAA 15
+            137912500: 0,   # NOAA 18 / Meteor-M 2-4 LRPT
+            137100000: 0,   # NOAA 19 APT freq / Meteor-M 2-3 LRPT
+            137350000: 0,   # NOAA 18 DSB
+            137770000: 0,   # NOAA 19 DSB (the measured frequency: +0.3 ppm)
+            162000000: 0,   # AIS center (161.975 / 162.025 channels)
+            437550000: 0,   # ISS (Zarya)
+        },
+        "fm_band": 0,
+        "ppm": 0,
+    },
 }
 
 # Per-dongle fixed tuner gain in dB. Absent address -> SDR_GAIN from config

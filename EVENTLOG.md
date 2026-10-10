@@ -1212,3 +1212,34 @@ and measures the true amp/floor limit, 6.008).
 
 Next: first NOAA pass at 960 kHz is the real test of the 100-tap
 satellite demod path (no pass was live during the change).
+
+
+### 2026-10-10 19:30 CEST — v5 dongle measured: on-frequency at TCXO spec, calibration entry added (corrections 0)
+
+Measured the NESDR SMArt v5 (192.168.3.245:1234) per the documented
+waterfall method, live during high-rate mode (960 kHz, 1875 Hz bins):
+- Best reference: the live NOAA 19 DSB pass (19:09-19:11). The
+  waterfall row is taken AFTER the offset rotation AND the Doppler
+  NCO, so the carrier's position IS the raw tune error. The carrier
+  held +0..+234 Hz (mean ~+40 Hz, +0.3 ppm) at 137.77 MHz while the
+  applied Doppler swept -349..-1514 Hz across the same 2 min -
+  satellite transmitter error included, the dongle alone is likely
+  even closer to nominal.
+- FM broadcast (89.7/93.0/95.0/99.6/103.0/105.0): three estimators
+  tried (sideband argmax, spectrum symmetry axis, stereo-pilot line
+  midpoint). All bottom out at ~+/-2 ppm with 1875 Hz bins - program
+  sidebands share bins with the pilot lines (the R820T's -8200 was
+  measurable at 240 kHz bins; high-rate mode costs measurement
+  resolution). Results consistent with 0 (89.7 +0.95, 93.0 +2.81
+  ppm).
+- Verdict: calibration entry with 0 corrections (error <= 0.5 ppm
+  spec = <= 70 Hz at 137 MHz, two orders below the narrowest demod,
+  DSB 6 kHz). The 0 entries mark the dongle measured and clear the
+  dashboard 'unmeasured dongle' marker.
+- Method note for next time: a DSB pass is the cleanest single-
+  dongle reference at any bin width - narrowband, at-band, and the
+  receiver itself compensates the Doppler.
+
+Collateral: the NOAA 19 DSB recording (started 19:04) was sacrificed
+for the measurement (user call) - two manual-tune gaps in its
+WAV/IQ where the FM band was measured mid-pass.
